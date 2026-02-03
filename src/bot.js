@@ -233,7 +233,7 @@ function buildTicketSummary(answers) {
             '🎟️ Gamepasses',
             '🔁 Rebirths',
             '',
-            '✂️ **IMPORTANT:** Crop your screenshots so your **Roblox username is clearly visible!** 👤✅'
+            '✂️ **IMPORTANT:** Crop your screenshots so your **Roblox username is clearly visible!** 👤✅ ⚙️'
           ].join('\n')
         }
       ]
