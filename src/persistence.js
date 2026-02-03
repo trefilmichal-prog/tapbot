@@ -19,6 +19,7 @@ function getDefaultClanState() {
     clan_panel_configs: {},
     clan_clans: {},
     clan_applications: {},
+    clan_ticket_decisions: {},
     clan_ticket_vacations: {},
     clan_ticket_reminders: {},
     cooldowns: {},
