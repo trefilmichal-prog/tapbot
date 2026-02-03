@@ -216,22 +216,24 @@ function buildTicketSummary(answers) {
         {
           type: ComponentType.TextDisplay,
           content: [
-            '**Clan application**',
+            '✨ **CLAN APPLICATION** ✨',
+            '_Please fill this out and send the required screenshots._',
             '',
             `**How many rebirths do you have?**`,
-            answers.rebirths,
+            `> ${answers.rebirths}`,
             '',
             '**What gamepasses do you have?**',
-            answers.gamepasses,
+            `> ${answers.gamepasses}`,
             '',
             '**How many hours a day do you play?**',
-            answers.hours,
+            `> ${answers.hours}`,
             '',
-            'Send your pet team.',
-            'Send your gamepasses.',
-            'Send your rebirths.',
+            '**Required screenshots:**',
+            '🐾 Pet team',
+            '🎟️ Gamepasses',
+            '🔁 Rebirths',
             '',
-            'Crop the screenshots so that your Roblox username is visible!'
+            '✂️ **IMPORTANT:** Crop your screenshots so your **Roblox username is clearly visible!** 👤✅'
           ].join('\n')
         }
       ]
