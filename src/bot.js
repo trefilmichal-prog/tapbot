@@ -4,7 +4,6 @@ import {
   GatewayIntentBits,
   GuildMember,
   PermissionsBitField,
-  ButtonStyle,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -162,61 +161,44 @@ function buildClanPanelComponents(guild, clanMap, panelDescription) {
     ? panelDescription.trim()
     : '';
   const resolvedDescription = trimmedDescription || 'Bez popisku.';
-  const listText = clans.length
-    ? clans
-        .map((clan) => {
-          const tag = clan.tag ? ` [${clan.tag}]` : '';
-          const desc = clan.description ? ` — ${clan.description}` : '';
-          return `• ${clan.name}${tag}${desc}`;
-        })
-        .join('\n')
-    : 'Zatím nejsou evidovány žádné klany.';
-  const components = [
-    {
-      type: ComponentType.TextDisplay,
-      content: `Clan panel · ${guild.name}`
-    },
-    {
-      type: ComponentType.Separator,
-      divider: true,
-      spacing: SeparatorSpacingSize.Small
-    }
-  ];
-
-  components.push(
-    {
-      type: ComponentType.TextDisplay,
-      content: resolvedDescription
-    },
-    {
-      type: ComponentType.Separator,
-      divider: true,
-      spacing: SeparatorSpacingSize.Small
-    }
-  );
-
-  components.push(
-    {
-      type: ComponentType.TextDisplay,
-      content: listText
-    },
-    {
-      type: ComponentType.ActionRow,
-      components: [
+  const selectOptions = clans.length
+    ? clans.map((clan) => ({
+        label: clan.name,
+        value: clan.name
+      }))
+    : [
         {
-          type: ComponentType.Button,
-          style: ButtonStyle.Primary,
-          custom_id: 'clan_panel_apply',
-          label: 'Chci se přidat'
+          label: 'Zatím nejsou evidovány žádné klany.',
+          value: 'no_clans_available'
         }
-      ]
-    }
-  );
+      ];
 
   return [
     {
       type: ComponentType.Container,
-      components
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: resolvedDescription
+        },
+        {
+          type: ComponentType.Separator,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small
+        },
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.StringSelect,
+              custom_id: 'clan_panel_select',
+              placeholder: `Vyber klan (${guild.name})`,
+              options: selectOptions,
+              disabled: clans.length === 0
+            }
+          ]
+        }
+      ]
     }
   ];
 }
