@@ -397,6 +397,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const name = interaction.options.getString('name', true).trim();
           const tag = interaction.options.getString('tag')?.trim() ?? null;
           const description = interaction.options.getString('description')?.trim() ?? null;
+          const ticketRoomOption = interaction.options.getChannel('ticket_room');
+          const reviewRoleOption = interaction.options.getRole('review_role');
+          const acceptRoomOption = interaction.options.getChannel('accept_room');
+          const acceptCategoryOption = interaction.options.getChannel('accept_category');
+          const orderPosition = interaction.options.getInteger('order_position');
+          const ticketRoomId = ticketRoomOption?.type === ChannelType.GuildText
+            ? ticketRoomOption.id
+            : null;
+          const acceptRoomId = acceptRoomOption?.type === ChannelType.GuildText
+            ? acceptRoomOption.id
+            : null;
+          const acceptCategoryId = acceptCategoryOption?.type === ChannelType.GuildCategory
+            ? acceptCategoryOption.id
+            : null;
+          const reviewRoleId = reviewRoleOption?.id ?? null;
           let existed = false;
 
           await updateClanState((state) => {
@@ -410,6 +425,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
               name,
               tag,
               description,
+              ticketRoomId,
+              reviewRoleId,
+              acceptRoomId,
+              acceptCategoryId,
+              orderPosition: orderPosition ?? null,
               createdAt: new Date().toISOString()
             };
           });
@@ -428,6 +448,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const name = interaction.options.getString('name', true).trim();
           const tag = interaction.options.getString('tag')?.trim() ?? null;
           const description = interaction.options.getString('description')?.trim() ?? null;
+          const ticketRoomOption = interaction.options.getChannel('ticket_room');
+          const reviewRoleOption = interaction.options.getRole('review_role');
+          const acceptRoomOption = interaction.options.getChannel('accept_room');
+          const acceptCategoryOption = interaction.options.getChannel('accept_category');
+          const orderPositionOption = interaction.options.getInteger('order_position');
+          const ticketRoomId = ticketRoomOption?.type === ChannelType.GuildText
+            ? ticketRoomOption.id
+            : null;
+          const acceptRoomId = acceptRoomOption?.type === ChannelType.GuildText
+            ? acceptRoomOption.id
+            : null;
+          const acceptCategoryId = acceptCategoryOption?.type === ChannelType.GuildCategory
+            ? acceptCategoryOption.id
+            : null;
+          const reviewRoleId = reviewRoleOption?.id ?? null;
           let found = false;
 
           await updateClanState((state) => {
@@ -439,6 +474,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
               ...entry[name],
               tag: tag ?? entry[name].tag ?? null,
               description: description ?? entry[name].description ?? null,
+              ticketRoomId: ticketRoomOption ? ticketRoomId : entry[name].ticketRoomId ?? null,
+              reviewRoleId: reviewRoleOption ? reviewRoleId : entry[name].reviewRoleId ?? null,
+              acceptRoomId: acceptRoomOption ? acceptRoomId : entry[name].acceptRoomId ?? null,
+              acceptCategoryId: acceptCategoryOption
+                ? acceptCategoryId
+                : entry[name].acceptCategoryId ?? null,
+              orderPosition: orderPositionOption ?? entry[name].orderPosition ?? null,
               updatedAt: new Date().toISOString()
             };
           });
