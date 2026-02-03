@@ -113,6 +113,39 @@ export const defaultCommands = [
                 name: 'description',
                 description: 'Popis klanu',
                 required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Channel,
+                name: 'ticket_room',
+                description: 'Ticket kanál pro klan',
+                required: false,
+                channel_types: [ChannelType.GuildText]
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'review_role',
+                description: 'Role pro review žádostí',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Channel,
+                name: 'accept_room',
+                description: 'Přijímací kanál pro klan',
+                required: false,
+                channel_types: [ChannelType.GuildText]
+              },
+              {
+                type: ApplicationCommandOptionType.Channel,
+                name: 'accept_category',
+                description: 'Kategorie pro přijaté',
+                required: false,
+                channel_types: [ChannelType.GuildCategory]
+              },
+              {
+                type: ApplicationCommandOptionType.Integer,
+                name: 'order_position',
+                description: 'Pořadí klanu v seznamu',
+                required: false
               }
             ]
           },
@@ -137,6 +170,39 @@ export const defaultCommands = [
                 type: ApplicationCommandOptionType.String,
                 name: 'description',
                 description: 'Nový popis klanu',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Channel,
+                name: 'ticket_room',
+                description: 'Nový ticket kanál pro klan',
+                required: false,
+                channel_types: [ChannelType.GuildText]
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'review_role',
+                description: 'Nová role pro review žádostí',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Channel,
+                name: 'accept_room',
+                description: 'Nový přijímací kanál pro klan',
+                required: false,
+                channel_types: [ChannelType.GuildText]
+              },
+              {
+                type: ApplicationCommandOptionType.Channel,
+                name: 'accept_category',
+                description: 'Nová kategorie pro přijaté',
+                required: false,
+                channel_types: [ChannelType.GuildCategory]
+              },
+              {
+                type: ApplicationCommandOptionType.Integer,
+                name: 'order_position',
+                description: 'Nové pořadí klanu v seznamu',
                 required: false
               }
             ]
