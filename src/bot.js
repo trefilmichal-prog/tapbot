@@ -513,11 +513,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         let ticketChannel;
         try {
-          const sanitizedName = interaction.user.username
+          const playerName = interaction.member.displayName || interaction.user.username;
+          const rawChannelName = `${clanName} - ${playerName}`;
+          const channelName = rawChannelName
             .toLowerCase()
-            .replace(/[^a-z0-9-]/g, '')
-            .slice(0, 20);
-          const channelName = `ticket-${sanitizedName || interaction.user.id}`;
+            .replace(/[^a-z0-9-]+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 90) || interaction.user.id;
 
           ticketChannel = await interaction.guild.channels.create({
             name: channelName,
