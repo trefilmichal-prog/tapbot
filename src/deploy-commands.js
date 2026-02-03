@@ -82,11 +82,6 @@ export const defaultCommands = [
         ]
       },
       {
-        type: ApplicationCommandOptionType.Subcommand,
-        name: 'edit',
-        description: 'Aktualizuje uložený clan panel'
-      },
-      {
         type: ApplicationCommandOptionType.SubcommandGroup,
         name: 'clan',
         description: 'Správa klanů',
