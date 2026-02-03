@@ -90,10 +90,38 @@ async function resolvePm2ProcessName(repoRoot) {
 }
 
 async function restartPm2(processName) {
+  let stopError;
+  let startError;
+
   try {
-    await execFileAsync('pm2', ['restart', processName]);
+    await execFileAsync('pm2', ['stop', processName]);
+    console.log(`PM2 stop completed for ${processName}.`);
   } catch (error) {
-    throw new Error(`PM2 restart failed: ${error.message ?? error}`);
+    stopError = error;
+    console.error(`PM2 stop failed for ${processName}:`, error);
+  }
+
+  try {
+    await execFileAsync('pm2', ['start', processName]);
+    console.log(`PM2 start completed for ${processName}.`);
+  } catch (error) {
+    startError = error;
+    console.error(`PM2 start failed for ${processName}:`, error);
+  }
+
+  if (stopError || startError) {
+    try {
+      console.warn(`Attempting PM2 restart fallback for ${processName}.`);
+      await execFileAsync('pm2', ['restart', processName]);
+      console.log(`PM2 restart fallback completed for ${processName}.`);
+      return;
+    } catch (error) {
+      const stopMessage = stopError?.message ?? stopError;
+      const startMessage = startError?.message ?? startError;
+      throw new Error(
+        `PM2 stop/start failed (stop: ${stopMessage || 'ok'}, start: ${startMessage || 'ok'}) and restart fallback failed: ${error.message ?? error}`
+      );
+    }
   }
 }
 
