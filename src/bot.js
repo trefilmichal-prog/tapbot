@@ -1,5 +1,6 @@
 import { Client, Events, GatewayIntentBits, GuildMember } from 'discord.js';
 import { ChannelType, ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
@@ -102,6 +103,44 @@ function buildWelcomeComponents(member, welcomeMessage) {
   ];
 }
 
+function buildTextComponents(content) {
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content
+        }
+      ]
+    }
+  ];
+}
+
+function runDeployScript() {
+  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  return new Promise((resolve, reject) => {
+    const child = spawn(npmCommand, ['run', 'deploy'], {
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const stdoutChunks = [];
+    const stderrChunks = [];
+
+    child.stdout.on('data', (chunk) => stdoutChunks.push(chunk));
+    child.stderr.on('data', (chunk) => stderrChunks.push(chunk));
+    child.on('error', reject);
+    child.on('close', (code, signal) => {
+      resolve({
+        code,
+        signal,
+        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+        stderr: Buffer.concat(stderrChunks).toString('utf8')
+      });
+    });
+  });
+}
+
 async function getBotVersion() {
   const versionPath = path.resolve(process.cwd(), 'verze.txt');
   try {
@@ -149,7 +188,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === 'config') {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
-          content: 'Tento příkaz lze použít jen na serveru.',
+          components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+          flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
         return;
@@ -157,7 +197,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!interaction.member.roles.cache.has('1468192944975515759')) {
         await interaction.reply({
-          content: 'Nemáš oprávnění použít tento příkaz.',
+          components: buildTextComponents('Nemáš oprávnění použít tento příkaz.'),
+          flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
         return;
@@ -167,17 +208,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (subcommand === 'verze') {
         const version = await getBotVersion();
         await interaction.reply({
-          components: [
-            {
-              type: ComponentType.Container,
-              components: [
-                {
-                  type: ComponentType.TextDisplay,
-                  content: `Verze bota: ${version}`
-                }
-              ]
-            }
-          ],
+          components: buildTextComponents(`Verze bota: ${version}`),
           flags: MessageFlags.IsComponentsV2
         });
         return;
@@ -214,17 +245,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           console.error('Update failed:', e);
           try {
             await interaction.followUp({
-              components: [
-                {
-                  type: ComponentType.Container,
-                  components: [
-                    {
-                      type: ComponentType.TextDisplay,
-                      content: 'Aktualizace selhala. Podívej se do logů.'
-                    }
-                  ]
-                }
-              ],
+              components: buildTextComponents('Aktualizace selhala. Podívej se do logů.'),
               flags: MessageFlags.IsComponentsV2,
               ephemeral: true
             });
@@ -235,11 +256,65 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (subcommand === 'deploy') {
+        await interaction.reply({
+          components: buildTextComponents('Deploy spuštěn. Chvilku strpení...'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+
+        try {
+          const deployResult = await runDeployScript();
+          if (deployResult.stdout) {
+            console.log('Deploy stdout:', deployResult.stdout.trim());
+          }
+          if (deployResult.stderr) {
+            console.warn('Deploy stderr:', deployResult.stderr.trim());
+          }
+
+          if (deployResult.code !== 0) {
+            console.error(`Deploy failed with code ${deployResult.code ?? 'unknown'}.`);
+            await interaction.followUp({
+              components: buildTextComponents('Deploy selhal. Podívej se do logů.'),
+              flags: MessageFlags.IsComponentsV2,
+              ephemeral: true
+            });
+            return;
+          }
+
+          const result = await syncApplicationCommands({
+            token: cfg.token,
+            clientId: cfg.clientId,
+            guildId: cfg.guildId
+          });
+          console.log(
+            `Config deploy command sync complete. Loaded: ${result.total}, new: ${result.newlyRegistered}`
+          );
+
+          await interaction.followUp({
+            components: buildTextComponents(
+              `Deploy dokončen. Načteno ${result.total} příkazů, nově ${result.newlyRegistered}.`
+            ),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+        } catch (e) {
+          console.error('Deploy failed:', e);
+          await interaction.followUp({
+            components: buildTextComponents('Deploy selhal. Podívej se do logů.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+        }
+        return;
+      }
+
       if (subcommand === 'welcome') {
         const channel = interaction.options.getChannel('channel', true);
         if (!channel || channel.type !== ChannelType.GuildText) {
           await interaction.reply({
-            content: 'Prosím vyber textový kanál.',
+            components: buildTextComponents('Prosím vyber textový kanál.'),
+            flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
           return;
@@ -254,7 +329,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         await interaction.reply({
-          content: 'Uvítání bylo uloženo.',
+          components: buildTextComponents('Uvítání bylo uloženo.'),
+          flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
       }
@@ -262,7 +338,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.commandName === 'ping') {
-      await interaction.reply('Pong!');
+      await interaction.reply({
+        components: buildTextComponents('Pong!'),
+        flags: MessageFlags.IsComponentsV2
+      });
     }
 
     if (interaction.commandName === 'test') {
@@ -270,7 +349,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (subcommand === 'welcome') {
         if (!interaction.inGuild()) {
           await interaction.reply({
-            content: 'Tento příkaz lze použít jen na serveru.',
+            components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+            flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
           return;
@@ -280,7 +360,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const settings = await resolveWelcomeSettings(member);
         if (!settings) {
           await interaction.reply({
-            content: 'Není nastaven uvítací kanál.',
+            components: buildTextComponents('Není nastaven uvítací kanál.'),
+            flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
           return;
@@ -289,13 +370,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         try {
           await sendWelcomeMessage(member, settings);
           await interaction.reply({
-            content: 'Uvítací zpráva byla odeslána.',
+            components: buildTextComponents('Uvítací zpráva byla odeslána.'),
+            flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
         } catch (e) {
           console.error('Failed to send manual welcome message:', e);
           await interaction.reply({
-            content: 'Nepodařilo se odeslat uvítací zprávu.',
+            components: buildTextComponents('Nepodařilo se odeslat uvítací zprávu.'),
+            flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
         }
@@ -306,9 +389,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
     try {
       if (interaction && interaction.isRepliable && interaction.isRepliable()) {
         if (interaction.deferred || interaction.replied) {
-          await interaction.followUp({ content: 'Došlo k chybě při zpracování.', ephemeral: true });
+          await interaction.followUp({
+            components: buildTextComponents('Došlo k chybě při zpracování.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
         } else {
-          await interaction.reply({ content: 'Došlo k chybě při zpracování.', ephemeral: true });
+          await interaction.reply({
+            components: buildTextComponents('Došlo k chybě při zpracování.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
         }
       }
     } catch (e2) {
