@@ -9,6 +9,18 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if not exist config.json (
+  echo Chybi soubor config.json. Spust:
+  echo   npm run setup
+  exit /b 1
+)
+
+node -e "import('./src/config.js').then(m=>m.loadConfig())"
+if errorlevel 1 (
+  echo Nacteni config.json selhalo. Oprav konfiguraci a zkuste to znovu.
+  exit /b 1
+)
+
 pm2 start src/bot.js --name tapbot --time
 if errorlevel 1 (
   echo Spusteni bota pres pm2 selhalo.
