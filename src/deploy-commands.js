@@ -18,6 +18,11 @@ const commands = [
       },
       {
         type: ApplicationCommandOptionType.Subcommand,
+        name: 'verze',
+        description: 'Zobrazí verzi bota'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
         name: 'welcome',
         description: 'Nastav uvítací zprávu',
         options: [
