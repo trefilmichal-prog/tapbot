@@ -122,8 +122,28 @@ function hasClanPanelPermission(member) {
     || member.roles.cache.has(CLAN_PANEL_ADMIN_ROLE_ID);
 }
 
+function sortClansForDisplay(clans) {
+  return clans.slice().sort((a, b) => {
+    const aHasOrder = Number.isFinite(a.orderPosition);
+    const bHasOrder = Number.isFinite(b.orderPosition);
+    if (aHasOrder && bHasOrder && a.orderPosition !== b.orderPosition) {
+      return a.orderPosition - b.orderPosition;
+    }
+    if (aHasOrder !== bHasOrder) {
+      return aHasOrder ? -1 : 1;
+    }
+    const nameComparison = (a.name ?? '').localeCompare(b.name ?? '', 'cs', {
+      sensitivity: 'base'
+    });
+    if (nameComparison !== 0) return nameComparison;
+    const createdComparison = (a.createdAt ?? '').localeCompare(b.createdAt ?? '');
+    if (createdComparison !== 0) return createdComparison;
+    return (a.tag ?? '').localeCompare(b.tag ?? '');
+  });
+}
+
 function buildClanPanelComponents(guild, clanMap) {
-  const clans = Object.values(clanMap ?? {});
+  const clans = sortClansForDisplay(Object.values(clanMap ?? {}));
   const listText = clans.length
     ? clans
         .map((clan) => {
@@ -519,7 +539,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (subcommand === 'list') {
           const state = getClanState();
-          const clans = Object.values(state.clan_clans[guildId] ?? {});
+          const clans = sortClansForDisplay(Object.values(state.clan_clans[guildId] ?? {}));
           const listText = clans.length
             ? clans.map((clan) => {
                 const tag = clan.tag ? ` [${clan.tag}]` : '';
