@@ -14,6 +14,11 @@ export const defaultCommands = [
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
+        name: 'deploy',
+        description: 'Nasadí nové příkazy'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
         name: 'update',
         description: 'Aktualizuje bota'
       },
