@@ -26,9 +26,25 @@ async function downloadZip(url, destinationPath) {
 async function extractZip(zipPath, destinationDir) {
   await fsPromises.mkdir(destinationDir, { recursive: true });
   try {
-    await execFileAsync('unzip', ['-q', zipPath, '-d', destinationDir]);
+    if (process.platform === 'win32') {
+      const escapePwsh = (value) => value.replace(/'/g, "''");
+      const command = [
+        'Expand-Archive',
+        '-LiteralPath',
+        `'${escapePwsh(zipPath)}'`,
+        '-DestinationPath',
+        `'${escapePwsh(destinationDir)}'`,
+        '-Force'
+      ].join(' ');
+      await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command]);
+    } else {
+      await execFileAsync('unzip', ['-q', zipPath, '-d', destinationDir]);
+    }
   } catch (error) {
-    throw new Error(`ZIP extraction failed: ${error.message ?? error}`);
+    const platformHint = process.platform === 'win32'
+      ? 'Ensure PowerShell Expand-Archive is available.'
+      : 'Ensure unzip is installed and available in PATH.';
+    throw new Error(`ZIP extraction failed on ${process.platform}: ${error.message ?? error}. ${platformHint}`);
   }
 }
 
