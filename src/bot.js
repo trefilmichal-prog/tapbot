@@ -26,6 +26,7 @@ client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
   (async () => {
     try {
+      await refreshClanPanelsOnStartup(readyClient);
       const result = await syncApplicationCommands({
         token: cfg.token,
         clientId: cfg.clientId,
@@ -185,6 +186,68 @@ function buildClanPanelComponents(guild, clanMap) {
       ]
     }
   ];
+}
+
+async function refreshClanPanelsOnStartup(readyClient) {
+  const state = getClanState();
+  const panelConfigs = state.clan_panel_configs ?? {};
+  const invalidGuildIds = [];
+
+  for (const [guildId, config] of Object.entries(panelConfigs)) {
+    if (!config?.channelId || !config?.messageId) continue;
+
+    let guild;
+    try {
+      guild = await readyClient.guilds.fetch(guildId);
+    } catch (error) {
+      console.warn(`Failed to fetch guild ${guildId} for clan panel refresh:`, error);
+      invalidGuildIds.push(guildId);
+      continue;
+    }
+
+    let channel;
+    try {
+      channel = await guild.channels.fetch(config.channelId);
+    } catch (error) {
+      console.warn(`Failed to fetch clan panel channel ${config.channelId}:`, error);
+      invalidGuildIds.push(guildId);
+      continue;
+    }
+
+    if (!channel || !channel.isTextBased()) {
+      invalidGuildIds.push(guildId);
+      continue;
+    }
+
+    let message;
+    try {
+      message = await channel.messages.fetch(config.messageId);
+    } catch (error) {
+      console.warn(`Failed to fetch clan panel message ${config.messageId}:`, error);
+      invalidGuildIds.push(guildId);
+      continue;
+    }
+
+    const clanMap = state.clan_clans?.[guildId] ?? {};
+    try {
+      await message.edit({
+        components: buildClanPanelComponents(guild, clanMap),
+        flags: MessageFlags.IsComponentsV2
+      });
+    } catch (error) {
+      console.warn(`Failed to refresh clan panel message ${config.messageId}:`, error);
+    }
+  }
+
+  if (invalidGuildIds.length) {
+    await updateClanState((nextState) => {
+      for (const guildId of invalidGuildIds) {
+        if (nextState.clan_panel_configs?.[guildId]) {
+          nextState.clan_panel_configs[guildId] = {};
+        }
+      }
+    });
+  }
 }
 
 function ensureGuildClanState(state, guildId) {
