@@ -50,10 +50,22 @@ function resolveWelcomeMessage(configMessage) {
 }
 
 function buildWelcomeComponents(member, welcomeMessage) {
+  const avatarUrl = member.user.displayAvatarURL({ extension: 'png', size: 256 });
   return [
     {
       type: ComponentType.Container,
       components: [
+        {
+          type: ComponentType.MediaGallery,
+          items: [
+            {
+              type: ComponentType.MediaGalleryItem,
+              media: {
+                url: avatarUrl,
+              },
+            },
+          ],
+        },
         {
           type: ComponentType.TextDisplay,
           content: `Welcome to ${member.guild.name}, <@${member.id}>!`,
