@@ -106,6 +106,7 @@ function loadClanState() {
         ...getDefaultClanState(),
         ...parsed
       };
+      migrateClanState(cachedClanState);
     }
   } catch (e) {
     console.warn('Invalid clan_state.json, resetting:', e);
@@ -113,6 +114,30 @@ function loadClanState() {
   }
 
   return cachedClanState;
+}
+
+function migrateClanState(state) {
+  const clansByGuild = state.clan_clans ?? {};
+  for (const guildId of Object.keys(clansByGuild)) {
+    const clans = clansByGuild[guildId];
+    if (!clans || typeof clans !== 'object') continue;
+    for (const clanKey of Object.keys(clans)) {
+      const clan = clans[clanKey];
+      if (!clan || typeof clan !== 'object') continue;
+      if (clan.ticketCategoryId == null && clan.ticketRoomId != null) {
+        clan.ticketCategoryId = clan.ticketRoomId;
+      }
+      if ('ticketRoomId' in clan) {
+        delete clan.ticketRoomId;
+      }
+      if (clan.acceptCategoryId == null && clan.acceptRoomId != null) {
+        clan.acceptCategoryId = clan.acceptRoomId;
+      }
+      if ('acceptRoomId' in clan) {
+        delete clan.acceptRoomId;
+      }
+    }
+  }
 }
 
 function persistClanState() {

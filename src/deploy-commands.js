@@ -119,7 +119,7 @@ export const defaultCommands = [
                 name: 'ticket_room',
                 description: 'Ticket kanál pro klan',
                 required: false,
-                channel_types: [ChannelType.GuildText]
+                channel_types: [ChannelType.GuildCategory]
               },
               {
                 type: ApplicationCommandOptionType.Role,
@@ -132,7 +132,7 @@ export const defaultCommands = [
                 name: 'accept_room',
                 description: 'Přijímací kanál pro klan',
                 required: false,
-                channel_types: [ChannelType.GuildText]
+                channel_types: [ChannelType.GuildCategory]
               },
               {
                 type: ApplicationCommandOptionType.Channel,
@@ -177,7 +177,7 @@ export const defaultCommands = [
                 name: 'ticket_room',
                 description: 'Nový ticket kanál pro klan',
                 required: false,
-                channel_types: [ChannelType.GuildText]
+                channel_types: [ChannelType.GuildCategory]
               },
               {
                 type: ApplicationCommandOptionType.Role,
@@ -190,7 +190,7 @@ export const defaultCommands = [
                 name: 'accept_room',
                 description: 'Nový přijímací kanál pro klan',
                 required: false,
-                channel_types: [ChannelType.GuildText]
+                channel_types: [ChannelType.GuildCategory]
               },
               {
                 type: ApplicationCommandOptionType.Channel,
