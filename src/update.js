@@ -97,7 +97,29 @@ async function restartPm2(processName) {
   }
 }
 
-export async function runUpdate({ zipUrl = DEFAULT_ZIP_URL } = {}) {
+async function runDeployCommands(repoRoot) {
+  try {
+    const result = await execFileAsync(
+      process.execPath,
+      ['src/deploy-commands.js'],
+      { cwd: repoRoot }
+    );
+    return {
+      ok: true,
+      stdout: result.stdout,
+      stderr: result.stderr
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      stdout: error.stdout,
+      stderr: error.stderr,
+      error
+    };
+  }
+}
+
+export async function runUpdate({ zipUrl = DEFAULT_ZIP_URL, deployCommands = false } = {}) {
   const repoRoot = path.resolve(process.cwd());
   const tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'tapbot-update-'));
   const zipPath = path.join(tempDir, 'update.zip');
@@ -107,6 +129,27 @@ export async function runUpdate({ zipUrl = DEFAULT_ZIP_URL } = {}) {
   await extractZip(zipPath, extractDir);
   const sourceRoot = await findExtractedRoot(extractDir);
   await replaceWorkingTree(sourceRoot, repoRoot);
+  let deployResult = null;
+  if (deployCommands) {
+    deployResult = await runDeployCommands(repoRoot);
+    if (deployResult.ok) {
+      if (deployResult.stdout) {
+        console.log('Deploy commands stdout:', deployResult.stdout.trim());
+      }
+      if (deployResult.stderr) {
+        console.warn('Deploy commands stderr:', deployResult.stderr.trim());
+      }
+    } else {
+      console.error('Deploy commands failed during update:', deployResult.error);
+      if (deployResult.stdout) {
+        console.error('Deploy commands stdout:', deployResult.stdout.trim());
+      }
+      if (deployResult.stderr) {
+        console.error('Deploy commands stderr:', deployResult.stderr.trim());
+      }
+    }
+  }
   const processName = await resolvePm2ProcessName(repoRoot);
   await restartPm2(processName);
+  return { deployResult };
 }
