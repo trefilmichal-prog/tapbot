@@ -1,8 +1,9 @@
 import { REST, Routes } from 'discord.js';
 import { ApplicationCommandOptionType, ChannelType } from 'discord-api-types/v10';
 import { loadConfig } from './config.js';
+import { getCommandsConfig, setCommandsConfig } from './persistence.js';
 
-const commands = [
+export const defaultCommands = [
   {
     name: 'ping',
     description: 'Replies with Pong!'
@@ -56,7 +57,52 @@ const commands = [
   }
 ];
 
-(async () => {
+export function buildCommandsPayload() {
+  const stored = getCommandsConfig();
+  const storedCommands = Array.isArray(stored.commands) ? stored.commands : [];
+  const storedSerialized = JSON.stringify(storedCommands);
+  const defaultSerialized = JSON.stringify(defaultCommands);
+  if (storedSerialized !== defaultSerialized) {
+    setCommandsConfig(defaultCommands);
+    return defaultCommands;
+  }
+  return storedCommands;
+}
+
+export async function syncApplicationCommands({ token, clientId, guildId }) {
+  const rest = new REST({ version: '10' }).setToken(token);
+  const commands = buildCommandsPayload();
+  const existing = await rest.get(
+    guildId
+      ? Routes.applicationGuildCommands(clientId, guildId)
+      : Routes.applicationCommands(clientId)
+  );
+  const existingNames = new Set(
+    Array.isArray(existing)
+      ? existing.map((command) => command.name)
+      : []
+  );
+  const newlyRegistered = commands.reduce(
+    (count, command) => count + (existingNames.has(command.name) ? 0 : 1),
+    0
+  );
+
+  if (guildId) {
+    await rest.put(
+      Routes.applicationGuildCommands(clientId, guildId),
+      { body: commands }
+    );
+  } else {
+    await rest.put(
+      Routes.applicationCommands(clientId),
+      { body: commands }
+    );
+  }
+
+  return { total: commands.length, newlyRegistered };
+}
+
+async function runDeploy() {
   let cfg;
   try {
     cfg = loadConfig();
@@ -66,26 +112,23 @@ const commands = [
     return;
   }
 
-  const rest = new REST({ version: '10' }).setToken(cfg.token);
-
   try {
     console.log('Started refreshing application (/) commands...');
-
-    if (cfg.guildId) {
-      await rest.put(
-        Routes.applicationGuildCommands(cfg.clientId, cfg.guildId),
-        { body: commands }
-      );
-      console.log('Successfully reloaded guild (/) commands.');
-    } else {
-      await rest.put(
-        Routes.applicationCommands(cfg.clientId),
-        { body: commands }
-      );
-      console.log('Successfully reloaded global (/) commands.');
-    }
+    const result = await syncApplicationCommands({
+      token: cfg.token,
+      clientId: cfg.clientId,
+      guildId: cfg.guildId
+    });
+    const target = cfg.guildId ? 'guild' : 'global';
+    console.log(
+      `Successfully reloaded ${target} (/) commands. Total: ${result.total}, new: ${result.newlyRegistered}`
+    );
   } catch (error) {
     console.error('Deploy failed:', error);
     process.exitCode = 1;
   }
-})();
+}
+
+if (process.argv[1] && process.argv[1].endsWith('deploy-commands.js')) {
+  runDeploy();
+}
