@@ -1,5 +1,7 @@
 import { Client, Events, GatewayIntentBits, GuildMember } from 'discord.js';
 import { ChannelType, ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { loadConfig } from './config.js';
 import { getWelcomeConfig, setWelcomeConfig } from './persistence.js';
 import { runUpdate } from './update.js';
@@ -85,6 +87,26 @@ function buildWelcomeComponents(member, welcomeMessage) {
   ];
 }
 
+async function getBotVersion() {
+  const versionPath = path.resolve(process.cwd(), 'verze.txt');
+  try {
+    const raw = await fs.readFile(versionPath, 'utf8');
+    const trimmed = raw.trim();
+    const parsed = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(parsed) || String(parsed) !== trimmed || parsed <= 0) {
+      await fs.writeFile(versionPath, '1', 'utf8');
+      return '1';
+    }
+    return trimmed;
+  } catch (e) {
+    if (e && e.code === 'ENOENT') {
+      await fs.writeFile(versionPath, '1', 'utf8');
+      return '1';
+    }
+    throw e;
+  }
+}
+
 async function sendWelcomeMessage(member, settings) {
   const welcomeMessage = resolveWelcomeMessage(settings.message);
   const welcomeComponents = buildWelcomeComponents(member, welcomeMessage);
@@ -127,6 +149,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const subcommand = interaction.options.getSubcommand();
+      if (subcommand === 'verze') {
+        const version = await getBotVersion();
+        await interaction.reply({
+          components: [
+            {
+              type: ComponentType.Container,
+              components: [
+                {
+                  type: ComponentType.TextDisplay,
+                  content: `Verze bota: ${version}`
+                }
+              ]
+            }
+          ],
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+
       if (subcommand === 'update') {
         await interaction.reply({
           content: 'Aktualizace spuštěna. Bot se po dokončení restartuje.',
