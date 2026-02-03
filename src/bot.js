@@ -419,17 +419,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const description = interaction.options.getString('description')?.trim() ?? null;
           const ticketRoomOption = interaction.options.getChannel('ticket_room');
           const reviewRoleOption = interaction.options.getRole('review_role');
-          const acceptRoomOption = interaction.options.getChannel('accept_room');
           const acceptCategoryOption = interaction.options.getChannel('accept_category');
           const orderPosition = interaction.options.getInteger('order_position');
           const ticketCategoryId = ticketRoomOption?.type === ChannelType.GuildCategory
             ? ticketRoomOption.id
             : null;
-          const acceptCategoryId = acceptRoomOption?.type === ChannelType.GuildCategory
-            ? acceptRoomOption.id
-            : acceptCategoryOption?.type === ChannelType.GuildCategory
-              ? acceptCategoryOption.id
-              : null;
+          const acceptCategoryId = acceptCategoryOption?.type === ChannelType.GuildCategory
+            ? acceptCategoryOption.id
+            : null;
           const reviewRoleId = reviewRoleOption?.id ?? null;
           let existed = false;
 
@@ -468,17 +465,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const description = interaction.options.getString('description')?.trim() ?? null;
           const ticketRoomOption = interaction.options.getChannel('ticket_room');
           const reviewRoleOption = interaction.options.getRole('review_role');
-          const acceptRoomOption = interaction.options.getChannel('accept_room');
           const acceptCategoryOption = interaction.options.getChannel('accept_category');
           const orderPositionOption = interaction.options.getInteger('order_position');
           const ticketCategoryId = ticketRoomOption?.type === ChannelType.GuildCategory
             ? ticketRoomOption.id
             : null;
-          const acceptCategoryId = acceptRoomOption?.type === ChannelType.GuildCategory
-            ? acceptRoomOption.id
-            : acceptCategoryOption?.type === ChannelType.GuildCategory
-              ? acceptCategoryOption.id
-              : null;
+          const acceptCategoryId = acceptCategoryOption?.type === ChannelType.GuildCategory
+            ? acceptCategoryOption.id
+            : null;
           const reviewRoleId = reviewRoleOption?.id ?? null;
           let found = false;
 
@@ -495,7 +489,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 ? ticketCategoryId
                 : entry[name].ticketCategoryId ?? null,
               reviewRoleId: reviewRoleOption ? reviewRoleId : entry[name].reviewRoleId ?? null,
-              acceptCategoryId: acceptRoomOption || acceptCategoryOption
+              acceptCategoryId: acceptCategoryOption
                 ? acceptCategoryId
                 : entry[name].acceptCategoryId ?? null,
               orderPosition: orderPositionOption ?? entry[name].orderPosition ?? null,

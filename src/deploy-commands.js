@@ -129,13 +129,6 @@ export const defaultCommands = [
               },
               {
                 type: ApplicationCommandOptionType.Channel,
-                name: 'accept_room',
-                description: 'Přijímací kanál pro klan',
-                required: false,
-                channel_types: [ChannelType.GuildCategory]
-              },
-              {
-                type: ApplicationCommandOptionType.Channel,
                 name: 'accept_category',
                 description: 'Kategorie pro přijaté',
                 required: false,
@@ -184,13 +177,6 @@ export const defaultCommands = [
                 name: 'review_role',
                 description: 'Nová role pro review žádostí',
                 required: false
-              },
-              {
-                type: ApplicationCommandOptionType.Channel,
-                name: 'accept_room',
-                description: 'Nový přijímací kanál pro klan',
-                required: false,
-                channel_types: [ChannelType.GuildCategory]
               },
               {
                 type: ApplicationCommandOptionType.Channel,
