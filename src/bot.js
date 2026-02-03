@@ -9,7 +9,13 @@ import {
   TextInputStyle,
   ActionRowBuilder
 } from 'discord.js';
-import { ChannelType, ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
+import {
+  ButtonStyle,
+  ChannelType,
+  ComponentType,
+  MessageFlags,
+  SeparatorSpacingSize
+} from 'discord-api-types/v10';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
@@ -38,6 +44,9 @@ const CLAN_TICKET_MODAL_PREFIX = 'clan_ticket_modal:';
 const CLAN_TICKET_REBIRTHS_INPUT_ID = 'clan_ticket_rebirths_input';
 const CLAN_TICKET_GAMEPASSES_INPUT_ID = 'clan_ticket_gamepasses_input';
 const CLAN_TICKET_HOURS_INPUT_ID = 'clan_ticket_hours_input';
+const CLAN_TICKET_DECISION_PREFIX = 'clan_ticket_decision:';
+const CLAN_TICKET_DECISION_ACCEPT = 'accept';
+const CLAN_TICKET_DECISION_REJECT = 'reject';
 
 client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
@@ -208,7 +217,13 @@ function buildClanPanelComponents(guild, clanMap, panelDescription) {
   ];
 }
 
-function buildTicketSummary(answers) {
+function buildTicketSummary(answers, decision) {
+  const decisionText = decision?.status
+    ? `**Decision:** ${decision.status === CLAN_TICKET_DECISION_ACCEPT ? 'Accepted ✅' : 'Rejected ❌'}
+**Reviewer:** <@${decision.decidedBy}>
+**Updated:** ${decision.updatedAt}`
+    : null;
+  const disableButtons = Boolean(decision?.status);
   return [
     {
       type: ComponentType.Container,
@@ -235,6 +250,43 @@ function buildTicketSummary(answers) {
             '',
             '✂️ **IMPORTANT:** Crop your screenshots so your **Roblox username is clearly visible!** 👤✅ ⚙️'
           ].join('\n')
+        },
+        {
+          type: ComponentType.Separator,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small
+        },
+        ...(decisionText
+          ? [
+              {
+                type: ComponentType.TextDisplay,
+                content: decisionText
+              },
+              {
+                type: ComponentType.Separator,
+                divider: true,
+                spacing: SeparatorSpacingSize.Small
+              }
+            ]
+          : []),
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_ACCEPT}`,
+              label: 'Accept',
+              style: ButtonStyle.Success,
+              disabled: disableButtons
+            },
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REJECT}`,
+              label: 'Reject',
+              style: ButtonStyle.Danger,
+              disabled: disableButtons
+            }
+          ]
         }
       ]
     }
@@ -391,6 +443,9 @@ function ensureGuildClanState(state, guildId) {
   }
   if (!state.clan_ticket_reminders[guildId]) {
     state.clan_ticket_reminders[guildId] = {};
+  }
+  if (!state.clan_ticket_decisions[guildId]) {
+    state.clan_ticket_decisions[guildId] = {};
   }
   return state;
 }
@@ -560,13 +615,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        await ticketChannel.send({
+        const summaryMessage = await ticketChannel.send({
           components: buildTicketSummary({
             rebirths,
             gamepasses,
             hours
           }),
           flags: MessageFlags.IsComponentsV2
+        });
+
+        await updateClanState((state) => {
+          ensureGuildClanState(state, interaction.guildId);
+          state.clan_ticket_decisions[interaction.guildId][ticketChannel.id] = {
+            clanName,
+            applicantId: interaction.user.id,
+            messageId: summaryMessage.id,
+            answers: {
+              rebirths,
+              gamepasses,
+              hours
+            },
+            status: null,
+            decidedBy: null,
+            updatedAt: null,
+            createdAt: new Date().toISOString()
+          };
         });
 
         await ticketChannel.send({
@@ -658,6 +731,117 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const modal = buildTicketModal(selectedClan);
       await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.isButton()) {
+      if (!interaction.customId.startsWith(CLAN_TICKET_DECISION_PREFIX)) return;
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('Tuto akci lze použít jen na serveru.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const action = interaction.customId.slice(CLAN_TICKET_DECISION_PREFIX.length);
+      if (![CLAN_TICKET_DECISION_ACCEPT, CLAN_TICKET_DECISION_REJECT].includes(action)) {
+        await interaction.reply({
+          components: buildTextComponents('Neplatná akce pro ticket.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const state = getClanState();
+      const ticketEntry = state.clan_ticket_decisions?.[interaction.guildId]?.[interaction.channelId];
+      if (!ticketEntry) {
+        await interaction.reply({
+          components: buildTextComponents('Ticket nebyl nalezen nebo už není aktivní.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const clan = state.clan_clans?.[interaction.guildId]?.[ticketEntry.clanName];
+      if (!clan) {
+        await interaction.reply({
+          components: buildTextComponents('Klan pro tento ticket nebyl nalezen.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const hasReviewPermission = interaction.member.permissions.has(
+        PermissionsBitField.Flags.Administrator
+      ) || (clan.reviewRoleId && interaction.member.roles.cache.has(clan.reviewRoleId));
+      if (!hasReviewPermission) {
+        await interaction.reply({
+          components: buildTextComponents('Nemáš oprávnění rozhodovat o tomto ticketu.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (ticketEntry.status) {
+        await interaction.reply({
+          components: buildTextComponents('O tomto ticketu už bylo rozhodnuto.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const updatedAt = new Date().toISOString();
+      await updateClanState((nextState) => {
+        ensureGuildClanState(nextState, interaction.guildId);
+        const entry = nextState.clan_ticket_decisions[interaction.guildId][interaction.channelId];
+        if (!entry) return;
+        entry.status = action;
+        entry.decidedBy = interaction.user.id;
+        entry.updatedAt = updatedAt;
+      });
+
+      if (action === CLAN_TICKET_DECISION_ACCEPT && clan.acceptCategoryId) {
+        try {
+          await interaction.channel?.setParent(clan.acceptCategoryId, {
+            lockPermissions: false
+          });
+        } catch (error) {
+          console.warn('Failed to move accepted ticket channel:', error);
+        }
+      }
+
+      const refreshedState = getClanState();
+      const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.guildId]?.[
+        interaction.channelId
+      ];
+      if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
+        try {
+          const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
+          await message.edit({
+            components: buildTicketSummary(refreshedEntry.answers ?? {}, refreshedEntry),
+            flags: MessageFlags.IsComponentsV2
+          });
+        } catch (error) {
+          console.warn('Failed to update ticket summary message:', error);
+        }
+      }
+
+      await interaction.reply({
+        components: buildTextComponents(
+          action === CLAN_TICKET_DECISION_ACCEPT
+            ? 'Ticket byl označen jako přijatý.'
+            : 'Ticket byl označen jako zamítnutý.'
+        ),
+        flags: MessageFlags.IsComponentsV2,
+        ephemeral: true
+      });
       return;
     }
 
