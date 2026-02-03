@@ -5,9 +5,39 @@ const rootDir = path.resolve(process.cwd());
 const dataDir = path.join(rootDir, 'data');
 const welcomeConfigPath = path.join(dataDir, 'welcome-config.json');
 const commandsConfigPath = path.join(dataDir, 'commands-config.json');
+const clanStatePath = path.join(dataDir, 'clan_state.json');
 
 let cachedWelcomeConfig = null;
 let cachedCommandsConfig = null;
+let cachedClanState = null;
+let clanStateWriteQueue = Promise.resolve();
+
+function getDefaultClanState() {
+  return {
+    schemaVersion: 1,
+    clan_application_panels: {},
+    clan_panel_configs: {},
+    clan_clans: {},
+    clan_applications: {},
+    clan_ticket_vacations: {},
+    cooldowns: {},
+    cooldowns_user: {},
+    cooldowns_role: {}
+  };
+}
+
+async function atomicWriteJson(targetPath, data) {
+  await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
+  const tempName = `${path.basename(targetPath)}.${process.pid}.${Date.now()}.tmp`;
+  const tempPath = path.join(path.dirname(targetPath), tempName);
+  await fs.promises.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf8');
+  await fs.promises.rename(tempPath, targetPath);
+}
+
+function enqueueClanStateWrite(task) {
+  clanStateWriteQueue = clanStateWriteQueue.then(task, task);
+  return clanStateWriteQueue;
+}
 
 function loadWelcomeConfig() {
   if (cachedWelcomeConfig) return cachedWelcomeConfig;
@@ -55,6 +85,60 @@ function loadCommandsConfig() {
 function persistCommandsConfig() {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.writeFileSync(commandsConfigPath, JSON.stringify(cachedCommandsConfig, null, 2), 'utf8');
+}
+
+function loadClanState() {
+  if (cachedClanState) return cachedClanState;
+
+  if (!fs.existsSync(clanStatePath)) {
+    cachedClanState = getDefaultClanState();
+    return cachedClanState;
+  }
+
+  const raw = fs.readFileSync(clanStatePath, 'utf8');
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      cachedClanState = getDefaultClanState();
+    } else {
+      cachedClanState = {
+        ...getDefaultClanState(),
+        ...parsed
+      };
+    }
+  } catch (e) {
+    console.warn('Invalid clan_state.json, resetting:', e);
+    cachedClanState = getDefaultClanState();
+  }
+
+  return cachedClanState;
+}
+
+function persistClanState() {
+  if (!cachedClanState) {
+    cachedClanState = getDefaultClanState();
+  }
+  return enqueueClanStateWrite(() => atomicWriteJson(clanStatePath, cachedClanState));
+}
+
+export function getClanState() {
+  return loadClanState();
+}
+
+export function setClanState(nextState) {
+  cachedClanState = {
+    ...getDefaultClanState(),
+    ...(nextState && typeof nextState === 'object' ? nextState : {})
+  };
+  return persistClanState().then(() => cachedClanState);
+}
+
+export function updateClanState(mutator) {
+  const state = loadClanState();
+  if (typeof mutator === 'function') {
+    mutator(state);
+  }
+  return persistClanState().then(() => state);
 }
 
 export function getWelcomeConfig(guildId) {
