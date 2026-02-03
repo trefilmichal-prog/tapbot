@@ -1,5 +1,5 @@
 import { Client, Events, GatewayIntentBits } from 'discord.js';
-import { ChannelType, ComponentType, SeparatorSpacingSize } from 'discord-api-types/v10';
+import { ChannelType, ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
 import { loadConfig } from './config.js';
 import { getWelcomeConfig, setWelcomeConfig } from './persistence.js';
 
@@ -75,7 +75,10 @@ function buildWelcomeComponents(member, welcomeMessage) {
 async function sendWelcomeMessage(member, settings) {
   const welcomeMessage = resolveWelcomeMessage(settings.message);
   const welcomeComponents = buildWelcomeComponents(member, welcomeMessage);
-  await settings.channel.send({ components: welcomeComponents });
+  await settings.channel.send({
+    components: welcomeComponents,
+    flags: MessageFlags.IsComponentsV2
+  });
 }
 
 client.on(Events.GuildMemberAdd, async (member) => {
