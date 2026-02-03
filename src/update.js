@@ -8,7 +8,7 @@ import { pipeline } from 'node:stream/promises';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_ZIP_URL = 'https://github.com/trefilmichal-prog/tapbot/archive/refs/heads/main.zip';
-const KEEP_ENTRIES = new Set(['config.json', 'data']);
+const KEEP_ENTRIES = new Set(['config.json', 'data', 'node_modules', 'package-lock.json']);
 
 async function downloadZip(url, destinationPath) {
   const response = await fetch(url);
