@@ -7,7 +7,7 @@ set "PID_FILE=%DATA_DIR%\bot.pid"
 
 if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
 
-for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "(Start-Process -FilePath 'npm' -ArgumentList 'start' -PassThru).Id"`) do set "BOT_PID=%%p"
+for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "(Start-Process -FilePath 'npm' -ArgumentList 'start' -WorkingDirectory '%REPO_DIR%' -PassThru).Id"`) do set "BOT_PID=%%p"
 
 if not "%BOT_PID%"=="" (
   echo %BOT_PID%> "%PID_FILE%"
