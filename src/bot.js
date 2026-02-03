@@ -1,6 +1,7 @@
 import { Client, Events, GatewayIntentBits } from 'discord.js';
-import { ComponentType, SeparatorSpacingSize } from 'discord-api-types/v10';
+import { ChannelType, ComponentType, SeparatorSpacingSize } from 'discord-api-types/v10';
 import { loadConfig } from './config.js';
+import { getWelcomeConfig, setWelcomeConfig } from './persistence.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason);
@@ -20,13 +21,14 @@ client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
 });
 
-async function resolveWelcomeChannel(member) {
-  const welcomeChannelId = cfg.welcomeChannelId;
+async function resolveWelcomeSettings(member) {
+  const guildConfig = getWelcomeConfig(member.guild.id);
+  const welcomeChannelId = guildConfig?.channelId ?? cfg.welcomeChannelId;
   if (welcomeChannelId) {
     try {
       const channel = await member.guild.channels.fetch(welcomeChannelId);
       if (channel && channel.isTextBased()) {
-        return channel;
+        return { channel, message: guildConfig?.message ?? null };
       }
     } catch (e) {
       console.warn(`Failed to fetch welcome channel ${welcomeChannelId}:`, e);
@@ -35,16 +37,19 @@ async function resolveWelcomeChannel(member) {
 
   const systemChannel = member.guild.systemChannel;
   if (systemChannel && systemChannel.isTextBased()) {
-    return systemChannel;
+    return { channel: systemChannel, message: guildConfig?.message ?? null };
   }
 
   return null;
 }
 
 client.on(Events.GuildMemberAdd, async (member) => {
-  const channel = await resolveWelcomeChannel(member);
-  if (!channel) return;
+  const settings = await resolveWelcomeSettings(member);
+  if (!settings) return;
 
+  const welcomeMessage = settings.message && settings.message.trim()
+    ? settings.message.trim()
+    : 'We are happy you joined. Feel free to introduce yourself!';
   const welcomeComponents = [
     {
       type: ComponentType.Container,
@@ -60,14 +65,14 @@ client.on(Events.GuildMemberAdd, async (member) => {
         },
         {
           type: ComponentType.TextDisplay,
-          content: 'We are happy you joined. Feel free to introduce yourself!',
+          content: welcomeMessage,
         },
       ],
     },
   ];
 
   try {
-    await channel.send({ components: welcomeComponents });
+    await settings.channel.send({ components: welcomeComponents });
   } catch (e) {
     console.error('Failed to send welcome message:', e);
   }
@@ -76,6 +81,42 @@ client.on(Events.GuildMemberAdd, async (member) => {
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === 'config') {
+      const subcommand = interaction.options.getSubcommand();
+      if (subcommand === 'welcome') {
+        if (!interaction.inGuild()) {
+          await interaction.reply({
+            content: 'Tento příkaz lze použít jen na serveru.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const channel = interaction.options.getChannel('channel', true);
+        if (!channel || channel.type !== ChannelType.GuildText) {
+          await interaction.reply({
+            content: 'Prosím vyber textový kanál.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const messageRaw = interaction.options.getString('message');
+        const message = messageRaw && messageRaw.trim() ? messageRaw.trim() : null;
+
+        setWelcomeConfig(interaction.guildId, {
+          channelId: channel.id,
+          message
+        });
+
+        await interaction.reply({
+          content: 'Uvítání bylo uloženo.',
+          ephemeral: true
+        });
+      }
+      return;
+    }
 
     if (interaction.commandName === 'ping') {
       await interaction.reply('Pong!');

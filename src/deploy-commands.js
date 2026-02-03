@@ -1,10 +1,37 @@
 import { REST, Routes } from 'discord.js';
+import { ApplicationCommandOptionType, ChannelType } from 'discord-api-types/v10';
 import { loadConfig } from './config.js';
 
 const commands = [
   {
     name: 'ping',
     description: 'Replies with Pong!'
+  },
+  {
+    name: 'config',
+    description: 'Nastavení bota',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'welcome',
+        description: 'Nastav uvítací zprávu',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Channel,
+            name: 'channel',
+            description: 'Textový kanál pro uvítání',
+            required: true,
+            channel_types: [ChannelType.GuildText]
+          },
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'message',
+            description: 'Volitelná uvítací zpráva',
+            required: false
+          }
+        ]
+      }
+    ]
   }
 ];
 
