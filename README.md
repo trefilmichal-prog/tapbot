@@ -34,3 +34,8 @@ V Discord Developer Portal:
 - Pokud vyplníš Guild ID, příkazy se zaregistrují okamžitě jen pro tento server.
 - Pokud Guild ID necháš prázdné, příkazy se registrují globálně (může to trvat déle, podle Discordu).
 
+## Aktualizace na Windows
+1) Ujisti se, že máš nainstalovaný PowerShell (součást Windows).
+2) Spusť `update.bat` v kořeni repozitáře.
+
+Skript stáhne poslední verzi z GitHubu, aktualizuje soubory a zachová `config.json` i složku `data/`, poté bota znovu spustí pomocí `run.bat`.
