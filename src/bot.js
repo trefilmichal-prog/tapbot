@@ -7,7 +7,8 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  ActionRowBuilder
+  ActionRowBuilder,
+  ButtonStyle
 } from 'discord.js';
 import { ChannelType, ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
 import { promises as fs } from 'node:fs';
@@ -38,6 +39,8 @@ const CLAN_TICKET_MODAL_PREFIX = 'clan_ticket_modal:';
 const CLAN_TICKET_REBIRTHS_INPUT_ID = 'clan_ticket_rebirths_input';
 const CLAN_TICKET_GAMEPASSES_INPUT_ID = 'clan_ticket_gamepasses_input';
 const CLAN_TICKET_HOURS_INPUT_ID = 'clan_ticket_hours_input';
+const CLAN_TICKET_ACCEPT_PREFIX = 'clan_ticket_accept:';
+const CLAN_TICKET_DENY_PREFIX = 'clan_ticket_deny:';
 
 client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
@@ -129,6 +132,42 @@ function buildTextComponents(content) {
         {
           type: ComponentType.TextDisplay,
           content
+        }
+      ]
+    }
+  ];
+}
+
+function buildClanTicketPanelComponents(ticketChannelId) {
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: 'Vyber akci pro tento ticket.'
+        },
+        {
+          type: ComponentType.Separator,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small
+        },
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.Button,
+              style: ButtonStyle.Success,
+              label: 'Accept',
+              custom_id: `${CLAN_TICKET_ACCEPT_PREFIX}${ticketChannelId}`
+            },
+            {
+              type: ComponentType.Button,
+              style: ButtonStyle.Danger,
+              label: 'Deny',
+              custom_id: `${CLAN_TICKET_DENY_PREFIX}${ticketChannelId}`
+            }
+          ]
         }
       ]
     }
@@ -389,6 +428,9 @@ function ensureGuildClanState(state, guildId) {
   if (!state.clan_panel_configs[guildId]) {
     state.clan_panel_configs[guildId] = {};
   }
+  if (!state.clan_tickets[guildId]) {
+    state.clan_tickets[guildId] = {};
+  }
   if (!state.clan_ticket_reminders[guildId]) {
     state.clan_ticket_reminders[guildId] = {};
   }
@@ -560,6 +602,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
+        await updateClanState((state) => {
+          ensureGuildClanState(state, interaction.guildId);
+          state.clan_tickets[interaction.guildId][ticketChannel.id] = {
+            channelId: ticketChannel.id,
+            clanName,
+            ownerId: interaction.user.id,
+            status: 'open',
+            createdAt: new Date().toISOString()
+          };
+        });
+
         await ticketChannel.send({
           components: buildTicketSummary({
             rebirths,
@@ -661,7 +714,200 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (interaction.isButton()) {
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('Tuto akci lze použít jen na serveru.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const customId = interaction.customId ?? '';
+      const isAccept = customId.startsWith(CLAN_TICKET_ACCEPT_PREFIX);
+      const isDeny = customId.startsWith(CLAN_TICKET_DENY_PREFIX);
+      if (!isAccept && !isDeny) return;
+
+      const ticketChannelId = customId.slice(
+        isAccept ? CLAN_TICKET_ACCEPT_PREFIX.length : CLAN_TICKET_DENY_PREFIX.length
+      );
+      if (!ticketChannelId) {
+        await interaction.reply({
+          components: buildTextComponents('Ticket nebyl rozpoznán.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const state = getClanState();
+      const ticketEntry = state.clan_tickets?.[interaction.guildId]?.[ticketChannelId];
+      if (!ticketEntry) {
+        await interaction.reply({
+          components: buildTextComponents('Tento ticket není uložen v systému.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const clan = state.clan_clans?.[interaction.guildId]?.[ticketEntry.clanName];
+      if (!clan) {
+        await interaction.reply({
+          components: buildTextComponents('K ticketu nebyl nalezen klan.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      let ticketChannel;
+      try {
+        ticketChannel = await interaction.guild.channels.fetch(ticketChannelId);
+      } catch (error) {
+        console.warn(`Failed to fetch ticket channel ${ticketChannelId}:`, error);
+      }
+
+      if (!ticketChannel || ticketChannel.type !== ChannelType.GuildText) {
+        await interaction.reply({
+          components: buildTextComponents('Ticket kanál nebyl nalezen.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (isAccept) {
+        if (!clan.acceptCategoryId) {
+          await interaction.reply({
+            components: buildTextComponents('K tomuto klanu není nastavená accept kategorie.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        try {
+          await ticketChannel.setParent(clan.acceptCategoryId, { lockPermissions: false });
+        } catch (error) {
+          console.error('Failed to move ticket to accept category:', error);
+          await interaction.reply({
+            components: buildTextComponents('Nepodařilo se přesunout ticket.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        await updateClanState((nextState) => {
+          ensureGuildClanState(nextState, interaction.guildId);
+          if (nextState.clan_tickets[interaction.guildId]?.[ticketChannelId]) {
+            nextState.clan_tickets[interaction.guildId][ticketChannelId] = {
+              ...nextState.clan_tickets[interaction.guildId][ticketChannelId],
+              status: 'accepted',
+              updatedAt: new Date().toISOString()
+            };
+          }
+        });
+
+        await interaction.reply({
+          components: buildTextComponents('Ticket byl přesunut do accept kategorie.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (isDeny) {
+        try {
+          const deniedName = ticketChannel.name.startsWith('denied-')
+            ? ticketChannel.name
+            : `denied-${ticketChannel.name}`.slice(0, 100);
+          await ticketChannel.setName(deniedName);
+          if (ticketEntry.ownerId) {
+            await ticketChannel.permissionOverwrites.edit(ticketEntry.ownerId, {
+              SendMessages: false,
+              AddReactions: false
+            });
+          }
+        } catch (error) {
+          console.error('Failed to deny ticket:', error);
+          await interaction.reply({
+            components: buildTextComponents('Nepodařilo se upravit ticket.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        await updateClanState((nextState) => {
+          ensureGuildClanState(nextState, interaction.guildId);
+          if (nextState.clan_tickets[interaction.guildId]?.[ticketChannelId]) {
+            nextState.clan_tickets[interaction.guildId][ticketChannelId] = {
+              ...nextState.clan_tickets[interaction.guildId][ticketChannelId],
+              status: 'denied',
+              updatedAt: new Date().toISOString()
+            };
+          }
+        });
+
+        await interaction.reply({
+          components: buildTextComponents('Ticket byl označen jako zamítnutý.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+      }
+      return;
+    }
+
     if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === 'c') {
+      const subcommand = interaction.options.getSubcommand(true);
+      if (subcommand !== 'panel') return;
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const channel = interaction.channel;
+      if (!channel || channel.type !== ChannelType.GuildText) {
+        await interaction.reply({
+          components: buildTextComponents('Tento příkaz lze použít jen v textovém kanálu.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const state = getClanState();
+      const ticketEntry = state.clan_tickets?.[interaction.guildId]?.[channel.id];
+      if (!ticketEntry) {
+        await interaction.reply({
+          components: buildTextComponents('Tento kanál není evidován jako ticket.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      await channel.send({
+        components: buildClanTicketPanelComponents(channel.id),
+        flags: MessageFlags.IsComponentsV2
+      });
+
+      await interaction.reply({
+        components: buildTextComponents('Panel byl odeslán do ticketu.'),
+        flags: MessageFlags.IsComponentsV2,
+        ephemeral: true
+      });
+      return;
+    }
 
     if (interaction.commandName === 'config') {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {

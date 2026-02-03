@@ -9,6 +9,17 @@ export const defaultCommands = [
     description: 'Replies with Pong!'
   },
   {
+    name: 'c',
+    description: 'Clan ticket panel',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'panel',
+        description: 'Odešle ticket panel do aktuálního ticket kanálu'
+      }
+    ]
+  },
+  {
     name: 'config',
     description: 'Nastavení bota',
     options: [
