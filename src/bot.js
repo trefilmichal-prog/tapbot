@@ -188,6 +188,54 @@ function buildClanPanelComponents(guild, clanMap) {
   ];
 }
 
+async function refreshClanPanelForGuild(guild, guildId) {
+  const state = getClanState();
+  const panelConfig = state.clan_panel_configs?.[guildId];
+  if (!panelConfig?.channelId || !panelConfig?.messageId) return;
+
+  let channel;
+  try {
+    channel = await guild.channels.fetch(panelConfig.channelId);
+  } catch (error) {
+    console.warn(`Failed to fetch clan panel channel ${panelConfig.channelId}:`, error);
+  }
+
+  if (!channel || !channel.isTextBased()) {
+    await updateClanState((nextState) => {
+      if (nextState.clan_panel_configs?.[guildId]) {
+        nextState.clan_panel_configs[guildId] = {};
+      }
+    });
+    return;
+  }
+
+  let message;
+  try {
+    message = await channel.messages.fetch(panelConfig.messageId);
+  } catch (error) {
+    console.warn(`Failed to fetch clan panel message ${panelConfig.messageId}:`, error);
+  }
+
+  if (!message) {
+    await updateClanState((nextState) => {
+      if (nextState.clan_panel_configs?.[guildId]) {
+        nextState.clan_panel_configs[guildId] = {};
+      }
+    });
+    return;
+  }
+
+  const clanMap = state.clan_clans?.[guildId] ?? {};
+  try {
+    await message.edit({
+      components: buildClanPanelComponents(guild, clanMap),
+      flags: MessageFlags.IsComponentsV2
+    });
+  } catch (error) {
+    console.warn(`Failed to refresh clan panel message ${panelConfig.messageId}:`, error);
+  }
+}
+
 async function refreshClanPanelsOnStartup(readyClient) {
   const state = getClanState();
   const panelConfigs = state.clan_panel_configs ?? {};
@@ -512,6 +560,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             };
           });
 
+          if (!existed) {
+            await refreshClanPanelForGuild(interaction.guild, guildId);
+          }
+
           await interaction.reply({
             components: buildTextComponents(
               existed ? `Klan "${name}" už existuje.` : `Klan "${name}" byl přidán.`
@@ -560,6 +612,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             };
           });
 
+          if (found) {
+            await refreshClanPanelForGuild(interaction.guild, guildId);
+          }
+
           await interaction.reply({
             components: buildTextComponents(
               found ? `Klan "${name}" byl upraven.` : `Klan "${name}" nebyl nalezen.`
@@ -581,6 +637,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
               removed = true;
             }
           });
+
+          if (removed) {
+            await refreshClanPanelForGuild(interaction.guild, guildId);
+          }
 
           await interaction.reply({
             components: buildTextComponents(
