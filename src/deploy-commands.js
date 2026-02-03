@@ -13,6 +13,11 @@ const commands = [
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
+        name: 'update',
+        description: 'Aktualizuje bota'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
         name: 'welcome',
         description: 'Nastav uvítací zprávu',
         options: [

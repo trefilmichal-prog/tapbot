@@ -2,6 +2,7 @@ import { Client, Events, GatewayIntentBits, GuildMember } from 'discord.js';
 import { ChannelType, ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
 import { loadConfig } from './config.js';
 import { getWelcomeConfig, setWelcomeConfig } from './persistence.js';
+import { runUpdate } from './update.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason);
@@ -126,6 +127,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const subcommand = interaction.options.getSubcommand();
+      if (subcommand === 'update') {
+        await interaction.reply({
+          content: 'Aktualizace spuštěna. Bot se po dokončení restartuje.',
+          ephemeral: true
+        });
+
+        try {
+          await runUpdate();
+        } catch (e) {
+          console.error('Update failed:', e);
+          try {
+            await interaction.followUp({
+              content: 'Aktualizace selhala. Podívej se do logů.',
+              ephemeral: true
+            });
+          } catch (followUpError) {
+            console.error('Failed to send update failure notice:', followUpError);
+          }
+        }
+        return;
+      }
+
       if (subcommand === 'welcome') {
         const channel = interaction.options.getChannel('channel', true);
         if (!channel || channel.type !== ChannelType.GuildText) {
