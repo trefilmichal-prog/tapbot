@@ -1,4 +1,15 @@
-import { Client, Events, GatewayIntentBits, GuildMember, PermissionsBitField, ButtonStyle } from 'discord.js';
+import {
+  Client,
+  Events,
+  GatewayIntentBits,
+  GuildMember,
+  PermissionsBitField,
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder
+} from 'discord.js';
 import { ChannelType, ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -21,6 +32,8 @@ try {
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 const CLAN_PANEL_ADMIN_ROLE_ID = '1468192944975515759';
+const CLAN_PANEL_EDIT_MODAL_ID = 'clan_panel_edit_modal';
+const CLAN_PANEL_DESCRIPTION_INPUT_ID = 'clan_panel_description_input';
 
 client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
@@ -143,8 +156,12 @@ function sortClansForDisplay(clans) {
   });
 }
 
-function buildClanPanelComponents(guild, clanMap) {
+function buildClanPanelComponents(guild, clanMap, panelDescription) {
   const clans = sortClansForDisplay(Object.values(clanMap ?? {}));
+  const trimmedDescription = typeof panelDescription === 'string'
+    ? panelDescription.trim()
+    : '';
+  const resolvedDescription = trimmedDescription || 'Bez popisku.';
   const listText = clans.length
     ? clans
         .map((clan) => {
@@ -154,36 +171,52 @@ function buildClanPanelComponents(guild, clanMap) {
         })
         .join('\n')
     : 'Zatím nejsou evidovány žádné klany.';
+  const components = [
+    {
+      type: ComponentType.TextDisplay,
+      content: `Clan panel · ${guild.name}`
+    },
+    {
+      type: ComponentType.Separator,
+      divider: true,
+      spacing: SeparatorSpacingSize.Small
+    }
+  ];
+
+  components.push(
+    {
+      type: ComponentType.TextDisplay,
+      content: resolvedDescription
+    },
+    {
+      type: ComponentType.Separator,
+      divider: true,
+      spacing: SeparatorSpacingSize.Small
+    }
+  );
+
+  components.push(
+    {
+      type: ComponentType.TextDisplay,
+      content: listText
+    },
+    {
+      type: ComponentType.ActionRow,
+      components: [
+        {
+          type: ComponentType.Button,
+          style: ButtonStyle.Primary,
+          custom_id: 'clan_panel_apply',
+          label: 'Chci se přidat'
+        }
+      ]
+    }
+  );
 
   return [
     {
       type: ComponentType.Container,
-      components: [
-        {
-          type: ComponentType.TextDisplay,
-          content: `Clan panel · ${guild.name}`
-        },
-        {
-          type: ComponentType.Separator,
-          divider: true,
-          spacing: SeparatorSpacingSize.Small
-        },
-        {
-          type: ComponentType.TextDisplay,
-          content: listText
-        },
-        {
-          type: ComponentType.ActionRow,
-          components: [
-            {
-              type: ComponentType.Button,
-              style: ButtonStyle.Primary,
-              custom_id: 'clan_panel_apply',
-              label: 'Chci se přidat'
-            }
-          ]
-        }
-      ]
+      components
     }
   ];
 }
@@ -226,9 +259,10 @@ async function refreshClanPanelForGuild(guild, guildId) {
   }
 
   const clanMap = state.clan_clans?.[guildId] ?? {};
+  const panelDescription = panelConfig?.description ?? null;
   try {
     await message.edit({
-      components: buildClanPanelComponents(guild, clanMap),
+      components: buildClanPanelComponents(guild, clanMap, panelDescription),
       flags: MessageFlags.IsComponentsV2
     });
   } catch (error) {
@@ -277,9 +311,10 @@ async function refreshClanPanelsOnStartup(readyClient) {
     }
 
     const clanMap = state.clan_clans?.[guildId] ?? {};
+    const panelDescription = config?.description ?? null;
     try {
       await message.edit({
-        components: buildClanPanelComponents(guild, clanMap),
+        components: buildClanPanelComponents(guild, clanMap, panelDescription),
         flags: MessageFlags.IsComponentsV2
       });
     } catch (error) {
@@ -353,6 +388,50 @@ client.on(Events.GuildMemberAdd, async (member) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    if (interaction.isModalSubmit()) {
+      if (interaction.customId !== CLAN_PANEL_EDIT_MODAL_ID) return;
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('Tento dialog lze použít jen na serveru.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (!hasClanPanelPermission(interaction.member)) {
+        await interaction.reply({
+          components: buildTextComponents('Nemáš oprávnění upravit clan panel.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const rawDescription = interaction.fields.getTextInputValue(CLAN_PANEL_DESCRIPTION_INPUT_ID);
+      const description = rawDescription && rawDescription.trim()
+        ? rawDescription.trim()
+        : null;
+
+      await updateClanState((state) => {
+        ensureGuildClanState(state, interaction.guildId);
+        state.clan_panel_configs[interaction.guildId] = {
+          ...state.clan_panel_configs[interaction.guildId],
+          description,
+          updatedAt: new Date().toISOString()
+        };
+      });
+
+      await refreshClanPanelForGuild(interaction.guild, interaction.guildId);
+
+      await interaction.reply({
+        components: buildTextComponents('Popisek clan panelu byl uložen.'),
+        flags: MessageFlags.IsComponentsV2,
+        ephemeral: true
+      });
+      return;
+    }
+
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === 'config') {
@@ -672,6 +751,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
+      if (!subcommandGroup && subcommand === 'edit') {
+        const state = getClanState();
+        const panelDescription = state.clan_panel_configs?.[guildId]?.description ?? '';
+        const input = new TextInputBuilder()
+          .setCustomId(CLAN_PANEL_DESCRIPTION_INPUT_ID)
+          .setLabel('Popisek clan panelu')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(false)
+          .setMaxLength(1000);
+
+        if (panelDescription && panelDescription.trim()) {
+          input.setValue(panelDescription.trim());
+        }
+
+        const modal = new ModalBuilder()
+          .setCustomId(CLAN_PANEL_EDIT_MODAL_ID)
+          .setTitle('Upravit clan panel')
+          .addComponents(new ActionRowBuilder().addComponents(input));
+
+        await interaction.showModal(modal);
+        return;
+      }
+
       if (subcommand === 'post') {
         const channel = interaction.options.getChannel('channel', true);
         if (!channel || channel.type !== ChannelType.GuildText) {
@@ -685,14 +787,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const state = getClanState();
         const clanMap = state.clan_clans[guildId] ?? {};
+        const panelDescription = state.clan_panel_configs?.[guildId]?.description ?? null;
         const panelMessage = await channel.send({
-          components: buildClanPanelComponents(interaction.guild, clanMap),
+          components: buildClanPanelComponents(interaction.guild, clanMap, panelDescription),
           flags: MessageFlags.IsComponentsV2
         });
 
         await updateClanState((nextState) => {
           ensureGuildClanState(nextState, guildId);
           nextState.clan_panel_configs[guildId] = {
+            ...nextState.clan_panel_configs[guildId],
             channelId: channel.id,
             messageId: panelMessage.id,
             updatedAt: new Date().toISOString()
