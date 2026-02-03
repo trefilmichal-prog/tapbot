@@ -584,57 +584,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (subcommand === 'edit') {
-        const state = getClanState();
-        const config = state.clan_panel_configs[guildId];
-        if (!config?.channelId || !config?.messageId) {
-          await interaction.reply({
-            components: buildTextComponents('Nenalezen uložený clan panel, použij /clan_panel post.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-          return;
-        }
-
-        const channel = await interaction.guild.channels.fetch(config.channelId);
-        if (!channel || !channel.isTextBased()) {
-          await interaction.reply({
-            components: buildTextComponents('Uložený kanál už není dostupný.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-          return;
-        }
-
-        const message = await channel.messages.fetch(config.messageId).catch(() => null);
-        if (!message) {
-          await interaction.reply({
-            components: buildTextComponents('Uložená zpráva už neexistuje, použij /clan_panel post.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-          return;
-        }
-
-        const clanMap = state.clan_clans[guildId] ?? {};
-        await message.edit({
-          components: buildClanPanelComponents(interaction.guild, clanMap),
-          flags: MessageFlags.IsComponentsV2
-        });
-
-        await updateClanState((nextState) => {
-          ensureGuildClanState(nextState, guildId);
-          nextState.clan_panel_configs[guildId].updatedAt = new Date().toISOString();
-        });
-
-        await interaction.reply({
-          components: buildTextComponents('Clan panel byl aktualizován.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
-        });
-        return;
-      }
-
       if (subcommand === 'ticket_reminders') {
         const enabled = interaction.options.getBoolean('enabled', true);
         await updateClanState((state) => {
