@@ -33,6 +33,11 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 const CLAN_PANEL_ADMIN_ROLE_ID = '1468192944975515759';
 const CLAN_PANEL_EDIT_MODAL_ID = 'clan_panel_edit_modal';
 const CLAN_PANEL_DESCRIPTION_INPUT_ID = 'clan_panel_description_input';
+const CLAN_PANEL_SELECT_ID = 'clan_panel_select';
+const CLAN_TICKET_MODAL_PREFIX = 'clan_ticket_modal:';
+const CLAN_TICKET_REBIRTHS_INPUT_ID = 'clan_ticket_rebirths_input';
+const CLAN_TICKET_GAMEPASSES_INPUT_ID = 'clan_ticket_gamepasses_input';
+const CLAN_TICKET_HOURS_INPUT_ID = 'clan_ticket_hours_input';
 
 client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
@@ -191,7 +196,7 @@ function buildClanPanelComponents(guild, clanMap, panelDescription) {
           components: [
             {
               type: ComponentType.StringSelect,
-              custom_id: 'clan_panel_select',
+              custom_id: CLAN_PANEL_SELECT_ID,
               placeholder: `Vyber klan (${guild.name})`,
               options: selectOptions,
               disabled: clans.length === 0
@@ -201,6 +206,66 @@ function buildClanPanelComponents(guild, clanMap, panelDescription) {
       ]
     }
   ];
+}
+
+function buildTicketSummary(answers) {
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: [
+            '**Clan application**',
+            '',
+            `**How many rebirths do you have?**`,
+            answers.rebirths,
+            '',
+            '**What gamepasses do you have?**',
+            answers.gamepasses,
+            '',
+            '**How many hours a day do you play?**',
+            answers.hours,
+            '',
+            'Send your pet team.',
+            'Send your gamepasses.',
+            'Send your rebirths.',
+            '',
+            'Crop the screenshots so that your Roblox username is visible!'
+          ].join('\n')
+        }
+      ]
+    }
+  ];
+}
+
+function buildTicketModal(clanName) {
+  const rebirthsInput = new TextInputBuilder()
+    .setCustomId(CLAN_TICKET_REBIRTHS_INPUT_ID)
+    .setLabel('How many rebirths do you have?')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  const gamepassesInput = new TextInputBuilder()
+    .setCustomId(CLAN_TICKET_GAMEPASSES_INPUT_ID)
+    .setLabel('What gamepasses do you have?')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true);
+
+  const hoursInput = new TextInputBuilder()
+    .setCustomId(CLAN_TICKET_HOURS_INPUT_ID)
+    .setLabel('How many hours a day do you play?')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  return new ModalBuilder()
+    .setCustomId(`${CLAN_TICKET_MODAL_PREFIX}${encodeURIComponent(clanName)}`)
+    .setTitle(`Join ${clanName}`)
+    .addComponents(
+      new ActionRowBuilder().addComponents(rebirthsInput),
+      new ActionRowBuilder().addComponents(gamepassesInput),
+      new ActionRowBuilder().addComponents(hoursInput)
+    );
 }
 
 async function refreshClanPanelForGuild(guild, guildId) {
@@ -371,6 +436,138 @@ client.on(Events.GuildMemberAdd, async (member) => {
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isModalSubmit()) {
+      if (interaction.customId.startsWith(CLAN_TICKET_MODAL_PREFIX)) {
+        if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+          await interaction.reply({
+            components: buildTextComponents('Tento dialog lze použít jen na serveru.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const clanName = decodeURIComponent(
+          interaction.customId.slice(CLAN_TICKET_MODAL_PREFIX.length)
+        );
+        const state = getClanState();
+        const clan = state.clan_clans?.[interaction.guildId]?.[clanName];
+        if (!clan) {
+          await interaction.reply({
+            components: buildTextComponents('Vybraný klan nebyl nalezen.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (!clan.ticketCategoryId) {
+          await interaction.reply({
+            components: buildTextComponents('K tomuto klanu není nastavená ticket kategorie.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (!clan.reviewRoleId) {
+          await interaction.reply({
+            components: buildTextComponents('K tomuto klanu není nastavená review role.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        let ticketCategory;
+        try {
+          ticketCategory = await interaction.guild.channels.fetch(clan.ticketCategoryId);
+        } catch (error) {
+          console.warn(`Failed to fetch ticket category ${clan.ticketCategoryId}:`, error);
+        }
+
+        if (!ticketCategory || ticketCategory.type !== ChannelType.GuildCategory) {
+          await interaction.reply({
+            components: buildTextComponents('Ticket kategorie nebyla nalezena.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const rebirths = interaction.fields.getTextInputValue(CLAN_TICKET_REBIRTHS_INPUT_ID);
+        const gamepasses = interaction.fields.getTextInputValue(CLAN_TICKET_GAMEPASSES_INPUT_ID);
+        const hours = interaction.fields.getTextInputValue(CLAN_TICKET_HOURS_INPUT_ID);
+
+        const adminRoles = interaction.guild.roles.cache
+          .filter((role) => role.permissions.has(PermissionsBitField.Flags.Administrator))
+          .map((role) => ({
+            id: role.id,
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.SendMessages,
+              PermissionsBitField.Flags.ReadMessageHistory
+            ]
+          }));
+
+        let ticketChannel;
+        try {
+          const sanitizedName = interaction.user.username
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, '')
+            .slice(0, 20);
+          const channelName = `ticket-${sanitizedName || interaction.user.id}`;
+
+          ticketChannel = await interaction.guild.channels.create({
+            name: channelName,
+            type: ChannelType.GuildText,
+            parent: ticketCategory.id,
+            permissionOverwrites: [
+              {
+                id: interaction.guild.roles.everyone.id,
+                deny: [PermissionsBitField.Flags.ViewChannel]
+              },
+              {
+                id: clan.reviewRoleId,
+                allow: [
+                  PermissionsBitField.Flags.ViewChannel,
+                  PermissionsBitField.Flags.SendMessages,
+                  PermissionsBitField.Flags.ReadMessageHistory
+                ]
+              },
+              ...adminRoles
+            ]
+          });
+        } catch (error) {
+          console.error('Failed to create ticket channel:', error);
+          await interaction.reply({
+            components: buildTextComponents('Nepodařilo se vytvořit ticket.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        await ticketChannel.send({
+          components: buildTicketSummary({
+            rebirths,
+            gamepasses,
+            hours
+          }),
+          flags: MessageFlags.IsComponentsV2
+        });
+
+        await ticketChannel.send({
+          content: `<@&${clan.reviewRoleId}>`
+        });
+
+        await interaction.reply({
+          components: buildTextComponents(`Ticket byl vytvořen: <#${ticketChannel.id}>`),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
       if (interaction.customId !== CLAN_PANEL_EDIT_MODAL_ID) return;
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
@@ -411,6 +608,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
         flags: MessageFlags.IsComponentsV2,
         ephemeral: true
       });
+      return;
+    }
+
+    if (interaction.isStringSelectMenu()) {
+      if (interaction.customId !== CLAN_PANEL_SELECT_ID) return;
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('Tento výběr lze použít jen na serveru.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const selectedClan = interaction.values[0];
+      if (!selectedClan || selectedClan === 'no_clans_available') {
+        await interaction.reply({
+          components: buildTextComponents('Nejsou k dispozici žádné klany k výběru.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const state = getClanState();
+      const clan = state.clan_clans?.[interaction.guildId]?.[selectedClan];
+      if (!clan) {
+        await interaction.reply({
+          components: buildTextComponents('Vybraný klan nebyl nalezen.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const modal = buildTicketModal(selectedClan);
+      await interaction.showModal(modal);
       return;
     }
 
