@@ -808,12 +808,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const hasReviewPermission = interaction.member.permissions.has(
-        PermissionsBitField.Flags.Administrator
-      ) || (clan.reviewRoleId && interaction.member.roles.cache.has(clan.reviewRoleId));
+      const hasReviewPermission = Boolean(
+        clan.reviewRoleId && interaction.member.roles.cache.has(clan.reviewRoleId)
+      );
       if (!hasReviewPermission) {
         await interaction.reply({
-          components: buildTextComponents('Nemáš oprávnění rozhodovat o tomto ticketu.'),
+          components: buildTextComponents(
+            'Nemáš oprávnění rozhodovat o tomto ticketu. Je nutné mít review roli klanu.'
+          ),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
