@@ -5,6 +5,7 @@ import path from 'node:path';
 import { loadConfig } from './config.js';
 import { getWelcomeConfig, setWelcomeConfig } from './persistence.js';
 import { runUpdate } from './update.js';
+import { syncApplicationCommands } from './deploy-commands.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason);
@@ -22,6 +23,20 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 
 client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
+  (async () => {
+    try {
+      const result = await syncApplicationCommands({
+        token: cfg.token,
+        clientId: cfg.clientId,
+        guildId: cfg.guildId
+      });
+      console.log(
+        `Startup command sync complete. Loaded: ${result.total}, new: ${result.newlyRegistered}`
+      );
+    } catch (error) {
+      console.error('Startup command sync failed:', error);
+    }
+  })();
 });
 
 async function resolveWelcomeSettings(member) {
@@ -170,17 +185,47 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (subcommand === 'update') {
         await interaction.reply({
-          content: 'Aktualizace spuštěna. Bot se po dokončení restartuje.',
+          components: [
+            {
+              type: ComponentType.Container,
+              components: [
+                {
+                  type: ComponentType.TextDisplay,
+                  content: 'Aktualizace spuštěna. Bot se po dokončení restartuje.'
+                }
+              ]
+            }
+          ],
+          flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
 
         try {
+          const result = await syncApplicationCommands({
+            token: cfg.token,
+            clientId: cfg.clientId,
+            guildId: cfg.guildId
+          });
+          console.log(
+            `Config update command sync complete. Loaded: ${result.total}, new: ${result.newlyRegistered}`
+          );
           await runUpdate();
         } catch (e) {
           console.error('Update failed:', e);
           try {
             await interaction.followUp({
-              content: 'Aktualizace selhala. Podívej se do logů.',
+              components: [
+                {
+                  type: ComponentType.Container,
+                  components: [
+                    {
+                      type: ComponentType.TextDisplay,
+                      content: 'Aktualizace selhala. Podívej se do logů.'
+                    }
+                  ]
+                }
+              ],
+              flags: MessageFlags.IsComponentsV2,
               ephemeral: true
             });
           } catch (followUpError) {
