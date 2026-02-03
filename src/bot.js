@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits } from 'discord.js';
+import { Client, Events, GatewayIntentBits, GuildMember } from 'discord.js';
 import { ChannelType, ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
 import { loadConfig } from './config.js';
 import { getWelcomeConfig, setWelcomeConfig } from './persistence.js';
@@ -109,16 +109,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
     if (interaction.commandName === 'config') {
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          content: 'Tento příkaz lze použít jen na serveru.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (!interaction.member.roles.cache.has('1468192944975515759')) {
+        await interaction.reply({
+          content: 'Nemáš oprávnění použít tento příkaz.',
+          ephemeral: true
+        });
+        return;
+      }
+
       const subcommand = interaction.options.getSubcommand();
       if (subcommand === 'welcome') {
-        if (!interaction.inGuild()) {
-          await interaction.reply({
-            content: 'Tento příkaz lze použít jen na serveru.',
-            ephemeral: true
-          });
-          return;
-        }
-
         const channel = interaction.options.getChannel('channel', true);
         if (!channel || channel.type !== ChannelType.GuildText) {
           await interaction.reply({
