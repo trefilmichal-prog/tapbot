@@ -1,5 +1,6 @@
 {
   "token": "PASTE_YOUR_BOT_TOKEN_HERE",
   "clientId": "YOUR_APPLICATION_ID",
-  "guildId": "OPTIONAL_DEV_GUILD_ID_OR_EMPTY"
+  "guildId": "OPTIONAL_DEV_GUILD_ID_OR_EMPTY",
+  "welcomeChannelId": "OPTIONAL_WELCOME_CHANNEL_ID_OR_EMPTY"
 }
