@@ -130,12 +130,6 @@ function migrateClanState(state) {
       if ('ticketRoomId' in clan) {
         delete clan.ticketRoomId;
       }
-      if (clan.acceptCategoryId == null && clan.acceptRoomId != null) {
-        clan.acceptCategoryId = clan.acceptRoomId;
-      }
-      if ('acceptRoomId' in clan) {
-        delete clan.acceptRoomId;
-      }
     }
   }
 }
