@@ -246,7 +246,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               components: [
                 {
                   type: ComponentType.TextDisplay,
-                  content: 'Aktualizace spuštěna. Bot se po dokončení restartuje.'
+                  content: 'Aktualizace spuštěna. Bot po dokončení nasadí příkazy a restartuje se.'
                 }
               ]
             }
@@ -256,20 +256,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         try {
-          const result = await syncApplicationCommands({
-            token: cfg.token,
-            clientId: cfg.clientId,
-            guildId: cfg.guildId
-          });
-          console.log(
-            `Config update command sync complete. Loaded: ${result.total}, new: ${result.newlyRegistered}`
-          );
-          await runUpdate();
+          const updateResult = await runUpdate({ deployCommands: true });
+          if (updateResult?.deployResult && !updateResult.deployResult.ok) {
+            console.warn('Deploy commands during update failed; startup sync will retry.');
+          }
         } catch (e) {
           console.error('Update failed:', e);
           try {
             await interaction.followUp({
-              components: buildTextComponents('Aktualizace selhala. Podívej se do logů.'),
+              components: buildTextComponents(
+                'Aktualizace selhala nebo se nepodařilo restartovat. Podívej se do logů.'
+              ),
               flags: MessageFlags.IsComponentsV2,
               ephemeral: true
             });
