@@ -532,6 +532,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 deny: [PermissionsBitField.Flags.ViewChannel]
               },
               {
+                id: interaction.user.id,
+                allow: [
+                  PermissionsBitField.Flags.ViewChannel,
+                  PermissionsBitField.Flags.SendMessages,
+                  PermissionsBitField.Flags.ReadMessageHistory
+                ]
+              },
+              {
                 id: clan.reviewRoleId,
                 allow: [
                   PermissionsBitField.Flags.ViewChannel,
