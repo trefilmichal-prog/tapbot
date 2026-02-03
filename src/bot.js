@@ -289,14 +289,7 @@ function buildTicketSummary(answers, decision) {
             `> ${answers.gamepasses}`,
             '',
             '**How many hours a day do you play?**',
-            `> ${answers.hours}`,
-            '',
-            '**Required screenshots:**',
-            '🐾 Pet team',
-            '🎟️ Gamepasses',
-            '🔁 Rebirths',
-            '',
-            '✂️ **IMPORTANT:** Crop your screenshots so your **Roblox username is clearly visible!** 👤✅ ⚙️'
+            `> ${answers.hours}`
           ].join('\n')
         },
         {
@@ -318,6 +311,27 @@ function buildTicketSummary(answers, decision) {
             ]
           : []),
         ...actionRows
+      ]
+    }
+  ];
+}
+
+function buildRequiredScreenshotsNotice() {
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: [
+            '**Required screenshots:**',
+            '🐾 Pet team',
+            '🎟️ Gamepasses',
+            '🔁 Rebirths',
+            '',
+            '✂️ **IMPORTANT:** Crop your screenshots so your **Roblox username is clearly visible!** 👤✅ ⚙️'
+          ].join('\n')
+        }
       ]
     }
   ];
@@ -651,6 +665,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
             gamepasses,
             hours
           }),
+          flags: MessageFlags.IsComponentsV2
+        });
+
+        await ticketChannel.send({
+          components: buildRequiredScreenshotsNotice(),
           flags: MessageFlags.IsComponentsV2
         });
 
