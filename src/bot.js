@@ -1,6 +1,5 @@
 import { Client, Events, GatewayIntentBits, GuildMember } from 'discord.js';
 import { ChannelType, ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
-import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
@@ -117,54 +116,6 @@ function buildTextComponents(content) {
   ];
 }
 
-async function runDeployScript() {
-  const cwd = process.cwd();
-  let npmCommand = 'npm';
-  let npmArgs = ['run', 'deploy'];
-  let resolvedPath = npmCommand;
-  let useShell = false;
-
-  if (process.platform === 'win32') {
-    const npmCliPath = path.resolve(cwd, 'node_modules', 'npm', 'bin', 'npm-cli.js');
-    try {
-      await fs.access(npmCliPath);
-      npmCommand = process.execPath;
-      npmArgs = [npmCliPath, ...npmArgs];
-      resolvedPath = npmCliPath;
-    } catch {
-      npmCommand = 'npm.cmd';
-      resolvedPath = npmCommand;
-      useShell = true;
-    }
-  }
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(npmCommand, npmArgs, {
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      cwd,
-      shell: useShell
-    });
-    const stdoutChunks = [];
-    const stderrChunks = [];
-
-    child.stdout.on('data', (chunk) => stdoutChunks.push(chunk));
-    child.stderr.on('data', (chunk) => stderrChunks.push(chunk));
-    child.on('error', (error) => {
-      console.error(`Failed to spawn npm (resolved: ${resolvedPath}, cwd: ${cwd}).`, error);
-      reject(error);
-    });
-    child.on('close', (code, signal) => {
-      resolve({
-        code,
-        signal,
-        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
-        stderr: Buffer.concat(stderrChunks).toString('utf8')
-      });
-    });
-  });
-}
-
 async function getBotVersion() {
   const versionPath = path.resolve(process.cwd(), 'verze.txt');
   try {
@@ -273,59 +224,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           } catch (followUpError) {
             console.error('Failed to send update failure notice:', followUpError);
           }
-        }
-        return;
-      }
-
-      if (subcommand === 'deploy') {
-        await interaction.reply({
-          components: buildTextComponents('Deploy spuštěn. Chvilku strpení...'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
-        });
-
-        try {
-          const deployResult = await runDeployScript();
-          if (deployResult.stdout) {
-            console.log('Deploy stdout:', deployResult.stdout.trim());
-          }
-          if (deployResult.stderr) {
-            console.warn('Deploy stderr:', deployResult.stderr.trim());
-          }
-
-          if (deployResult.code !== 0) {
-            console.error(`Deploy failed with code ${deployResult.code ?? 'unknown'}.`);
-            await interaction.followUp({
-              components: buildTextComponents('Deploy selhal. Podívej se do logů.'),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
-            });
-            return;
-          }
-
-          const result = await syncApplicationCommands({
-            token: cfg.token,
-            clientId: cfg.clientId,
-            guildId: cfg.guildId
-          });
-          console.log(
-            `Config deploy command sync complete. Loaded: ${result.total}, new: ${result.newlyRegistered}`
-          );
-
-          await interaction.followUp({
-            components: buildTextComponents(
-              `Deploy dokončen. Načteno ${result.total} příkazů, nově ${result.newlyRegistered}.`
-            ),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-        } catch (e) {
-          console.error('Deploy failed:', e);
-          await interaction.followUp({
-            components: buildTextComponents('Deploy selhal. Podívej se do logů.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
         }
         return;
       }
