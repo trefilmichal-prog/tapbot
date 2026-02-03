@@ -190,6 +190,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (subcommand === 'update') {
+        const batchRestart = interaction.options.getBoolean('batch-restart') ?? false;
         await interaction.reply({
           components: [
             {
@@ -207,7 +208,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         try {
-          const updateResult = await runUpdate({ deployCommands: true });
+          const updateResult = await runUpdate({ deployCommands: true, batchRestart });
           if (updateResult?.deployResult && !updateResult.deployResult.ok) {
             console.warn('Deploy commands during update failed; startup sync will retry.');
           }
