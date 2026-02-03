@@ -25,7 +25,9 @@ export function loadConfig() {
   const token = (cfg && cfg.token ? String(cfg.token) : '').trim();
   const clientId = (cfg && cfg.clientId ? String(cfg.clientId) : '').trim();
   const guildIdRaw = (cfg && cfg.guildId ? String(cfg.guildId) : '').trim();
+  const welcomeChannelIdRaw = (cfg && cfg.welcomeChannelId ? String(cfg.welcomeChannelId) : '').trim();
   const guildId = guildIdRaw === '' ? null : guildIdRaw;
+  const welcomeChannelId = welcomeChannelIdRaw === '' ? null : welcomeChannelIdRaw;
 
   if (!token) {
     const err = new Error('V config.json chybí token. Spusť: npm run setup');
@@ -38,5 +40,5 @@ export function loadConfig() {
     throw err;
   }
 
-  return { token, clientId, guildId };
+  return { token, clientId, guildId, welcomeChannelId };
 }
