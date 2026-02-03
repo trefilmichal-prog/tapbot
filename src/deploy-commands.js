@@ -32,6 +32,17 @@ const commands = [
         ]
       }
     ]
+  },
+  {
+    name: 'test',
+    description: 'Testovací příkazy',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'welcome',
+        description: 'Manuálně odešle uvítací zprávu'
+      }
+    ]
   }
 ];
 

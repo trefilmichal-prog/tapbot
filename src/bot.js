@@ -43,14 +43,14 @@ async function resolveWelcomeSettings(member) {
   return null;
 }
 
-client.on(Events.GuildMemberAdd, async (member) => {
-  const settings = await resolveWelcomeSettings(member);
-  if (!settings) return;
-
-  const welcomeMessage = settings.message && settings.message.trim()
-    ? settings.message.trim()
+function resolveWelcomeMessage(configMessage) {
+  return configMessage && configMessage.trim()
+    ? configMessage.trim()
     : 'We are happy you joined. Feel free to introduce yourself!';
-  const welcomeComponents = [
+}
+
+function buildWelcomeComponents(member, welcomeMessage) {
+  return [
     {
       type: ComponentType.Container,
       components: [
@@ -70,9 +70,20 @@ client.on(Events.GuildMemberAdd, async (member) => {
       ],
     },
   ];
+}
+
+async function sendWelcomeMessage(member, settings) {
+  const welcomeMessage = resolveWelcomeMessage(settings.message);
+  const welcomeComponents = buildWelcomeComponents(member, welcomeMessage);
+  await settings.channel.send({ components: welcomeComponents });
+}
+
+client.on(Events.GuildMemberAdd, async (member) => {
+  const settings = await resolveWelcomeSettings(member);
+  if (!settings) return;
 
   try {
-    await settings.channel.send({ components: welcomeComponents });
+    await sendWelcomeMessage(member, settings);
   } catch (e) {
     console.error('Failed to send welcome message:', e);
   }
@@ -120,6 +131,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.commandName === 'ping') {
       await interaction.reply('Pong!');
+    }
+
+    if (interaction.commandName === 'test') {
+      const subcommand = interaction.options.getSubcommand();
+      if (subcommand === 'welcome') {
+        if (!interaction.inGuild()) {
+          await interaction.reply({
+            content: 'Tento příkaz lze použít jen na serveru.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const member = interaction.member ?? await interaction.guild.members.fetch(interaction.user.id);
+        const settings = await resolveWelcomeSettings(member);
+        if (!settings) {
+          await interaction.reply({
+            content: 'Není nastaven uvítací kanál.',
+            ephemeral: true
+          });
+          return;
+        }
+
+        try {
+          await sendWelcomeMessage(member, settings);
+          await interaction.reply({
+            content: 'Uvítací zpráva byla odeslána.',
+            ephemeral: true
+          });
+        } catch (e) {
+          console.error('Failed to send manual welcome message:', e);
+          await interaction.reply({
+            content: 'Nepodařilo se odeslat uvítací zprávu.',
+            ephemeral: true
+          });
+        }
+      }
     }
   } catch (e) {
     console.error('Interaction error:', e);
