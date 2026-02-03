@@ -117,19 +117,43 @@ function buildTextComponents(content) {
   ];
 }
 
-function runDeployScript() {
-  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+async function runDeployScript() {
+  const cwd = process.cwd();
+  let npmCommand = 'npm';
+  let npmArgs = ['run', 'deploy'];
+  let resolvedPath = npmCommand;
+  let useShell = false;
+
+  if (process.platform === 'win32') {
+    const npmCliPath = path.resolve(cwd, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    try {
+      await fs.access(npmCliPath);
+      npmCommand = process.execPath;
+      npmArgs = [npmCliPath, ...npmArgs];
+      resolvedPath = npmCliPath;
+    } catch {
+      npmCommand = 'npm.cmd';
+      resolvedPath = npmCommand;
+      useShell = true;
+    }
+  }
+
   return new Promise((resolve, reject) => {
-    const child = spawn(npmCommand, ['run', 'deploy'], {
+    const child = spawn(npmCommand, npmArgs, {
       env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd,
+      shell: useShell
     });
     const stdoutChunks = [];
     const stderrChunks = [];
 
     child.stdout.on('data', (chunk) => stdoutChunks.push(chunk));
     child.stderr.on('data', (chunk) => stderrChunks.push(chunk));
-    child.on('error', reject);
+    child.on('error', (error) => {
+      console.error(`Failed to spawn npm (resolved: ${resolvedPath}, cwd: ${cwd}).`, error);
+      reject(error);
+    });
     child.on('close', (code, signal) => {
       resolve({
         code,
