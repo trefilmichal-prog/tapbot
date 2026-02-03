@@ -19,6 +19,7 @@ Ověření verze:
 ## Spuštění bota (Windows vs. ostatní OS)
 - **Windows:** Použij `run.bat` (startuje bota a uloží PID do `data/bot.pid`).
 - **macOS/Linux/WSL:** Použij `run.ps1` v PowerShellu (`pwsh`).
+  - Pokud se okno po chybě zavírá příliš rychle, spusť to přes `cmd /k run.bat` nebo si vytvoř zástupce s cílem `cmd /k run.bat`, aby se okno po chybě nezavřelo.
 
 ### Co dělá `setup`
 Interaktivně se zeptá na:
