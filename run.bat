@@ -9,15 +9,6 @@ if not exist "%LOG_DIR%" (
 set "DEBUG_LOG=%LOG_DIR%\\debug.log"
 echo Logy se ukladaji do: "%LOG_DIR%"
 
-pm2 --version >nul 2>&1
-if errorlevel 1 (
-  echo pm2 nebyl nalezen. Nainstaluj ho prikazem:
-  echo   npm install -g pm2
-  echo Potom zkus script spustit znovu.
-  if "%KEEP_OPEN%"=="1" pause
-  exit /b 1
-)
-
 if not exist config.json (
   echo Chybi soubor config.json. Spust:
   echo   npm run setup
