@@ -97,6 +97,59 @@ async function restartPm2(processName) {
   }
 }
 
+async function findBatchRestartScript(repoRoot) {
+  const candidates = ['restart.bat', 'run.bat'];
+  for (const candidate of candidates) {
+    const scriptPath = path.join(repoRoot, candidate);
+    try {
+      await fsPromises.access(scriptPath, fs.constants.F_OK);
+      return scriptPath;
+    } catch (error) {
+      // Continue searching.
+    }
+  }
+  return null;
+}
+
+async function runBatchRestart(repoRoot) {
+  if (process.platform !== 'win32') {
+    return {
+      ok: false,
+      error: new Error('Batch restart je podporovaný pouze na Windows (win32).'),
+      stdout: '',
+      stderr: ''
+    };
+  }
+
+  const scriptPath = await findBatchRestartScript(repoRoot);
+  if (!scriptPath) {
+    return {
+      ok: false,
+      error: new Error('Nepodařilo se najít restartovací .bat skript.'),
+      stdout: '',
+      stderr: ''
+    };
+  }
+
+  try {
+    const result = await execFileAsync('cmd.exe', ['/c', scriptPath], { cwd: repoRoot });
+    return {
+      ok: true,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      scriptPath
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      stdout: error.stdout ?? '',
+      stderr: error.stderr ?? '',
+      error,
+      scriptPath
+    };
+  }
+}
+
 async function runDeployCommands(repoRoot) {
   try {
     const result = await execFileAsync(
@@ -119,7 +172,11 @@ async function runDeployCommands(repoRoot) {
   }
 }
 
-export async function runUpdate({ zipUrl = DEFAULT_ZIP_URL, deployCommands = false } = {}) {
+export async function runUpdate({
+  zipUrl = DEFAULT_ZIP_URL,
+  deployCommands = false,
+  batchRestart = false
+} = {}) {
   const repoRoot = path.resolve(process.cwd());
   const tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'tapbot-update-'));
   const zipPath = path.join(tempDir, 'update.zip');
@@ -149,7 +206,32 @@ export async function runUpdate({ zipUrl = DEFAULT_ZIP_URL, deployCommands = fal
       }
     }
   }
-  const processName = await resolvePm2ProcessName(repoRoot);
-  await restartPm2(processName);
-  return { deployResult };
+  let restartResult = null;
+  if (batchRestart) {
+    restartResult = await runBatchRestart(repoRoot);
+    if (!restartResult.ok) {
+      console.error('Batch restart failed during update:', restartResult.error);
+      if (restartResult.stdout) {
+        console.error('Batch restart stdout:', restartResult.stdout.trim());
+      }
+      if (restartResult.stderr) {
+        console.error('Batch restart stderr:', restartResult.stderr.trim());
+      }
+
+      const processName = await resolvePm2ProcessName(repoRoot);
+      try {
+        await restartPm2(processName);
+        restartResult = { ...restartResult, fallback: 'pm2' };
+      } catch (error) {
+        throw new Error(
+          `Batch restart selhal${restartResult.scriptPath ? ` (${path.basename(restartResult.scriptPath)})` : ''} a fallback pm2 restart také selhal: ${error.message ?? error}`
+        );
+      }
+    }
+  } else {
+    const processName = await resolvePm2ProcessName(repoRoot);
+    await restartPm2(processName);
+  }
+
+  return { deployResult, restartResult };
 }

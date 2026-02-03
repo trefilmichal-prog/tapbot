@@ -15,7 +15,15 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'update',
-        description: 'Aktualizuje bota'
+        description: 'Aktualizuje bota',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Boolean,
+            name: 'batch-restart',
+            description: 'Použije restart přes .bat skript místo pm2 restart',
+            required: false
+          }
+        ]
       },
       {
         type: ApplicationCommandOptionType.Subcommand,
