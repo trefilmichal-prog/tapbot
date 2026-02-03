@@ -45,6 +45,7 @@ const CLAN_TICKET_REBIRTHS_INPUT_ID = 'clan_ticket_rebirths_input';
 const CLAN_TICKET_GAMEPASSES_INPUT_ID = 'clan_ticket_gamepasses_input';
 const CLAN_TICKET_HOURS_INPUT_ID = 'clan_ticket_hours_input';
 const CLAN_TICKET_DECISION_PREFIX = 'clan_ticket_decision:';
+const CLAN_TICKET_DECISION_TOGGLE = 'toggle';
 const CLAN_TICKET_DECISION_ACCEPT = 'accept';
 const CLAN_TICKET_DECISION_REJECT = 'reject';
 
@@ -224,6 +225,53 @@ function buildTicketSummary(answers, decision) {
 **Updated:** ${decision.updatedAt}`
     : null;
   const disableButtons = Boolean(decision?.status);
+  const controlsExpanded = Boolean(decision?.controlsExpanded);
+  const actionRows = controlsExpanded
+    ? [
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_TOGGLE}`,
+              label: '⚙️',
+              style: ButtonStyle.Secondary
+            }
+          ]
+        },
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_ACCEPT}`,
+              label: 'Accept',
+              style: ButtonStyle.Success,
+              disabled: disableButtons
+            },
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REJECT}`,
+              label: 'Reject',
+              style: ButtonStyle.Danger,
+              disabled: disableButtons
+            }
+          ]
+        }
+      ]
+    : [
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_TOGGLE}`,
+              label: '⚙️',
+              style: ButtonStyle.Secondary
+            }
+          ]
+        }
+      ];
   return [
     {
       type: ComponentType.Container,
@@ -269,25 +317,7 @@ function buildTicketSummary(answers, decision) {
               }
             ]
           : []),
-        {
-          type: ComponentType.ActionRow,
-          components: [
-            {
-              type: ComponentType.Button,
-              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_ACCEPT}`,
-              label: 'Accept',
-              style: ButtonStyle.Success,
-              disabled: disableButtons
-            },
-            {
-              type: ComponentType.Button,
-              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REJECT}`,
-              label: 'Reject',
-              style: ButtonStyle.Danger,
-              disabled: disableButtons
-            }
-          ]
-        }
+        ...actionRows
       ]
     }
   ];
@@ -638,6 +668,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             status: null,
             decidedBy: null,
             updatedAt: null,
+            controlsExpanded: false,
             createdAt: new Date().toISOString()
           };
         });
@@ -746,7 +777,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const action = interaction.customId.slice(CLAN_TICKET_DECISION_PREFIX.length);
-      if (![CLAN_TICKET_DECISION_ACCEPT, CLAN_TICKET_DECISION_REJECT].includes(action)) {
+      if (![CLAN_TICKET_DECISION_TOGGLE, CLAN_TICKET_DECISION_ACCEPT, CLAN_TICKET_DECISION_REJECT]
+        .includes(action)) {
         await interaction.reply({
           components: buildTextComponents('Neplatná akce pro ticket.'),
           flags: MessageFlags.IsComponentsV2,
@@ -782,6 +814,40 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!hasReviewPermission) {
         await interaction.reply({
           components: buildTextComponents('Nemáš oprávnění rozhodovat o tomto ticketu.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (action === CLAN_TICKET_DECISION_TOGGLE) {
+        await updateClanState((nextState) => {
+          ensureGuildClanState(nextState, interaction.guildId);
+          const entry = nextState.clan_ticket_decisions[interaction.guildId][interaction.channelId];
+          if (!entry) return;
+          entry.controlsExpanded = !entry.controlsExpanded;
+        });
+
+        const refreshedState = getClanState();
+        const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.guildId]?.[
+          interaction.channelId
+        ];
+        if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
+          try {
+            const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
+            await message.edit({
+              components: buildTicketSummary(refreshedEntry.answers ?? {}, refreshedEntry),
+              flags: MessageFlags.IsComponentsV2
+            });
+          } catch (error) {
+            console.warn('Failed to update ticket summary message:', error);
+          }
+        }
+
+        await interaction.reply({
+          components: buildTextComponents(
+            refreshedEntry?.controlsExpanded ? 'Ovládání ticketu bylo rozbaleno.' : 'Ovládání ticketu bylo sbaleno.'
+          ),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
