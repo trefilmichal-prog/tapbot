@@ -9,7 +9,7 @@
   "scripts": {
     "setup": "node src/setup.js",
     "deploy": "node src/deploy-commands.js",
-    "start": "node src/bot.js"
+    "start": "node src/deploy-commands.js && node src/bot.js"
   },
   "dependencies": {
     "discord.js": "^14.0.0"
