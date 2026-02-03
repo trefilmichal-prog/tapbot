@@ -40,7 +40,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-pm2 logs tapbot --lines 200 > "%DEBUG_LOG%" 2>>&1
+pm2 logs tapbot --lines 200 --nostream > "%DEBUG_LOG%" 2>>&1
 
 pm2 save
 if errorlevel 1 (
