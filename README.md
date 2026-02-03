@@ -16,6 +16,10 @@ Ověření verze:
 - `npm run deploy`
 - `npm start`
 
+## Spuštění bota (Windows vs. ostatní OS)
+- **Windows:** Použij `run.bat` (startuje bota a uloží PID do `data/bot.pid`).
+- **macOS/Linux/WSL:** Použij `run.ps1` v PowerShellu (`pwsh`).
+
 ### Co dělá `setup`
 Interaktivně se zeptá na:
 - **Bot token**
