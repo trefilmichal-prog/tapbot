@@ -62,6 +62,119 @@ export const defaultCommands = [
         description: 'Manuálně odešle uvítací zprávu'
       }
     ]
+  },
+  {
+    name: 'clan_panel',
+    description: 'Správa clan panelu',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'post',
+        description: 'Odešle clan panel do kanálu',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Channel,
+            name: 'channel',
+            description: 'Textový kanál pro clan panel',
+            required: true,
+            channel_types: [ChannelType.GuildText]
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'edit',
+        description: 'Aktualizuje uložený clan panel'
+      },
+      {
+        type: ApplicationCommandOptionType.SubcommandGroup,
+        name: 'clan',
+        description: 'Správa klanů',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'add',
+            description: 'Přidá nový klan',
+            options: [
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'name',
+                description: 'Název klanu',
+                required: true
+              },
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'tag',
+                description: 'Tag klanu',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'description',
+                description: 'Popis klanu',
+                required: false
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'edit',
+            description: 'Upraví existující klan',
+            options: [
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'name',
+                description: 'Název klanu',
+                required: true
+              },
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'tag',
+                description: 'Nový tag klanu',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'description',
+                description: 'Nový popis klanu',
+                required: false
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'delete',
+            description: 'Smaže klan',
+            options: [
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'name',
+                description: 'Název klanu',
+                required: true
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'list',
+            description: 'Vypíše klany'
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'ticket_reminders',
+        description: 'Zapne nebo vypne ticket reminders',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Boolean,
+            name: 'enabled',
+            description: 'Zapnout připomínky',
+            required: true
+          }
+        ]
+      }
+    ]
   }
 ];
 

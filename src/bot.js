@@ -1,9 +1,9 @@
-import { Client, Events, GatewayIntentBits, GuildMember } from 'discord.js';
+import { Client, Events, GatewayIntentBits, GuildMember, PermissionsBitField, ButtonStyle } from 'discord.js';
 import { ChannelType, ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
-import { getWelcomeConfig, setWelcomeConfig } from './persistence.js';
+import { getClanState, getWelcomeConfig, setWelcomeConfig, updateClanState } from './persistence.js';
 import { runUpdate } from './update.js';
 import { syncApplicationCommands } from './deploy-commands.js';
 
@@ -20,6 +20,7 @@ try {
 }
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+const CLAN_PANEL_ADMIN_ROLE_ID = '1468192944975515759';
 
 client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
@@ -114,6 +115,69 @@ function buildTextComponents(content) {
       ]
     }
   ];
+}
+
+function hasClanPanelPermission(member) {
+  return member.permissions.has(PermissionsBitField.Flags.Administrator)
+    || member.roles.cache.has(CLAN_PANEL_ADMIN_ROLE_ID);
+}
+
+function buildClanPanelComponents(guild, clanMap) {
+  const clans = Object.values(clanMap ?? {});
+  const listText = clans.length
+    ? clans
+        .map((clan) => {
+          const tag = clan.tag ? ` [${clan.tag}]` : '';
+          const desc = clan.description ? ` — ${clan.description}` : '';
+          return `• ${clan.name}${tag}${desc}`;
+        })
+        .join('\n')
+    : 'Zatím nejsou evidovány žádné klany.';
+
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: `Clan panel · ${guild.name}`
+        },
+        {
+          type: ComponentType.Separator,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small
+        },
+        {
+          type: ComponentType.TextDisplay,
+          content: listText
+        },
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.Button,
+              style: ButtonStyle.Primary,
+              custom_id: 'clan_panel_apply',
+              label: 'Chci se přidat'
+            }
+          ]
+        }
+      ]
+    }
+  ];
+}
+
+function ensureGuildClanState(state, guildId) {
+  if (!state.clan_clans[guildId]) {
+    state.clan_clans[guildId] = {};
+  }
+  if (!state.clan_panel_configs[guildId]) {
+    state.clan_panel_configs[guildId] = {};
+  }
+  if (!state.clan_ticket_reminders[guildId]) {
+    state.clan_ticket_reminders[guildId] = {};
+  }
+  return state;
 }
 
 async function getBotVersion() {
@@ -302,6 +366,238 @@ client.on(Events.InteractionCreate, async (interaction) => {
             ephemeral: true
           });
         }
+      }
+    }
+
+    if (interaction.commandName === 'clan_panel') {
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (!hasClanPanelPermission(interaction.member)) {
+        await interaction.reply({
+          components: buildTextComponents('Nemáš oprávnění použít clan panel.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const subcommandGroup = interaction.options.getSubcommandGroup(false);
+      const subcommand = interaction.options.getSubcommand(true);
+      const guildId = interaction.guildId;
+
+      if (subcommandGroup === 'clan') {
+        if (subcommand === 'add') {
+          const name = interaction.options.getString('name', true).trim();
+          const tag = interaction.options.getString('tag')?.trim() ?? null;
+          const description = interaction.options.getString('description')?.trim() ?? null;
+          let existed = false;
+
+          await updateClanState((state) => {
+            ensureGuildClanState(state, guildId);
+            const entry = state.clan_clans[guildId];
+            if (entry[name]) {
+              existed = true;
+              return;
+            }
+            entry[name] = {
+              name,
+              tag,
+              description,
+              createdAt: new Date().toISOString()
+            };
+          });
+
+          await interaction.reply({
+            components: buildTextComponents(
+              existed ? `Klan "${name}" už existuje.` : `Klan "${name}" byl přidán.`
+            ),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (subcommand === 'edit') {
+          const name = interaction.options.getString('name', true).trim();
+          const tag = interaction.options.getString('tag')?.trim() ?? null;
+          const description = interaction.options.getString('description')?.trim() ?? null;
+          let found = false;
+
+          await updateClanState((state) => {
+            ensureGuildClanState(state, guildId);
+            const entry = state.clan_clans[guildId];
+            if (!entry[name]) return;
+            found = true;
+            entry[name] = {
+              ...entry[name],
+              tag: tag ?? entry[name].tag ?? null,
+              description: description ?? entry[name].description ?? null,
+              updatedAt: new Date().toISOString()
+            };
+          });
+
+          await interaction.reply({
+            components: buildTextComponents(
+              found ? `Klan "${name}" byl upraven.` : `Klan "${name}" nebyl nalezen.`
+            ),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (subcommand === 'delete') {
+          const name = interaction.options.getString('name', true).trim();
+          let removed = false;
+
+          await updateClanState((state) => {
+            ensureGuildClanState(state, guildId);
+            if (state.clan_clans[guildId][name]) {
+              delete state.clan_clans[guildId][name];
+              removed = true;
+            }
+          });
+
+          await interaction.reply({
+            components: buildTextComponents(
+              removed ? `Klan "${name}" byl smazán.` : `Klan "${name}" nebyl nalezen.`
+            ),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (subcommand === 'list') {
+          const state = getClanState();
+          const clans = Object.values(state.clan_clans[guildId] ?? {});
+          const listText = clans.length
+            ? clans.map((clan) => {
+                const tag = clan.tag ? ` [${clan.tag}]` : '';
+                const desc = clan.description ? ` — ${clan.description}` : '';
+                return `• ${clan.name}${tag}${desc}`;
+              }).join('\n')
+            : 'Zatím nejsou evidovány žádné klany.';
+
+          await interaction.reply({
+            components: buildTextComponents(listText),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+      }
+
+      if (subcommand === 'post') {
+        const channel = interaction.options.getChannel('channel', true);
+        if (!channel || channel.type !== ChannelType.GuildText) {
+          await interaction.reply({
+            components: buildTextComponents('Prosím vyber textový kanál.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const state = getClanState();
+        const clanMap = state.clan_clans[guildId] ?? {};
+        const panelMessage = await channel.send({
+          components: buildClanPanelComponents(interaction.guild, clanMap),
+          flags: MessageFlags.IsComponentsV2
+        });
+
+        await updateClanState((nextState) => {
+          ensureGuildClanState(nextState, guildId);
+          nextState.clan_panel_configs[guildId] = {
+            channelId: channel.id,
+            messageId: panelMessage.id,
+            updatedAt: new Date().toISOString()
+          };
+        });
+
+        await interaction.reply({
+          components: buildTextComponents('Clan panel byl odeslán a uložen.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (subcommand === 'edit') {
+        const state = getClanState();
+        const config = state.clan_panel_configs[guildId];
+        if (!config?.channelId || !config?.messageId) {
+          await interaction.reply({
+            components: buildTextComponents('Nenalezen uložený clan panel, použij /clan_panel post.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const channel = await interaction.guild.channels.fetch(config.channelId);
+        if (!channel || !channel.isTextBased()) {
+          await interaction.reply({
+            components: buildTextComponents('Uložený kanál už není dostupný.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const message = await channel.messages.fetch(config.messageId).catch(() => null);
+        if (!message) {
+          await interaction.reply({
+            components: buildTextComponents('Uložená zpráva už neexistuje, použij /clan_panel post.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const clanMap = state.clan_clans[guildId] ?? {};
+        await message.edit({
+          components: buildClanPanelComponents(interaction.guild, clanMap),
+          flags: MessageFlags.IsComponentsV2
+        });
+
+        await updateClanState((nextState) => {
+          ensureGuildClanState(nextState, guildId);
+          nextState.clan_panel_configs[guildId].updatedAt = new Date().toISOString();
+        });
+
+        await interaction.reply({
+          components: buildTextComponents('Clan panel byl aktualizován.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (subcommand === 'ticket_reminders') {
+        const enabled = interaction.options.getBoolean('enabled', true);
+        await updateClanState((state) => {
+          ensureGuildClanState(state, guildId);
+          state.clan_ticket_reminders[guildId] = {
+            enabled,
+            updatedAt: new Date().toISOString()
+          };
+        });
+
+        await interaction.reply({
+          components: buildTextComponents(
+            enabled ? 'Ticket reminders byly zapnuty.' : 'Ticket reminders byly vypnuty.'
+          ),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
       }
     }
   } catch (e) {
