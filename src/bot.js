@@ -378,6 +378,46 @@ function ensurePingRoleState(state) {
   return state;
 }
 
+function prunePingRoleSelections(state, allowedRoles) {
+  if (!state.user_selections || typeof state.user_selections !== 'object') {
+    state.user_selections = {};
+    return;
+  }
+  for (const [userId, selections] of Object.entries(state.user_selections)) {
+    if (!Array.isArray(selections)) {
+      state.user_selections[userId] = [];
+      continue;
+    }
+    state.user_selections[userId] = selections.filter((roleId) => allowedRoles.has(roleId));
+  }
+}
+
+async function removeRolesFromMembers(guild, roleIds) {
+  if (!guild || !roleIds.length) return;
+  let members;
+  try {
+    members = await guild.members.fetch();
+  } catch (error) {
+    console.warn('Failed to fetch guild members for ping role cleanup:', error);
+    return;
+  }
+
+  const removalTasks = [];
+  for (const member of members.values()) {
+    const rolesToRemove = roleIds.filter((roleId) => member.roles.cache.has(roleId));
+    if (!rolesToRemove.length) continue;
+    removalTasks.push(
+      member.roles.remove(rolesToRemove).catch((error) => {
+        console.warn(`Failed to remove ping roles from ${member.id}:`, error);
+      })
+    );
+  }
+
+  if (removalTasks.length) {
+    await Promise.allSettled(removalTasks);
+  }
+}
+
 function hasAdminPermission(member) {
   const storedRoleId = getPermissionRoleId(member.guild.id);
   return member.permissions.has(PermissionsBitField.Flags.Administrator)
@@ -1964,7 +2004,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const roleIds = collectRoleOptionIds(interaction.options);
 
         if (subcommand === 'set') {
-          await updatePingRoleState(interaction.guildId, (state) => {
+          const previousState = getPingRoleState(interaction.guildId);
+          ensurePingRoleState(previousState);
+          const previousRoles = [...previousState.available_roles];
+
+          const updatedState = await updatePingRoleState(interaction.guildId, (state) => {
             ensurePingRoleState(state);
             const uniqueRoles = Array.from(new Set(roleIds));
             state.available_roles = uniqueRoles;
@@ -1974,7 +2018,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 delete state.channel_routes[channelId];
               }
             }
+            prunePingRoleSelections(state, allowed);
           });
+
+          const removedRoles = previousRoles.filter(
+            (roleId) => !updatedState.available_roles.includes(roleId)
+          );
+          await removeRolesFromMembers(interaction.guild, removedRoles);
 
           await interaction.reply({
             components: buildTextComponents(
@@ -2027,16 +2077,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
           }
 
-          await updatePingRoleState(interaction.guildId, (state) => {
+          const previousState = getPingRoleState(interaction.guildId);
+          ensurePingRoleState(previousState);
+          const previousRoles = [...previousState.available_roles];
+
+          const updatedState = await updatePingRoleState(interaction.guildId, (state) => {
             ensurePingRoleState(state);
             const toRemove = new Set(roleIds);
             state.available_roles = state.available_roles.filter((roleId) => !toRemove.has(roleId));
+            const allowed = new Set(state.available_roles);
             for (const channelId of Object.keys(state.channel_routes)) {
               if (toRemove.has(state.channel_routes[channelId])) {
                 delete state.channel_routes[channelId];
               }
             }
+            prunePingRoleSelections(state, allowed);
           });
+
+          const removedRoles = previousRoles.filter(
+            (roleId) => !updatedState.available_roles.includes(roleId)
+          );
+          await removeRolesFromMembers(interaction.guild, removedRoles);
 
           await interaction.reply({
             components: buildTextComponents(`Role byly odebrány (${roleIds.length}).`),
