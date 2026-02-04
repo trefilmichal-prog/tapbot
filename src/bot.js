@@ -70,6 +70,7 @@ const CLAN_TICKET_DECISION_TOGGLE = 'toggle';
 const CLAN_TICKET_DECISION_ACCEPT = 'accept';
 const CLAN_TICKET_DECISION_REJECT = 'reject';
 const CLAN_TICKET_DECISION_REMOVE = 'remove';
+const PING_ROLES_SELECT_ID = 'ping_roles_select';
 const RPS_CHOICE_PREFIX = 'rps:choose:';
 const RPS_MOVES = ['rock', 'paper', 'scissors'];
 const RPS_MOVE_META = {
@@ -489,6 +490,64 @@ function buildClanPanelComponents(guild, clanMap, panelDescription) {
               placeholder: `Select a clan (${guild.name})`,
               options: selectOptions,
               disabled: clans.length === 0
+            }
+          ]
+        }
+      ]
+    }
+  ];
+}
+
+function buildPingRoleSelectComponents(guild, state, memberId) {
+  ensurePingRoleState(state);
+  const availableRoleEntries = state.available_roles
+    .map((roleId) => guild.roles.cache.get(roleId))
+    .filter(Boolean);
+  const selectedRoles = new Set(state.user_selections?.[memberId] ?? []);
+  const limitedRoles = availableRoleEntries.slice(0, 25);
+  const options = limitedRoles.length
+    ? limitedRoles.map((role) => ({
+        label: role.name,
+        value: role.id,
+        default: selectedRoles.has(role.id)
+      }))
+    : [
+        {
+          label: 'Žádné role nejsou k dispozici.',
+          value: 'no_roles_available'
+        }
+      ];
+  const maxValues = limitedRoles.length ? Math.min(limitedRoles.length, 25) : 1;
+  const extraRolesCount = availableRoleEntries.length - limitedRoles.length;
+  const descriptionLines = [
+    'Vyber si ping role, které chceš používat.',
+    extraRolesCount > 0 ? `Zobrazuji jen prvních 25 rolí (skryto ${extraRolesCount}).` : null
+  ].filter(Boolean);
+
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: descriptionLines.join('\n')
+        },
+        {
+          type: ComponentType.Separator,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small
+        },
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.StringSelect,
+              custom_id: PING_ROLES_SELECT_ID,
+              placeholder: 'Vyber ping role',
+              min_values: 0,
+              max_values: maxValues,
+              options,
+              disabled: limitedRoles.length === 0
             }
           ]
         }
@@ -1132,6 +1191,68 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === PING_ROLES_SELECT_ID) {
+        if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+          await interaction.reply({
+            components: buildTextComponents('Tento výběr lze použít jen na serveru.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const state = getPingRoleState(interaction.guildId);
+        ensurePingRoleState(state);
+        const availableRoles = new Set(state.available_roles);
+        const previousSelections = Array.isArray(state.user_selections?.[interaction.member.id])
+          ? state.user_selections[interaction.member.id]
+          : [];
+        const filteredPreviousSelections = previousSelections.filter((roleId) => availableRoles.has(roleId));
+        const selectedRoleIds = interaction.values.filter((roleId) => availableRoles.has(roleId));
+        const invalidSelections = interaction.values.filter((roleId) => !availableRoles.has(roleId));
+
+        await updatePingRoleState(interaction.guildId, (nextState) => {
+          ensurePingRoleState(nextState);
+          nextState.user_selections[interaction.member.id] = selectedRoleIds;
+        });
+
+        const selectedSet = new Set(selectedRoleIds);
+        const previousSet = new Set(filteredPreviousSelections);
+        const rolesToAdd = selectedRoleIds.filter((roleId) => !previousSet.has(roleId));
+        const rolesToRemove = filteredPreviousSelections.filter((roleId) => !selectedSet.has(roleId));
+
+        try {
+          if (rolesToAdd.length) {
+            await interaction.member.roles.add(rolesToAdd);
+          }
+          if (rolesToRemove.length) {
+            await interaction.member.roles.remove(rolesToRemove);
+          }
+        } catch (error) {
+          console.error('Failed to update ping roles for member:', error);
+          await interaction.reply({
+            components: buildTextComponents('Nepodařilo se upravit role.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const responseLines = [
+          'Tvůj výběr byl uložen.',
+          rolesToAdd.length ? `Přidáno rolí: ${rolesToAdd.length}.` : null,
+          rolesToRemove.length ? `Odebráno rolí: ${rolesToRemove.length}.` : null,
+          invalidSelections.length ? 'Některé vybrané role nejsou dostupné.' : null
+        ].filter(Boolean);
+
+        await interaction.reply({
+          components: buildTextComponents(responseLines.join('\n')),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
       if (interaction.customId !== CLAN_PANEL_SELECT_ID) return;
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
@@ -1749,6 +1870,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const directSubcommand = interaction.options.getSubcommand(false);
+      if (directSubcommand === 'choose') {
+        const state = getPingRoleState(interaction.guildId);
+        ensurePingRoleState(state);
+        await interaction.reply({
+          components: buildPingRoleSelectComponents(
+            interaction.guild,
+            state,
+            interaction.member.id
+          ),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
