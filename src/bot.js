@@ -388,6 +388,11 @@ function hasClanPanelPermission(member) {
   return hasAdminPermission(member);
 }
 
+function hasPingRolesPermission(member) {
+  const storedRoleId = getPermissionRoleId(member.guild.id);
+  return Boolean(storedRoleId && member.roles.cache.has(storedRoleId));
+}
+
 function sortClansForDisplay(clans) {
   return clans.slice().sort((a, b) => {
     const aHasOrder = Number.isFinite(a.orderPosition);
@@ -1912,6 +1917,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (!hasPingRolesPermission(interaction.member)) {
+        await interaction.reply({
+          components: buildTextComponents('Nemáš oprávnění použít tento příkaz.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
