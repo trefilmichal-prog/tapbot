@@ -1023,8 +1023,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({
         components: buildTextComponents(
           action === CLAN_TICKET_DECISION_ACCEPT
-            ? 'Ticket byl označen jako přijatý.'
-            : 'Ticket byl označen jako zamítnutý.'
+            ? `<@${refreshedEntry.applicantId}> Ticket was accepted.`
+            : `<@${refreshedEntry.applicantId}> Ticket was rejected.`
         ),
         flags: MessageFlags.IsComponentsV2,
         ephemeral: true
