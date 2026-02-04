@@ -6,7 +6,7 @@ export function loadConfig() {
   const cfgPath = path.join(root, 'config.json');
 
   if (!fs.existsSync(cfgPath)) {
-    const err = new Error('Chybí config.json. Spusť: npm run setup');
+    const err = new Error('Missing config.json. Run: npm run setup');
     err.code = 'MISSING_CONFIG';
     throw err;
   }
@@ -17,7 +17,7 @@ export function loadConfig() {
   try {
     cfg = JSON.parse(raw);
   } catch (e) {
-    const err = new Error('config.json není validní JSON. Spusť znovu: npm run setup');
+    const err = new Error('config.json is not valid JSON. Run again: npm run setup');
     err.code = 'INVALID_CONFIG_JSON';
     throw err;
   }
@@ -30,12 +30,12 @@ export function loadConfig() {
   const welcomeChannelId = welcomeChannelIdRaw === '' ? null : welcomeChannelIdRaw;
 
   if (!token) {
-    const err = new Error('V config.json chybí token. Spusť: npm run setup');
+    const err = new Error('config.json is missing token. Run: npm run setup');
     err.code = 'MISSING_TOKEN';
     throw err;
   }
   if (!clientId) {
-    const err = new Error('V config.json chybí clientId (Application ID). Spusť: npm run setup');
+    const err = new Error('config.json is missing clientId (Application ID). Run: npm run setup');
     err.code = 'MISSING_CLIENT_ID';
     throw err;
   }

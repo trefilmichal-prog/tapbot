@@ -503,7 +503,7 @@ function buildClanPanelComponents(guild, clanMap, panelDescription) {
   const trimmedDescription = typeof panelDescription === 'string'
     ? panelDescription.trim()
     : '';
-  const resolvedDescription = trimmedDescription || 'Bez popisku.';
+  const resolvedDescription = trimmedDescription || 'No description.';
   const selectOptions = clans.length
       ? clans.map((clan) => ({
           label: clan.name,
@@ -563,15 +563,15 @@ function buildPingRoleSelectComponents(guild, state, memberId) {
       }))
     : [
         {
-          label: 'Žádné role nejsou k dispozici.',
+          label: 'No roles are available.',
           value: 'no_roles_available'
         }
       ];
   const maxValues = limitedRoles.length ? Math.min(limitedRoles.length, 25) : 1;
   const extraRolesCount = availableRoleEntries.length - limitedRoles.length;
   const descriptionLines = [
-    'Vyber si ping role, které chceš používat.',
-    extraRolesCount > 0 ? `Zobrazuji jen prvních 25 rolí (skryto ${extraRolesCount}).` : null
+    'Choose the ping roles you want to use.',
+    extraRolesCount > 0 ? `Showing only the first 25 roles (hidden ${extraRolesCount}).` : null
   ].filter(Boolean);
 
   return [
@@ -593,7 +593,7 @@ function buildPingRoleSelectComponents(guild, state, memberId) {
             {
               type: ComponentType.StringSelect,
               custom_id: PING_ROLES_SELECT_ID,
-              placeholder: 'Vyber ping role',
+              placeholder: 'Select ping roles',
               min_values: 0,
               max_values: maxValues,
               options,
@@ -751,7 +751,7 @@ function collectRoleOptionIds(options) {
 
 function formatRoleList(roleIds) {
   if (!roleIds.length) {
-    return 'Žádné role nejsou nastavené.';
+    return 'No roles are set.';
   }
   return roleIds.map((roleId) => `• <@&${roleId}>`).join('\n');
 }
@@ -759,7 +759,7 @@ function formatRoleList(roleIds) {
 function formatRouteList(routes) {
   const entries = Object.entries(routes ?? {});
   if (!entries.length) {
-    return 'Žádné routy nejsou nastavené.';
+    return 'No routes are set.';
   }
   return entries
     .map(([channelId, roleId]) => `• <#${channelId}> → <@&${roleId}>`)
@@ -1187,7 +1187,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.customId.startsWith(CLAN_TICKET_MODAL_PREFIX)) {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
           await interaction.reply({
-            components: buildTextComponents('Tento dialog lze použít jen na serveru.'),
+            components: buildTextComponents('This dialog can only be used in a server.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1201,7 +1201,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const clan = state.clan_clans?.[clanName];
         if (!clan) {
           await interaction.reply({
-            components: buildTextComponents('Vybraný klan nebyl nalezen.'),
+            components: buildTextComponents('The selected clan was not found.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1210,7 +1210,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (!clan.ticketCategoryId) {
           await interaction.reply({
-            components: buildTextComponents('K tomuto klanu není nastavená ticket kategorie.'),
+            components: buildTextComponents('No ticket category is set for this clan.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1219,7 +1219,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (!clan.reviewRoleId) {
           await interaction.reply({
-            components: buildTextComponents('K tomuto klanu není nastavená review role.'),
+            components: buildTextComponents('No review role is set for this clan.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1235,7 +1235,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (!ticketCategory || ticketCategory.type !== ChannelType.GuildCategory) {
           await interaction.reply({
-            components: buildTextComponents('Ticket kategorie nebyla nalezena.'),
+            components: buildTextComponents('Ticket category was not found.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1295,7 +1295,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         } catch (error) {
           console.error('Failed to create ticket channel:', error);
           await interaction.reply({
-            components: buildTextComponents('Nepodařilo se vytvořit ticket.'),
+            components: buildTextComponents('Failed to create ticket.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1336,7 +1336,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         await interaction.reply({
-          components: buildTextComponents(`Ticket byl vytvořen: <#${ticketChannel.id}>`),
+          components: buildTextComponents(`Ticket was created: <#${ticketChannel.id}>`),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1346,7 +1346,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.customId !== CLAN_PANEL_EDIT_MODAL_ID) return;
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
-          components: buildTextComponents('Tento dialog lze použít jen na serveru.'),
+          components: buildTextComponents('This dialog can only be used in a server.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1355,7 +1355,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!hasClanPanelPermission(interaction.member)) {
         await interaction.reply({
-          components: buildTextComponents('Nemáš oprávnění upravit clan panel.'),
+          components: buildTextComponents('You do not have permission to edit the clan panel.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1379,7 +1379,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await refreshClanPanelForGuild(interaction.guild, interaction.guildId);
 
       await interaction.reply({
-        components: buildTextComponents('Popisek clan panelu byl uložen.'),
+        components: buildTextComponents('Clan panel description saved.'),
         flags: MessageFlags.IsComponentsV2,
         ephemeral: true
       });
@@ -1390,7 +1390,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.customId === PING_ROLES_SELECT_ID) {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
           await interaction.reply({
-            components: buildTextComponents('Tento výběr lze použít jen na serveru.'),
+            components: buildTextComponents('This selection can only be used in a server.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1427,7 +1427,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         } catch (error) {
           console.error('Failed to update ping roles for member:', error);
           await interaction.reply({
-            components: buildTextComponents('Nepodařilo se upravit role.'),
+            components: buildTextComponents('Failed to update roles.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1435,10 +1435,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const responseLines = [
-          'Tvůj výběr byl uložen.',
-          rolesToAdd.length ? `Přidáno rolí: ${rolesToAdd.length}.` : null,
-          rolesToRemove.length ? `Odebráno rolí: ${rolesToRemove.length}.` : null,
-          invalidSelections.length ? 'Některé vybrané role nejsou dostupné.' : null
+          'Your selection has been saved.',
+          rolesToAdd.length ? `Roles added: ${rolesToAdd.length}.` : null,
+          rolesToRemove.length ? `Roles removed: ${rolesToRemove.length}.` : null,
+          invalidSelections.length ? 'Some selected roles are not available.' : null
         ].filter(Boolean);
 
         await interaction.reply({
@@ -1489,7 +1489,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.customId.startsWith(RPS_CHOICE_PREFIX)) {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
           await interaction.reply({
-            components: buildTextComponents('Tuto akci lze použít jen na serveru.'),
+            components: buildTextComponents('This action can only be used in a server.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1501,7 +1501,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const move = parts[3];
         if (!gameId || !RPS_MOVES.includes(move)) {
           await interaction.reply({
-            components: buildTextComponents('Neplatná volba pro RPS.'),
+            components: buildTextComponents('Invalid RPS choice.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1513,7 +1513,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const game = state.active_games?.[gameId];
         if (!game) {
           await interaction.reply({
-            components: buildTextComponents('Tato hra už není aktivní.'),
+            components: buildTextComponents('This game is no longer active.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1523,7 +1523,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const allowedPlayers = [game.challengerId, game.opponentId].filter(Boolean);
         if (!allowedPlayers.includes(interaction.user.id)) {
           await interaction.reply({
-            components: buildTextComponents('Do této hry nejsi zapojen.'),
+            components: buildTextComponents('You are not part of this game.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1532,7 +1532,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (game.status === 'complete') {
           await interaction.reply({
-            components: buildTextComponents('Tato hra už byla dokončena.'),
+            components: buildTextComponents('This game has already finished.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1541,7 +1541,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (game.moves?.[interaction.user.id]) {
           await interaction.reply({
-            components: buildTextComponents('Své rozhodnutí už jsi poslal.'),
+            components: buildTextComponents('You have already submitted your choice.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1614,7 +1614,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const updatedGame = updatedState.active_games?.[gameId];
         if (!updatedGame) {
           await interaction.reply({
-            components: buildTextComponents('Tato hra už není dostupná.'),
+            components: buildTextComponents('This game is no longer available.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1631,7 +1631,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.customId.startsWith(CLAN_TICKET_DECISION_PREFIX)) return;
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
-          components: buildTextComponents('Tuto akci lze použít jen na serveru.'),
+          components: buildTextComponents('This action can only be used in a server.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1642,7 +1642,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (![CLAN_TICKET_DECISION_TOGGLE, CLAN_TICKET_DECISION_ACCEPT, CLAN_TICKET_DECISION_REJECT, CLAN_TICKET_DECISION_REMOVE]
         .includes(action)) {
         await interaction.reply({
-          components: buildTextComponents('Neplatná akce pro ticket.'),
+          components: buildTextComponents('Invalid ticket action.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1653,7 +1653,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const ticketEntry = state.clan_ticket_decisions?.[interaction.channelId];
       if (!ticketEntry) {
         await interaction.reply({
-          components: buildTextComponents('Ticket nebyl nalezen nebo už není aktivní.'),
+          components: buildTextComponents('Ticket was not found or is no longer active.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1663,7 +1663,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const clan = state.clan_clans?.[ticketEntry.clanName];
       if (!clan) {
         await interaction.reply({
-          components: buildTextComponents('Klan pro tento ticket nebyl nalezen.'),
+          components: buildTextComponents('Clan for this ticket was not found.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1675,7 +1675,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!hasReviewPermission) {
         await interaction.reply({
           components: buildTextComponents(
-            'Nemáš oprávnění rozhodovat o tomto ticketu. Je nutné mít review roli klanu.'
+            'You do not have permission to decide on this ticket. The clan review role is required.'
           ),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
@@ -1707,7 +1707,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents(
-            refreshedEntry?.controlsExpanded ? 'Ovládání ticketu bylo rozbaleno.' : 'Ovládání ticketu bylo sbaleno.'
+            refreshedEntry?.controlsExpanded ? 'Ticket controls expanded.' : 'Ticket controls collapsed.'
           ),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
@@ -1717,7 +1717,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (ticketEntry.status && action !== CLAN_TICKET_DECISION_REMOVE) {
         await interaction.reply({
-          components: buildTextComponents('O tomto ticketu už bylo rozhodnuto.'),
+          components: buildTextComponents('This ticket has already been decided.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1758,7 +1758,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         await interaction.reply({
-          components: buildTextComponents('Ticket byl odstraněn.'),
+          components: buildTextComponents('Ticket was removed.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1812,10 +1812,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (!interaction.isChatInputCommand()) return;
 
-    if (interaction.commandName === 'rps') {
+      if (interaction.commandName === 'rps') {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
-          components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+          components: buildTextComponents('This command can only be used in a server.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1827,7 +1827,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const opponent = interaction.options.getUser('opponent');
         if (opponent && opponent.id === interaction.user.id) {
           await interaction.reply({
-            components: buildTextComponents('Nemůžeš hrát sám se sebou.'),
+            components: buildTextComponents('You cannot play against yourself.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1836,7 +1836,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (opponent?.bot && opponent.id !== client.user?.id) {
           await interaction.reply({
-            components: buildTextComponents('S jinými boty se hrát nedá.'),
+            components: buildTextComponents('You cannot play against other bots.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1899,10 +1899,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ? sorted.slice(0, 10).map(([userId, score], index) => (
             `${index + 1}. <@${userId}> — ✅ ${score.wins ?? 0} | ❌ ${score.losses ?? 0} | 🤝 ${score.draws ?? 0}`
           ))
-          : ['Zatím tu nejsou žádné odehrané hry.'];
+          : ['No games have been played yet.'];
 
         await interaction.reply({
-          components: buildTextComponents(['🏆 **RPS Statistiky**', '', ...lines].join('\n')),
+          components: buildTextComponents(['🏆 **RPS Stats**', '', ...lines].join('\n')),
           flags: MessageFlags.IsComponentsV2
         });
         return;
@@ -1920,7 +1920,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         await interaction.reply({
-          components: buildTextComponents('RPS statistiky byly resetovány.'),
+          components: buildTextComponents('RPS stats have been reset.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1931,7 +1931,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === 'config') {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
-          components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+          components: buildTextComponents('This command can only be used in a server.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1940,7 +1940,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!hasAdminPermission(interaction.member)) {
         await interaction.reply({
-          components: buildTextComponents('Nemáš oprávnění použít tento příkaz.'),
+          components: buildTextComponents('You do not have permission to use this command.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1952,8 +1952,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const role = interaction.options.getRole('role');
         const storedRoleId = await setPermissionRoleId(interaction.guildId, role?.id ?? null);
         const response = storedRoleId
-          ? `Role pro oprávnění byla nastavena na <@&${storedRoleId}>.`
-          : 'Role pro oprávnění byla odstraněna.';
+          ? `Permission role was set to <@&${storedRoleId}>.`
+          : 'Permission role was cleared.';
         await interaction.reply({
           components: buildTextComponents(response),
           flags: MessageFlags.IsComponentsV2,
@@ -1965,7 +1965,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const channel = interaction.options.getChannel('channel');
         if (channel && channel.type !== ChannelType.GuildText) {
           await interaction.reply({
-            components: buildTextComponents('Prosím vyber textový kanál.'),
+            components: buildTextComponents('Please select a text channel.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1976,8 +1976,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         setLogConfig(interaction.guildId, { channelId: storedChannelId });
 
         const response = storedChannelId
-          ? `Logovací kanál byl nastaven na <#${storedChannelId}>.`
-          : 'Logovací kanál byl odstraněn.';
+          ? `Log channel was set to <#${storedChannelId}>.`
+          : 'Log channel was cleared.';
         await interaction.reply({
           components: buildTextComponents(response),
           flags: MessageFlags.IsComponentsV2,
@@ -1988,7 +1988,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (subcommand === 'verze') {
         const version = await getBotVersion();
         await interaction.reply({
-          components: buildTextComponents(`Verze bota: ${version}`),
+          components: buildTextComponents(`Bot version: ${version}`),
           flags: MessageFlags.IsComponentsV2
         });
         return;
@@ -2003,7 +2003,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               components: [
                 {
                   type: ComponentType.TextDisplay,
-                  content: 'Aktualizace spuštěna. Bot po dokončení nasadí příkazy a restartuje se.'
+                  content: 'Update started. The bot will deploy commands and restart when finished.'
                 }
               ]
             }
@@ -2022,7 +2022,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           try {
             await interaction.followUp({
               components: buildTextComponents(
-                'Aktualizace selhala nebo se nepodařilo restartovat. Podívej se do logů.'
+                'Update failed or restart did not complete. Check the logs.'
               ),
               flags: MessageFlags.IsComponentsV2,
               ephemeral: true
@@ -2038,7 +2038,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const channel = interaction.options.getChannel('channel', true);
         if (!channel || channel.type !== ChannelType.GuildText) {
           await interaction.reply({
-            components: buildTextComponents('Prosím vyber textový kanál.'),
+            components: buildTextComponents('Please select a text channel.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -2054,7 +2054,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         await interaction.reply({
-          components: buildTextComponents('Uvítání bylo uloženo.'),
+          components: buildTextComponents('Welcome settings saved.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2065,7 +2065,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === 'ping_roles') {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
-          components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+          components: buildTextComponents('This command can only be used in a server.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2074,7 +2074,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!hasPingRolesPermission(interaction.member)) {
         await interaction.reply({
-          components: buildTextComponents('Nemáš oprávnění použít tento příkaz.'),
+          components: buildTextComponents('You do not have permission to use this command.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2085,7 +2085,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (directSubcommand === 'panel') {
         if (!hasAdminPermission(interaction.member)) {
           await interaction.reply({
-            components: buildTextComponents('Nemáš oprávnění použít tento příkaz.'),
+            components: buildTextComponents('You do not have permission to use this command.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -2095,7 +2095,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const channel = interaction.options.getChannel('channel', true);
         if (!channel || channel.type !== ChannelType.GuildText) {
           await interaction.reply({
-            components: buildTextComponents('Prosím vyber textový kanál.'),
+            components: buildTextComponents('Please select a text channel.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -2133,7 +2133,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         await interaction.reply({
-          components: buildTextComponents('Ping role panel byl uložen.'),
+          components: buildTextComponents('Ping role panel saved.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2157,7 +2157,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!hasAdminPermission(interaction.member)) {
         await interaction.reply({
-          components: buildTextComponents('Nemáš oprávnění použít tento příkaz.'),
+          components: buildTextComponents('You do not have permission to use this command.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2196,8 +2196,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction.reply({
             components: buildTextComponents(
               roleIds.length
-                ? `Dostupné role byly nastaveny (${roleIds.length}).`
-                : 'Seznam rolí byl vymazán.'
+                ? `Available roles set (${roleIds.length}).`
+                : 'Role list was cleared.'
             ),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
@@ -2208,7 +2208,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (subcommand === 'add') {
           if (!roleIds.length) {
             await interaction.reply({
-              components: buildTextComponents('Vyber alespoň jednu roli pro přidání.'),
+              components: buildTextComponents('Select at least one role to add.'),
               flags: MessageFlags.IsComponentsV2,
               ephemeral: true
             });
@@ -2227,7 +2227,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
 
           await interaction.reply({
-            components: buildTextComponents(`Role byly přidány (${roleIds.length}).`),
+            components: buildTextComponents(`Roles added (${roleIds.length}).`),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -2237,7 +2237,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (subcommand === 'remove') {
           if (!roleIds.length) {
             await interaction.reply({
-              components: buildTextComponents('Vyber alespoň jednu roli pro odebrání.'),
+              components: buildTextComponents('Select at least one role to remove.'),
               flags: MessageFlags.IsComponentsV2,
               ephemeral: true
             });
@@ -2267,7 +2267,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await removeRolesFromMembers(interaction.guild, removedRoles);
 
           await interaction.reply({
-            components: buildTextComponents(`Role byly odebrány (${roleIds.length}).`),
+            components: buildTextComponents(`Roles removed (${roleIds.length}).`),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -2292,7 +2292,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const role = interaction.options.getRole('role', true);
           if (!channel || channel.type !== ChannelType.GuildText) {
             await interaction.reply({
-              components: buildTextComponents('Prosím vyber textový kanál.'),
+              components: buildTextComponents('Please select a text channel.'),
               flags: MessageFlags.IsComponentsV2,
               ephemeral: true
             });
@@ -2303,7 +2303,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ensurePingRoleState(state);
           if (!state.available_roles.includes(role.id)) {
             await interaction.reply({
-              components: buildTextComponents('Tato role není v seznamu dostupných rolí.'),
+              components: buildTextComponents('That role is not in the list of available roles.'),
               flags: MessageFlags.IsComponentsV2,
               ephemeral: true
             });
@@ -2316,7 +2316,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
 
           await interaction.reply({
-            components: buildTextComponents(`Routa nastavena: <#${channel.id}> → <@&${role.id}>.`),
+            components: buildTextComponents(`Route set: <#${channel.id}> → <@&${role.id}>.`),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -2327,7 +2327,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const channel = interaction.options.getChannel('channel', true);
           if (!channel || channel.type !== ChannelType.GuildText) {
             await interaction.reply({
-              components: buildTextComponents('Prosím vyber textový kanál.'),
+              components: buildTextComponents('Please select a text channel.'),
               flags: MessageFlags.IsComponentsV2,
               ephemeral: true
             });
@@ -2346,8 +2346,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction.reply({
             components: buildTextComponents(
               removed
-                ? `Routa pro <#${channel.id}> byla odstraněna.`
-                : 'Pro tento kanál není žádná routa.'
+                ? `Route for <#${channel.id}> was removed.`
+                : 'There is no route for this channel.'
             ),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
@@ -2380,7 +2380,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (subcommand === 'welcome') {
         if (!interaction.inGuild()) {
           await interaction.reply({
-            components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+            components: buildTextComponents('This command can only be used in a server.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -2391,7 +2391,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const settings = await resolveWelcomeSettings(member);
         if (!settings) {
           await interaction.reply({
-            components: buildTextComponents('Není nastaven uvítací kanál.'),
+            components: buildTextComponents('No welcome channel is configured.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -2401,14 +2401,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         try {
           await sendWelcomeMessage(member, settings);
           await interaction.reply({
-            components: buildTextComponents('Uvítací zpráva byla odeslána.'),
+            components: buildTextComponents('Welcome message was sent.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
         } catch (e) {
           console.error('Failed to send manual welcome message:', e);
           await interaction.reply({
-            components: buildTextComponents('Nepodařilo se odeslat uvítací zprávu.'),
+            components: buildTextComponents('Failed to send welcome message.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -2419,7 +2419,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === 'clan_panel') {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
-          components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+          components: buildTextComponents('This command can only be used in a server.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2428,7 +2428,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (!hasClanPanelPermission(interaction.member)) {
         await interaction.reply({
-          components: buildTextComponents('Nemáš oprávnění použít clan panel.'),
+          components: buildTextComponents('You do not have permission to use the clan panel.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2482,7 +2482,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           await interaction.reply({
             components: buildTextComponents(
-              existed ? `Klan "${name}" už existuje.` : `Klan "${name}" byl přidán.`
+              existed ? `Clan "${name}" already exists.` : `Clan "${name}" was added.`
             ),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
@@ -2534,7 +2534,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           await interaction.reply({
             components: buildTextComponents(
-              found ? `Klan "${name}" byl upraven.` : `Klan "${name}" nebyl nalezen.`
+              found ? `Clan "${name}" was updated.` : `Clan "${name}" was not found.`
             ),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
@@ -2560,7 +2560,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           await interaction.reply({
             components: buildTextComponents(
-              removed ? `Klan "${name}" byl smazán.` : `Klan "${name}" nebyl nalezen.`
+              removed ? `Clan "${name}" was deleted.` : `Clan "${name}" was not found.`
             ),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
@@ -2577,7 +2577,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 const desc = clan.description ? ` — ${clan.description}` : '';
                 return `• ${clan.name}${tag}${desc}`;
               }).join('\n')
-            : 'Zatím nejsou evidovány žádné klany.';
+            : 'No clans have been registered yet.';
 
           await interaction.reply({
             components: buildTextComponents(listText),
@@ -2593,7 +2593,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const panelDescription = state.clan_panel_configs?.description ?? '';
         const input = new TextInputBuilder()
           .setCustomId(CLAN_PANEL_DESCRIPTION_INPUT_ID)
-          .setLabel('Popisek clan panelu')
+          .setLabel('Clan panel description')
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(false)
           .setMaxLength(1000);
@@ -2604,7 +2604,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const modal = new ModalBuilder()
           .setCustomId(CLAN_PANEL_EDIT_MODAL_ID)
-          .setTitle('Upravit clan panel')
+          .setTitle('Edit clan panel')
           .addComponents(new ActionRowBuilder().addComponents(input));
 
         await interaction.showModal(modal);
@@ -2615,7 +2615,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const channel = interaction.options.getChannel('channel', true);
         if (!channel || channel.type !== ChannelType.GuildText) {
           await interaction.reply({
-            components: buildTextComponents('Prosím vyber textový kanál.'),
+            components: buildTextComponents('Please select a text channel.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -2641,7 +2641,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         await interaction.reply({
-          components: buildTextComponents('Clan panel byl odeslán a uložen.'),
+          components: buildTextComponents('Clan panel was posted and saved.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2660,7 +2660,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents(
-            enabled ? 'Ticket reminders byly zapnuty.' : 'Ticket reminders byly vypnuty.'
+            enabled ? 'Ticket reminders were enabled.' : 'Ticket reminders were disabled.'
           ),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
@@ -2673,13 +2673,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction && interaction.isRepliable && interaction.isRepliable()) {
         if (interaction.deferred || interaction.replied) {
           await interaction.followUp({
-            components: buildTextComponents('Došlo k chybě při zpracování.'),
+            components: buildTextComponents('An error occurred while processing.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
         } else {
           await interaction.reply({
-            components: buildTextComponents('Došlo k chybě při zpracování.'),
+            components: buildTextComponents('An error occurred while processing.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });

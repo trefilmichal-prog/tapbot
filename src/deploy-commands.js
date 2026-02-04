@@ -10,17 +10,17 @@ export const defaultCommands = [
   },
   {
     name: 'config',
-    description: 'Nastavení bota',
+    description: 'Bot configuration',
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'permissions',
-        description: 'Nastaví roli s oprávněním na správu',
+        description: 'Sets the role with management permissions',
         options: [
           {
             type: ApplicationCommandOptionType.Role,
             name: 'role',
-            description: 'Role s oprávněním (ponech prázdné pro reset)',
+            description: 'Role with permission (leave empty to reset)',
             required: false
           }
         ]
@@ -28,12 +28,12 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'logs',
-        description: 'Nastaví logovací kanál',
+        description: 'Sets the log channel',
         options: [
           {
             type: ApplicationCommandOptionType.Channel,
             name: 'channel',
-            description: 'Textový kanál pro logy (ponech prázdné pro reset)',
+            description: 'Text channel for logs (leave empty to reset)',
             required: false,
             channel_types: [ChannelType.GuildText]
           }
@@ -42,12 +42,12 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'update',
-        description: 'Aktualizuje bota',
+        description: 'Updates the bot',
         options: [
           {
             type: ApplicationCommandOptionType.Boolean,
             name: 'batch-restart',
-            description: 'Použije restart přes .bat skript místo pm2 restart',
+            description: 'Use a .bat script restart instead of pm2 restart',
             required: false
           }
         ]
@@ -55,24 +55,24 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'verze',
-        description: 'Zobrazí verzi bota'
+        description: 'Shows the bot version'
       },
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'welcome',
-        description: 'Nastav uvítací zprávu',
+        description: 'Configure the welcome message',
         options: [
           {
             type: ApplicationCommandOptionType.Channel,
             name: 'channel',
-            description: 'Textový kanál pro uvítání',
+            description: 'Text channel for welcome messages',
             required: true,
             channel_types: [ChannelType.GuildText]
           },
           {
             type: ApplicationCommandOptionType.String,
             name: 'message',
-            description: 'Volitelná uvítací zpráva',
+            description: 'Optional welcome message',
             required: false
           }
         ]
@@ -81,33 +81,33 @@ export const defaultCommands = [
   },
   {
     name: 'test',
-    description: 'Testovací příkazy',
+    description: 'Test commands',
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'welcome',
-        description: 'Manuálně odešle uvítací zprávu'
+        description: 'Manually sends a welcome message'
       }
     ]
   },
   {
     name: 'ping_roles',
-    description: 'Správa ping rolí a routování',
+    description: 'Manage ping roles and routing',
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'choose',
-        description: 'Vybere ping role pomocí menu'
+        description: 'Select ping roles from a menu'
       },
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'panel',
-        description: 'Odešle nebo aktualizuje ping role panel',
+        description: 'Posts or updates the ping role panel',
         options: [
           {
             type: ApplicationCommandOptionType.Channel,
             name: 'channel',
-            description: 'Textový kanál pro ping role panel',
+            description: 'Text channel for the ping role panel',
             required: true,
             channel_types: [ChannelType.GuildText]
           }
@@ -116,12 +116,12 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.SubcommandGroup,
         name: 'roles',
-        description: 'Správa dostupných rolí',
+        description: 'Manage available roles',
         options: [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'set',
-            description: 'Nastaví seznam dostupných rolí',
+            description: 'Set the list of available roles',
             options: [
               {
                 type: ApplicationCommandOptionType.Role,
@@ -158,7 +158,7 @@ export const defaultCommands = [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'add',
-            description: 'Přidá role do seznamu',
+            description: 'Add roles to the list',
             options: [
               {
                 type: ApplicationCommandOptionType.Role,
@@ -195,7 +195,7 @@ export const defaultCommands = [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'remove',
-            description: 'Odebere role ze seznamu',
+            description: 'Remove roles from the list',
             options: [
               {
                 type: ApplicationCommandOptionType.Role,
@@ -232,31 +232,31 @@ export const defaultCommands = [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'list',
-            description: 'Vypíše dostupné role'
+            description: 'List available roles'
           }
         ]
       },
       {
         type: ApplicationCommandOptionType.SubcommandGroup,
         name: 'route',
-        description: 'Správa routování do kanálů',
+        description: 'Manage routing to channels',
         options: [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'set',
-            description: 'Nastaví roli pro kanál',
+            description: 'Set a role for a channel',
             options: [
               {
                 type: ApplicationCommandOptionType.Channel,
                 name: 'channel',
-                description: 'Textový kanál',
+                description: 'Text channel',
                 required: true,
                 channel_types: [ChannelType.GuildText]
               },
               {
                 type: ApplicationCommandOptionType.Role,
                 name: 'role',
-                description: 'Role pro tento kanál',
+                description: 'Role for this channel',
                 required: true
               }
             ]
@@ -264,12 +264,12 @@ export const defaultCommands = [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'remove',
-            description: 'Odstraní routu pro kanál',
+            description: 'Remove a route for a channel',
             options: [
               {
                 type: ApplicationCommandOptionType.Channel,
                 name: 'channel',
-                description: 'Textový kanál',
+                description: 'Text channel',
                 required: true,
                 channel_types: [ChannelType.GuildText]
               }
@@ -278,7 +278,7 @@ export const defaultCommands = [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'list',
-            description: 'Vypíše seznam rout'
+            description: 'List routes'
           }
         ]
       }
@@ -286,17 +286,17 @@ export const defaultCommands = [
   },
   {
     name: 'clan_panel',
-    description: 'Správa clan panelu',
+    description: 'Manage the clan panel',
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'post',
-        description: 'Odešle clan panel do kanálu',
+        description: 'Post the clan panel to a channel',
         options: [
           {
             type: ApplicationCommandOptionType.Channel,
             name: 'channel',
-            description: 'Textový kanál pro clan panel',
+            description: 'Text channel for the clan panel',
             required: true,
             channel_types: [ChannelType.GuildText]
           }
@@ -305,60 +305,60 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'edit',
-        description: 'Upraví popisek clan panelu'
+        description: 'Edit the clan panel description'
       },
       {
         type: ApplicationCommandOptionType.SubcommandGroup,
         name: 'clan',
-        description: 'Správa klanů',
+        description: 'Manage clans',
         options: [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'add',
-            description: 'Přidá nový klan',
+            description: 'Add a new clan',
             options: [
               {
                 type: ApplicationCommandOptionType.String,
                 name: 'name',
-                description: 'Název klanu',
+                description: 'Clan name',
                 required: true
               },
               {
                 type: ApplicationCommandOptionType.String,
                 name: 'tag',
-                description: 'Tag klanu',
+                description: 'Clan tag',
                 required: false
               },
               {
                 type: ApplicationCommandOptionType.String,
                 name: 'description',
-                description: 'Popis klanu',
+                description: 'Clan description',
                 required: false
               },
               {
                 type: ApplicationCommandOptionType.Channel,
                 name: 'ticket_room',
-                description: 'Ticket kanál pro klan',
+                description: 'Ticket channel for the clan',
                 required: false,
                 channel_types: [ChannelType.GuildCategory]
               },
               {
                 type: ApplicationCommandOptionType.Role,
                 name: 'review_role',
-                description: 'Role pro review žádostí',
+                description: 'Role for reviewing applications',
                 required: false
               },
               {
                 type: ApplicationCommandOptionType.Channel,
                 name: 'accept_category',
-                description: 'Kategorie pro přijaté',
+                description: 'Category for accepted tickets',
                 required: false,
                 channel_types: [ChannelType.GuildCategory]
               },
               {
                 type: ApplicationCommandOptionType.Integer,
                 name: 'order_position',
-                description: 'Pořadí klanu v seznamu',
+                description: 'Clan order in the list',
                 required: false
               }
             ]
@@ -366,50 +366,50 @@ export const defaultCommands = [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'edit',
-            description: 'Upraví existující klan',
+            description: 'Edit an existing clan',
             options: [
               {
                 type: ApplicationCommandOptionType.String,
                 name: 'name',
-                description: 'Název klanu',
+                description: 'Clan name',
                 required: true
               },
               {
                 type: ApplicationCommandOptionType.String,
                 name: 'tag',
-                description: 'Nový tag klanu',
+                description: 'New clan tag',
                 required: false
               },
               {
                 type: ApplicationCommandOptionType.String,
                 name: 'description',
-                description: 'Nový popis klanu',
+                description: 'New clan description',
                 required: false
               },
               {
                 type: ApplicationCommandOptionType.Channel,
                 name: 'ticket_room',
-                description: 'Nový ticket kanál pro klan',
+                description: 'New ticket channel for the clan',
                 required: false,
                 channel_types: [ChannelType.GuildCategory]
               },
               {
                 type: ApplicationCommandOptionType.Role,
                 name: 'review_role',
-                description: 'Nová role pro review žádostí',
+                description: 'New role for reviewing applications',
                 required: false
               },
               {
                 type: ApplicationCommandOptionType.Channel,
                 name: 'accept_category',
-                description: 'Nová kategorie pro přijaté',
+                description: 'New category for accepted tickets',
                 required: false,
                 channel_types: [ChannelType.GuildCategory]
               },
               {
                 type: ApplicationCommandOptionType.Integer,
                 name: 'order_position',
-                description: 'Nové pořadí klanu v seznamu',
+                description: 'New clan order in the list',
                 required: false
               }
             ]
@@ -417,12 +417,12 @@ export const defaultCommands = [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'delete',
-            description: 'Smaže klan',
+            description: 'Delete a clan',
             options: [
               {
                 type: ApplicationCommandOptionType.String,
                 name: 'name',
-                description: 'Název klanu',
+                description: 'Clan name',
                 required: true
               }
             ]
@@ -430,19 +430,19 @@ export const defaultCommands = [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'list',
-            description: 'Vypíše klany'
+            description: 'List clans'
           }
         ]
       },
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'ticket_reminders',
-        description: 'Zapne nebo vypne ticket reminders',
+        description: 'Enable or disable ticket reminders',
         options: [
           {
             type: ApplicationCommandOptionType.Boolean,
             name: 'enabled',
-            description: 'Zapnout připomínky',
+            description: 'Enable reminders',
             required: true
           }
         ]
@@ -456,12 +456,12 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'play',
-        description: 'Zahraj si rock paper scissors',
+        description: 'Play rock paper scissors',
         options: [
           {
             type: ApplicationCommandOptionType.User,
             name: 'opponent',
-            description: 'Volitelný soupeř',
+            description: 'Optional opponent',
             required: false
           }
         ]
@@ -469,12 +469,12 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'stats',
-        description: 'Zobrazí statistiky'
+        description: 'Show statistics'
       },
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'reset',
-        description: 'Resetuje statistiky'
+        description: 'Reset statistics'
       }
     ]
   }
