@@ -914,6 +914,48 @@ client.on(Events.GuildMemberAdd, async (member) => {
   }
 });
 
+client.on(Events.MessageCreate, async (message) => {
+  if (!message.inGuild()) return;
+  if (message.author?.bot) return;
+  if (message.channel?.type !== ChannelType.GuildText) return;
+
+  const state = getPingRoleState(message.guild.id);
+  ensurePingRoleState(state);
+  const roleId = state.channel_routes?.[message.channel.id];
+  if (!roleId) return;
+
+  const contentParts = [`<@&${roleId}>`];
+  if (message.content) {
+    contentParts.push(message.content);
+  }
+  const files = message.attachments?.size
+    ? message.attachments.map((attachment) => ({
+        attachment: attachment.url,
+        name: attachment.name ?? undefined
+      }))
+    : [];
+
+  try {
+    await message.delete();
+  } catch (error) {
+    console.warn('Failed to delete routed message:', error);
+  }
+
+  try {
+    await message.channel.send({
+      content: contentParts.join(' '),
+      files,
+      allowedMentions: {
+        roles: [roleId],
+        users: [],
+        repliedUser: false
+      }
+    });
+  } catch (error) {
+    console.warn('Failed to relay routed message:', error);
+  }
+});
+
 client.on(Events.MessageDelete, async (message) => {
   if (!message.guildId) return;
   const config = getLogConfig(message.guildId);
