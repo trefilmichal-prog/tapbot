@@ -4,13 +4,12 @@ import path from 'node:path';
 const rootDir = path.resolve(process.cwd());
 const dataDir = path.join(rootDir, 'data');
 const legacyWelcomeConfigPath = path.join(dataDir, 'welcome-config.json');
-const commandsConfigPath = path.join(dataDir, 'commands-config.json');
 const legacyClanStatePath = path.join(dataDir, 'clan_state.json');
 const guildsDir = path.join(dataDir, 'guilds');
 
 const cachedWelcomeConfig = new Map();
 const cachedLogConfig = new Map();
-let cachedCommandsConfig = null;
+const cachedCommandsConfig = new Map();
 const cachedClanState = new Map();
 const clanStateWriteQueues = new Map();
 const cachedRpsState = new Map();
@@ -76,6 +75,10 @@ function getGuildLogConfigPath(guildId) {
 
 function getGuildClanStatePath(guildId) {
   return path.join(getGuildDir(guildId), 'clan_state.json');
+}
+
+function getGuildCommandsConfigPath(guildId) {
+  return path.join(getGuildDir(guildId), 'commands-config.json');
 }
 
 function getGuildRpsStatePath(guildId) {
@@ -281,28 +284,46 @@ function persistLogConfig(guildId, config) {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
 }
 
-function loadCommandsConfig() {
-  if (cachedCommandsConfig) return cachedCommandsConfig;
-
-  if (!fs.existsSync(commandsConfigPath)) {
-    cachedCommandsConfig = { commands: [] };
-    return cachedCommandsConfig;
-  }
-
-  const raw = fs.readFileSync(commandsConfigPath, 'utf8');
-  try {
-    cachedCommandsConfig = JSON.parse(raw);
-  } catch (e) {
-    console.warn('Invalid commands-config.json, resetting:', e);
-    cachedCommandsConfig = { commands: [] };
-  }
-
-  return cachedCommandsConfig;
+function resolveCommandsConfigKey(guildId) {
+  if (!guildId) return null;
+  const key = String(guildId).trim();
+  return key.length ? key : null;
 }
 
-function persistCommandsConfig() {
-  fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(commandsConfigPath, JSON.stringify(cachedCommandsConfig, null, 2), 'utf8');
+function loadCommandsConfig(guildId) {
+  const key = resolveCommandsConfigKey(guildId);
+  if (!key) {
+    return { commands: [] };
+  }
+  if (cachedCommandsConfig.has(key)) return cachedCommandsConfig.get(key);
+
+  const configPath = getGuildCommandsConfigPath(key);
+  if (!fs.existsSync(configPath)) {
+    const fallback = { commands: [] };
+    cachedCommandsConfig.set(key, fallback);
+    return fallback;
+  }
+
+  const raw = fs.readFileSync(configPath, 'utf8');
+  try {
+    const parsed = JSON.parse(raw);
+    cachedCommandsConfig.set(key, parsed);
+  } catch (e) {
+    console.warn(`Invalid commands-config.json for guild ${key}, resetting:`, e);
+    const fallback = { commands: [] };
+    cachedCommandsConfig.set(key, fallback);
+  }
+
+  return cachedCommandsConfig.get(key);
+}
+
+function persistCommandsConfig(guildId) {
+  const key = resolveCommandsConfigKey(guildId);
+  if (!key) return;
+  if (!cachedCommandsConfig.has(key)) return;
+  const configPath = getGuildCommandsConfigPath(key);
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(cachedCommandsConfig.get(key), null, 2), 'utf8');
 }
 
 function loadClanState(guildId) {
@@ -532,17 +553,21 @@ export function setLogConfig(guildId, config) {
   return entry;
 }
 
-export function getCommandsConfig() {
-  const config = loadCommandsConfig();
+export function getCommandsConfig(guildId) {
+  const config = loadCommandsConfig(guildId);
   return {
     commands: Array.isArray(config.commands) ? config.commands : []
   };
 }
 
-export function setCommandsConfig(commands) {
-  const config = loadCommandsConfig();
+export function setCommandsConfig(guildId, commands) {
+  const config = loadCommandsConfig(guildId);
   config.commands = Array.isArray(commands) ? commands : [];
-  persistCommandsConfig();
+  const key = resolveCommandsConfigKey(guildId);
+  if (key) {
+    cachedCommandsConfig.set(key, config);
+  }
+  persistCommandsConfig(key);
   return config;
 }
 
