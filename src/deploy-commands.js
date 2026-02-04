@@ -95,6 +95,11 @@ export const defaultCommands = [
     description: 'Správa ping rolí a routování',
     options: [
       {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'choose',
+        description: 'Vybere ping role pomocí menu'
+      },
+      {
         type: ApplicationCommandOptionType.SubcommandGroup,
         name: 'roles',
         description: 'Správa dostupných rolí',
