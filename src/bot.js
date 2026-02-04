@@ -276,6 +276,7 @@ function buildTicketSummary(answers, decision) {
 **Reviewer:** <@${decision.decidedBy}>`
     : null;
   const disableButtons = Boolean(decision?.status);
+  const disableRemove = decision?.status === CLAN_TICKET_DECISION_REMOVE;
   const controlsExpanded = Boolean(decision?.controlsExpanded);
   const actionRows = controlsExpanded
     ? [
@@ -312,7 +313,7 @@ function buildTicketSummary(answers, decision) {
               custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REMOVE}`,
               label: 'Remove ticket',
               style: ButtonStyle.Secondary,
-              disabled: disableButtons
+              disabled: disableRemove
             }
           ]
         }
@@ -927,7 +928,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (ticketEntry.status) {
+      if (ticketEntry.status && action !== CLAN_TICKET_DECISION_REMOVE) {
         await interaction.reply({
           components: buildTextComponents('O tomto ticketu už bylo rozhodnuto.'),
           flags: MessageFlags.IsComponentsV2,
