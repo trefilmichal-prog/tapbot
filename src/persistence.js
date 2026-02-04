@@ -14,6 +14,8 @@ const cachedClanState = new Map();
 const clanStateWriteQueues = new Map();
 const cachedRpsState = new Map();
 const rpsStateWriteQueues = new Map();
+const cachedPingRoleState = new Map();
+const pingRoleStateWriteQueues = new Map();
 let legacyMigrationDone = false;
 
 function getDefaultClanState() {
@@ -42,6 +44,15 @@ function getDefaultRpsState() {
   };
 }
 
+function getDefaultPingRoleState() {
+  return {
+    schemaVersion: 1,
+    available_roles: [],
+    user_selections: {},
+    channel_routes: {}
+  };
+}
+
 async function atomicWriteJson(targetPath, data) {
   await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
   const tempName = `${path.basename(targetPath)}.${process.pid}.${Date.now()}.tmp`;
@@ -66,6 +77,10 @@ function getGuildRpsStatePath(guildId) {
   return path.join(getGuildDir(guildId), 'rps_state.json');
 }
 
+function getGuildPingRoleStatePath(guildId) {
+  return path.join(getGuildDir(guildId), 'ping_roles.json');
+}
+
 function enqueueClanStateWrite(guildId, task) {
   const key = String(guildId);
   const queue = clanStateWriteQueues.get(key) ?? Promise.resolve();
@@ -79,6 +94,14 @@ function enqueueRpsStateWrite(guildId, task) {
   const queue = rpsStateWriteQueues.get(key) ?? Promise.resolve();
   const nextQueue = queue.then(task, task);
   rpsStateWriteQueues.set(key, nextQueue);
+  return nextQueue;
+}
+
+function enqueuePingRoleStateWrite(guildId, task) {
+  const key = String(guildId);
+  const queue = pingRoleStateWriteQueues.get(key) ?? Promise.resolve();
+  const nextQueue = queue.then(task, task);
+  pingRoleStateWriteQueues.set(key, nextQueue);
   return nextQueue;
 }
 
@@ -345,6 +368,48 @@ function persistRpsState(guildId) {
   return enqueueRpsStateWrite(key, () => atomicWriteJson(rpsStatePath, cachedRpsState.get(key)));
 }
 
+function loadPingRoleState(guildId) {
+  const key = String(guildId);
+  if (cachedPingRoleState.has(key)) return cachedPingRoleState.get(key);
+
+  const pingRoleStatePath = getGuildPingRoleStatePath(key);
+  if (!fs.existsSync(pingRoleStatePath)) {
+    const fallback = getDefaultPingRoleState();
+    cachedPingRoleState.set(key, fallback);
+    return fallback;
+  }
+
+  const raw = fs.readFileSync(pingRoleStatePath, 'utf8');
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      const fallback = getDefaultPingRoleState();
+      cachedPingRoleState.set(key, fallback);
+      return fallback;
+    }
+    const merged = {
+      ...getDefaultPingRoleState(),
+      ...parsed
+    };
+    cachedPingRoleState.set(key, merged);
+    return merged;
+  } catch (e) {
+    console.warn(`Invalid ping_roles.json for guild ${key}, resetting:`, e);
+    const fallback = getDefaultPingRoleState();
+    cachedPingRoleState.set(key, fallback);
+    return fallback;
+  }
+}
+
+function persistPingRoleState(guildId) {
+  const key = String(guildId);
+  if (!cachedPingRoleState.has(key)) {
+    cachedPingRoleState.set(key, getDefaultPingRoleState());
+  }
+  const pingRoleStatePath = getGuildPingRoleStatePath(key);
+  return enqueuePingRoleStateWrite(key, () => atomicWriteJson(pingRoleStatePath, cachedPingRoleState.get(key)));
+}
+
 export function getClanState(guildId) {
   return loadClanState(guildId);
 }
@@ -377,6 +442,18 @@ export function updateRpsState(guildId, mutator) {
     mutator(state);
   }
   return persistRpsState(guildId).then(() => state);
+}
+
+export function getPingRoleState(guildId) {
+  return loadPingRoleState(guildId);
+}
+
+export function updatePingRoleState(guildId, mutator) {
+  const state = loadPingRoleState(guildId);
+  if (typeof mutator === 'function') {
+    mutator(state);
+  }
+  return persistPingRoleState(guildId).then(() => state);
 }
 
 export function getWelcomeConfig(guildId) {
