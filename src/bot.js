@@ -316,7 +316,7 @@ function buildTicketSummary(answers, decision) {
   ];
 }
 
-function buildRequiredScreenshotsNotice() {
+function buildRequiredScreenshotsNotice(reviewRoleId) {
   return [
     {
       type: ComponentType.Container,
@@ -329,7 +329,9 @@ function buildRequiredScreenshotsNotice() {
             '🎟️ Gamepasses',
             '🔁 Rebirths',
             '',
-            '✂️ **IMPORTANT:** Crop your screenshots so your **Roblox username is clearly visible!** 👤✅ ⚙️'
+            '✂️ **IMPORTANT:** Crop your screenshots so your **Roblox username is clearly visible!** 👤✅ ⚙️',
+            '',
+            `Review role: <@&${reviewRoleId}>`
           ].join('\n')
         }
       ]
@@ -669,7 +671,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         await ticketChannel.send({
-          components: buildRequiredScreenshotsNotice(),
+          components: buildRequiredScreenshotsNotice(clan.reviewRoleId),
           flags: MessageFlags.IsComponentsV2
         });
 
@@ -690,10 +692,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             controlsExpanded: false,
             createdAt: new Date().toISOString()
           };
-        });
-
-        await ticketChannel.send({
-          content: `<@&${clan.reviewRoleId}>`
         });
 
         await interaction.reply({
