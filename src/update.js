@@ -115,7 +115,7 @@ async function runBatchRestart(repoRoot) {
   if (process.platform !== 'win32') {
     return {
       ok: false,
-      error: new Error('Batch restart je podporovaný pouze na Windows (win32).'),
+      error: new Error('Batch restart is only supported on Windows (win32).'),
       stdout: '',
       stderr: ''
     };
@@ -125,7 +125,7 @@ async function runBatchRestart(repoRoot) {
   if (!scriptPath) {
     return {
       ok: false,
-      error: new Error('Nepodařilo se najít restartovací .bat skript.'),
+      error: new Error('Failed to find a restart .bat script.'),
       stdout: '',
       stderr: ''
     };
@@ -224,7 +224,7 @@ export async function runUpdate({
         restartResult = { ...restartResult, fallback: 'pm2' };
       } catch (error) {
         throw new Error(
-          `Batch restart selhal${restartResult.scriptPath ? ` (${path.basename(restartResult.scriptPath)})` : ''} a fallback pm2 restart také selhal: ${error.message ?? error}`
+          `Batch restart failed${restartResult.scriptPath ? ` (${path.basename(restartResult.scriptPath)})` : ''} and fallback pm2 restart also failed: ${error.message ?? error}`
         );
       }
     }
