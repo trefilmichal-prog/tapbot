@@ -23,6 +23,7 @@ import { loadConfig } from './config.js';
 import {
   getClanState,
   getLogConfig,
+  getPingRoleState,
   getRpsState,
   getPermissionRoleId,
   getWelcomeConfig,
@@ -30,6 +31,7 @@ import {
   setPermissionRoleId,
   setWelcomeConfig,
   updateClanState,
+  updatePingRoleState,
   updateRpsState
 } from './persistence.js';
 import { runUpdate } from './update.js';
@@ -362,6 +364,19 @@ function ensureRpsState(state) {
   return state;
 }
 
+function ensurePingRoleState(state) {
+  if (!state.available_roles) {
+    state.available_roles = [];
+  }
+  if (!state.user_selections) {
+    state.user_selections = {};
+  }
+  if (!state.channel_routes) {
+    state.channel_routes = {};
+  }
+  return state;
+}
+
 function hasAdminPermission(member) {
   const storedRoleId = getPermissionRoleId(member.guild.id);
   return member.permissions.has(PermissionsBitField.Flags.Administrator)
@@ -612,6 +627,34 @@ function buildRequiredScreenshotsNotice(reviewRoleId) {
       ]
     }
   ];
+}
+
+function collectRoleOptionIds(options) {
+  const roleIds = [];
+  for (let i = 1; i <= 5; i += 1) {
+    const role = options.getRole(`role_${i}`);
+    if (role?.id) {
+      roleIds.push(role.id);
+    }
+  }
+  return roleIds;
+}
+
+function formatRoleList(roleIds) {
+  if (!roleIds.length) {
+    return 'Žádné role nejsou nastavené.';
+  }
+  return roleIds.map((roleId) => `• <@&${roleId}>`).join('\n');
+}
+
+function formatRouteList(routes) {
+  const entries = Object.entries(routes ?? {});
+  if (!entries.length) {
+    return 'Žádné routy nejsou nastavené.';
+  }
+  return entries
+    .map(([channelId, roleId]) => `• <#${channelId}> → <@&${roleId}>`)
+    .join('\n');
 }
 
 function buildTicketModal(clanName) {
@@ -1698,6 +1741,208 @@ client.on(Events.InteractionCreate, async (interaction) => {
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
+      }
+      return;
+    }
+
+    if (interaction.commandName === 'ping_roles') {
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (!hasAdminPermission(interaction.member)) {
+        await interaction.reply({
+          components: buildTextComponents('Nemáš oprávnění použít tento příkaz.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const subcommandGroup = interaction.options.getSubcommandGroup(true);
+      const subcommand = interaction.options.getSubcommand(true);
+
+      if (subcommandGroup === 'roles') {
+        const roleIds = collectRoleOptionIds(interaction.options);
+
+        if (subcommand === 'set') {
+          await updatePingRoleState(interaction.guildId, (state) => {
+            ensurePingRoleState(state);
+            const uniqueRoles = Array.from(new Set(roleIds));
+            state.available_roles = uniqueRoles;
+            const allowed = new Set(uniqueRoles);
+            for (const channelId of Object.keys(state.channel_routes)) {
+              if (!allowed.has(state.channel_routes[channelId])) {
+                delete state.channel_routes[channelId];
+              }
+            }
+          });
+
+          await interaction.reply({
+            components: buildTextComponents(
+              roleIds.length
+                ? `Dostupné role byly nastaveny (${roleIds.length}).`
+                : 'Seznam rolí byl vymazán.'
+            ),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (subcommand === 'add') {
+          if (!roleIds.length) {
+            await interaction.reply({
+              components: buildTextComponents('Vyber alespoň jednu roli pro přidání.'),
+              flags: MessageFlags.IsComponentsV2,
+              ephemeral: true
+            });
+            return;
+          }
+
+          await updatePingRoleState(interaction.guildId, (state) => {
+            ensurePingRoleState(state);
+            const existing = new Set(state.available_roles);
+            for (const roleId of roleIds) {
+              if (!existing.has(roleId)) {
+                state.available_roles.push(roleId);
+                existing.add(roleId);
+              }
+            }
+          });
+
+          await interaction.reply({
+            components: buildTextComponents(`Role byly přidány (${roleIds.length}).`),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (subcommand === 'remove') {
+          if (!roleIds.length) {
+            await interaction.reply({
+              components: buildTextComponents('Vyber alespoň jednu roli pro odebrání.'),
+              flags: MessageFlags.IsComponentsV2,
+              ephemeral: true
+            });
+            return;
+          }
+
+          await updatePingRoleState(interaction.guildId, (state) => {
+            ensurePingRoleState(state);
+            const toRemove = new Set(roleIds);
+            state.available_roles = state.available_roles.filter((roleId) => !toRemove.has(roleId));
+            for (const channelId of Object.keys(state.channel_routes)) {
+              if (toRemove.has(state.channel_routes[channelId])) {
+                delete state.channel_routes[channelId];
+              }
+            }
+          });
+
+          await interaction.reply({
+            components: buildTextComponents(`Role byly odebrány (${roleIds.length}).`),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (subcommand === 'list') {
+          const state = getPingRoleState(interaction.guildId);
+          ensurePingRoleState(state);
+          await interaction.reply({
+            components: buildTextComponents(formatRoleList(state.available_roles)),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+      }
+
+      if (subcommandGroup === 'route') {
+        if (subcommand === 'set') {
+          const channel = interaction.options.getChannel('channel', true);
+          const role = interaction.options.getRole('role', true);
+          if (!channel || channel.type !== ChannelType.GuildText) {
+            await interaction.reply({
+              components: buildTextComponents('Prosím vyber textový kanál.'),
+              flags: MessageFlags.IsComponentsV2,
+              ephemeral: true
+            });
+            return;
+          }
+
+          const state = getPingRoleState(interaction.guildId);
+          ensurePingRoleState(state);
+          if (!state.available_roles.includes(role.id)) {
+            await interaction.reply({
+              components: buildTextComponents('Tato role není v seznamu dostupných rolí.'),
+              flags: MessageFlags.IsComponentsV2,
+              ephemeral: true
+            });
+            return;
+          }
+
+          await updatePingRoleState(interaction.guildId, (nextState) => {
+            ensurePingRoleState(nextState);
+            nextState.channel_routes[channel.id] = role.id;
+          });
+
+          await interaction.reply({
+            components: buildTextComponents(`Routa nastavena: <#${channel.id}> → <@&${role.id}>.`),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (subcommand === 'remove') {
+          const channel = interaction.options.getChannel('channel', true);
+          if (!channel || channel.type !== ChannelType.GuildText) {
+            await interaction.reply({
+              components: buildTextComponents('Prosím vyber textový kanál.'),
+              flags: MessageFlags.IsComponentsV2,
+              ephemeral: true
+            });
+            return;
+          }
+
+          let removed = false;
+          await updatePingRoleState(interaction.guildId, (state) => {
+            ensurePingRoleState(state);
+            if (state.channel_routes[channel.id]) {
+              delete state.channel_routes[channel.id];
+              removed = true;
+            }
+          });
+
+          await interaction.reply({
+            components: buildTextComponents(
+              removed
+                ? `Routa pro <#${channel.id}> byla odstraněna.`
+                : 'Pro tento kanál není žádná routa.'
+            ),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (subcommand === 'list') {
+          const state = getPingRoleState(interaction.guildId);
+          ensurePingRoleState(state);
+          await interaction.reply({
+            components: buildTextComponents(formatRouteList(state.channel_routes)),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+        }
       }
       return;
     }
