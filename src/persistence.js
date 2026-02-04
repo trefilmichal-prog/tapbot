@@ -22,6 +22,7 @@ function getDefaultClanState() {
     clan_ticket_decisions: {},
     clan_ticket_vacations: {},
     clan_ticket_reminders: {},
+    permission_roles: {},
     cooldowns: {},
     cooldowns_user: {},
     cooldowns_role: {}
@@ -194,4 +195,23 @@ export function setCommandsConfig(commands) {
   config.commands = Array.isArray(commands) ? commands : [];
   persistCommandsConfig();
   return config;
+}
+
+export function getPermissionRoleId(guildId) {
+  const state = loadClanState();
+  const roleId = state.permission_roles?.[guildId];
+  return roleId ?? null;
+}
+
+export function setPermissionRoleId(guildId, roleId) {
+  return updateClanState((state) => {
+    if (!state.permission_roles) {
+      state.permission_roles = {};
+    }
+    if (roleId) {
+      state.permission_roles[guildId] = roleId;
+    } else if (state.permission_roles[guildId]) {
+      delete state.permission_roles[guildId];
+    }
+  }).then((state) => state.permission_roles?.[guildId] ?? null);
 }

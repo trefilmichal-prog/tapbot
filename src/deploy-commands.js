@@ -14,6 +14,19 @@ export const defaultCommands = [
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
+        name: 'permissions',
+        description: 'Nastaví roli s oprávněním na správu',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Role,
+            name: 'role',
+            description: 'Role s oprávněním (ponech prázdné pro reset)',
+            required: false
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
         name: 'update',
         description: 'Aktualizuje bota',
         options: [
