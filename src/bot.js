@@ -273,8 +273,7 @@ function buildTicketSummary(answers, decision) {
       : decision.status === CLAN_TICKET_DECISION_REJECT
         ? 'Rejected ❌'
         : 'Removed 🗑️'}
-**Reviewer:** <@${decision.decidedBy}>
-**Updated:** ${decision.updatedAt}`
+**Reviewer:** <@${decision.decidedBy}>`
     : null;
   const disableButtons = Boolean(decision?.status);
   const controlsExpanded = Boolean(decision?.controlsExpanded);
