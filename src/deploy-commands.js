@@ -240,6 +240,35 @@ export const defaultCommands = [
         ]
       }
     ]
+  },
+  {
+    name: 'rps',
+    description: 'Rock Paper Scissors',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'play',
+        description: 'Zahraj si rock paper scissors',
+        options: [
+          {
+            type: ApplicationCommandOptionType.User,
+            name: 'opponent',
+            description: 'Volitelný soupeř',
+            required: false
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'stats',
+        description: 'Zobrazí statistiky'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'reset',
+        description: 'Resetuje statistiky'
+      }
+    ]
   }
 ];
 
