@@ -466,13 +466,13 @@ export const defaultCommands = [
   }
 ];
 
-export function buildCommandsPayload() {
-  const stored = getCommandsConfig();
+export function buildCommandsPayload(guildId) {
+  const stored = getCommandsConfig(guildId);
   const storedCommands = Array.isArray(stored.commands) ? stored.commands : [];
   const storedSerialized = JSON.stringify(storedCommands);
   const defaultSerialized = JSON.stringify(defaultCommands);
   if (storedSerialized !== defaultSerialized) {
-    setCommandsConfig(defaultCommands);
+    setCommandsConfig(guildId, defaultCommands);
     return defaultCommands;
   }
   return storedCommands;
@@ -480,7 +480,7 @@ export function buildCommandsPayload() {
 
 export async function syncApplicationCommands({ token, clientId, guildId }) {
   const rest = new REST({ version: '10' }).setToken(token);
-  const commands = buildCommandsPayload();
+  const commands = buildCommandsPayload(guildId);
   const existing = await rest.get(
     guildId
       ? Routes.applicationGuildCommands(clientId, guildId)
