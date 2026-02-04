@@ -19,7 +19,14 @@ import {
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
-import { getClanState, getWelcomeConfig, setWelcomeConfig, updateClanState } from './persistence.js';
+import {
+  getClanState,
+  getPermissionRoleId,
+  getWelcomeConfig,
+  setPermissionRoleId,
+  setWelcomeConfig,
+  updateClanState
+} from './persistence.js';
 import { runUpdate } from './update.js';
 import { syncApplicationCommands } from './deploy-commands.js';
 
@@ -36,7 +43,6 @@ try {
 }
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
-const CLAN_PANEL_ADMIN_ROLE_ID = '1468192944975515759';
 const CLAN_PANEL_EDIT_MODAL_ID = 'clan_panel_edit_modal';
 const CLAN_PANEL_DESCRIPTION_INPUT_ID = 'clan_panel_description_input';
 const CLAN_PANEL_SELECT_ID = 'clan_panel_select';
@@ -151,9 +157,14 @@ function buildTextComponents(content) {
   ];
 }
 
-function hasClanPanelPermission(member) {
+function hasAdminPermission(member) {
+  const storedRoleId = getPermissionRoleId(member.guild.id);
   return member.permissions.has(PermissionsBitField.Flags.Administrator)
-    || member.roles.cache.has(CLAN_PANEL_ADMIN_ROLE_ID);
+    || (storedRoleId ? member.roles.cache.has(storedRoleId) : false);
+}
+
+function hasClanPanelPermission(member) {
+  return hasAdminPermission(member);
 }
 
 function sortClansForDisplay(clans) {
@@ -880,9 +891,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const hasReviewPermission = Boolean(
-        clan.reviewRoleId && interaction.member.roles.cache.has(clan.reviewRoleId)
-      );
+      const hasReviewPermission = hasAdminPermission(interaction.member)
+        || Boolean(clan.reviewRoleId && interaction.member.roles.cache.has(clan.reviewRoleId));
       if (!hasReviewPermission) {
         await interaction.reply({
           components: buildTextComponents(
@@ -1039,7 +1049,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (!interaction.member.roles.cache.has('1468192944975515759')) {
+      if (!hasAdminPermission(interaction.member)) {
         await interaction.reply({
           components: buildTextComponents('Nemáš oprávnění použít tento příkaz.'),
           flags: MessageFlags.IsComponentsV2,
@@ -1049,6 +1059,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const subcommand = interaction.options.getSubcommand();
+      if (subcommand === 'permissions') {
+        const role = interaction.options.getRole('role');
+        const storedRoleId = await setPermissionRoleId(interaction.guildId, role?.id ?? null);
+        const response = storedRoleId
+          ? `Role pro oprávnění byla nastavena na <@&${storedRoleId}>.`
+          : 'Role pro oprávnění byla odstraněna.';
+        await interaction.reply({
+          components: buildTextComponents(response),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
       if (subcommand === 'verze') {
         const version = await getBotVersion();
         await interaction.reply({
