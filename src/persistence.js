@@ -16,6 +16,7 @@ const cachedRpsState = new Map();
 const rpsStateWriteQueues = new Map();
 const cachedPingRoleState = new Map();
 const pingRoleStateWriteQueues = new Map();
+const cachedPingRolePanelConfig = new Map();
 let legacyMigrationDone = false;
 
 function getDefaultClanState() {
@@ -87,6 +88,10 @@ function getGuildRpsStatePath(guildId) {
 
 function getGuildPingRoleStatePath(guildId) {
   return path.join(getGuildDir(guildId), 'ping_roles.json');
+}
+
+function getGuildPingRolePanelConfigPath(guildId) {
+  return path.join(getGuildDir(guildId), 'ping_roles_panel.json');
 }
 
 function enqueueClanStateWrite(guildId, task) {
@@ -469,6 +474,48 @@ function persistPingRoleState(guildId) {
   return enqueuePingRoleStateWrite(key, () => atomicWriteJson(pingRoleStatePath, cachedPingRoleState.get(key)));
 }
 
+function loadPingRolePanelConfig(guildId) {
+  const key = String(guildId);
+  if (cachedPingRolePanelConfig.has(key)) return cachedPingRolePanelConfig.get(key);
+
+  const configPath = getGuildPingRolePanelConfigPath(key);
+  if (!fs.existsSync(configPath)) {
+    cachedPingRolePanelConfig.set(key, null);
+    return null;
+  }
+
+  const raw = fs.readFileSync(configPath, 'utf8');
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn(`Invalid ping_roles_panel.json for guild ${key}, resetting:`, e);
+    cachedPingRolePanelConfig.set(key, null);
+    return null;
+  }
+
+  const entry = parsed && typeof parsed === 'object'
+    ? {
+        channelId: parsed.channelId ?? null,
+        messageId: parsed.messageId ?? null
+      }
+    : null;
+  cachedPingRolePanelConfig.set(key, entry);
+  return entry;
+}
+
+function persistPingRolePanelConfig(guildId, config) {
+  const configPath = getGuildPingRolePanelConfigPath(guildId);
+  if (!config) {
+    if (fs.existsSync(configPath)) {
+      fs.unlinkSync(configPath);
+    }
+    return;
+  }
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+}
+
 export function getClanState(guildId) {
   return loadClanState(guildId);
 }
@@ -513,6 +560,28 @@ export function updatePingRoleState(guildId, mutator) {
     mutator(state);
   }
   return persistPingRoleState(guildId).then(() => state);
+}
+
+export function getPingRolePanelConfig(guildId) {
+  const entry = loadPingRolePanelConfig(guildId);
+  if (!entry) return null;
+  return {
+    channelId: entry.channelId ?? null,
+    messageId: entry.messageId ?? null
+  };
+}
+
+export function setPingRolePanelConfig(guildId, config) {
+  const key = String(guildId);
+  const entry = config && typeof config === 'object'
+    ? {
+        channelId: config.channelId ?? null,
+        messageId: config.messageId ?? null
+      }
+    : null;
+  cachedPingRolePanelConfig.set(key, entry);
+  persistPingRolePanelConfig(key, entry);
+  return entry;
 }
 
 export function getWelcomeConfig(guildId) {

@@ -100,6 +100,20 @@ export const defaultCommands = [
         description: 'Vybere ping role pomocí menu'
       },
       {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'panel',
+        description: 'Odešle nebo aktualizuje ping role panel',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Channel,
+            name: 'channel',
+            description: 'Textový kanál pro ping role panel',
+            required: true,
+            channel_types: [ChannelType.GuildText]
+          }
+        ]
+      },
+      {
         type: ApplicationCommandOptionType.SubcommandGroup,
         name: 'roles',
         description: 'Správa dostupných rolí',
