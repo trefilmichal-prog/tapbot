@@ -24,6 +24,7 @@ import {
   getRpsState,
   getPermissionRoleId,
   getWelcomeConfig,
+  setLogConfig,
   setPermissionRoleId,
   setWelcomeConfig,
   updateClanState,
@@ -1439,6 +1440,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const response = storedRoleId
           ? `Role pro oprávnění byla nastavena na <@&${storedRoleId}>.`
           : 'Role pro oprávnění byla odstraněna.';
+        await interaction.reply({
+          components: buildTextComponents(response),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+      if (subcommand === 'logs') {
+        const channel = interaction.options.getChannel('channel');
+        if (channel && channel.type !== ChannelType.GuildText) {
+          await interaction.reply({
+            components: buildTextComponents('Prosím vyber textový kanál.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const storedChannelId = channel?.id ?? null;
+        setLogConfig(interaction.guildId, { channelId: storedChannelId });
+
+        const response = storedChannelId
+          ? `Logovací kanál byl nastaven na <#${storedChannelId}>.`
+          : 'Logovací kanál byl odstraněn.';
         await interaction.reply({
           components: buildTextComponents(response),
           flags: MessageFlags.IsComponentsV2,

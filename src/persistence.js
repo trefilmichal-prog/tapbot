@@ -9,6 +9,7 @@ const legacyClanStatePath = path.join(dataDir, 'clan_state.json');
 const guildsDir = path.join(dataDir, 'guilds');
 
 const cachedWelcomeConfig = new Map();
+const cachedLogConfig = new Map();
 let cachedCommandsConfig = null;
 const cachedClanState = new Map();
 const clanStateWriteQueues = new Map();
@@ -56,6 +57,10 @@ function getGuildDir(guildId) {
 
 function getGuildWelcomeConfigPath(guildId) {
   return path.join(getGuildDir(guildId), 'welcome-config.json');
+}
+
+function getGuildLogConfigPath(guildId) {
+  return path.join(getGuildDir(guildId), 'log-config.json');
 }
 
 function getGuildClanStatePath(guildId) {
@@ -216,6 +221,39 @@ function loadWelcomeConfig(guildId) {
 
 function persistWelcomeConfig(guildId, config) {
   const configPath = getGuildWelcomeConfigPath(guildId);
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+}
+
+function loadLogConfig(guildId) {
+  const key = String(guildId);
+  if (cachedLogConfig.has(key)) return cachedLogConfig.get(key);
+
+  const configPath = getGuildLogConfigPath(key);
+  if (!fs.existsSync(configPath)) {
+    cachedLogConfig.set(key, null);
+    return null;
+  }
+
+  const raw = fs.readFileSync(configPath, 'utf8');
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn(`Invalid log-config.json for guild ${key}, resetting:`, e);
+    cachedLogConfig.set(key, null);
+    return null;
+  }
+
+  const entry = parsed && typeof parsed === 'object'
+    ? { channelId: parsed.channelId ?? null }
+    : null;
+  cachedLogConfig.set(key, entry);
+  return entry;
+}
+
+function persistLogConfig(guildId, config) {
+  const configPath = getGuildLogConfigPath(guildId);
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
 }
@@ -396,6 +434,24 @@ export function setWelcomeConfig(guildId, config) {
   const key = String(guildId);
   cachedWelcomeConfig.set(key, entry);
   persistWelcomeConfig(key, entry);
+  return entry;
+}
+
+export function getLogConfig(guildId) {
+  const entry = loadLogConfig(guildId);
+  if (!entry) return null;
+  return {
+    channelId: entry.channelId ?? null
+  };
+}
+
+export function setLogConfig(guildId, config) {
+  const entry = {
+    channelId: config.channelId ?? null
+  };
+  const key = String(guildId);
+  cachedLogConfig.set(key, entry);
+  persistLogConfig(key, entry);
   return entry;
 }
 
