@@ -21,11 +21,13 @@ import path from 'node:path';
 import { loadConfig } from './config.js';
 import {
   getClanState,
+  getRpsState,
   getPermissionRoleId,
   getWelcomeConfig,
   setPermissionRoleId,
   setWelcomeConfig,
-  updateClanState
+  updateClanState,
+  updateRpsState
 } from './persistence.js';
 import { runUpdate } from './update.js';
 import { syncApplicationCommands } from './deploy-commands.js';
@@ -55,6 +57,13 @@ const CLAN_TICKET_DECISION_TOGGLE = 'toggle';
 const CLAN_TICKET_DECISION_ACCEPT = 'accept';
 const CLAN_TICKET_DECISION_REJECT = 'reject';
 const CLAN_TICKET_DECISION_REMOVE = 'remove';
+const RPS_CHOICE_PREFIX = 'rps:choose:';
+const RPS_MOVES = ['rock', 'paper', 'scissors'];
+const RPS_MOVE_META = {
+  rock: { label: 'Rock', emoji: '🪨' },
+  paper: { label: 'Paper', emoji: '📄' },
+  scissors: { label: 'Scissors', emoji: '✂️' }
+};
 const TICKET_STATUS_EMOJI = {
   awaiting: '🟡',
   [CLAN_TICKET_DECISION_ACCEPT]: '🟢',
@@ -155,6 +164,118 @@ function buildTextComponents(content) {
       ]
     }
   ];
+}
+
+function getRpsMoveLabel(move) {
+  const meta = RPS_MOVE_META[move];
+  return meta ? `${meta.emoji} ${meta.label}` : move;
+}
+
+function resolveRpsOutcome(challengerMove, opponentMove) {
+  if (challengerMove === opponentMove) return 'draw';
+  if (
+    (challengerMove === 'rock' && opponentMove === 'scissors')
+    || (challengerMove === 'paper' && opponentMove === 'rock')
+    || (challengerMove === 'scissors' && opponentMove === 'paper')
+  ) {
+    return 'challenger';
+  }
+  return 'opponent';
+}
+
+function buildRpsMessageComponents(game, state) {
+  const challengerMention = `<@${game.challengerId}>`;
+  const opponentMention = game.opponentId ? `<@${game.opponentId}>` : 'Bot';
+  const challengerMove = game.moves?.[game.challengerId] ?? null;
+  const opponentMove = game.opponentId
+    ? game.moves?.[game.opponentId] ?? null
+    : game.moves?.bot ?? null;
+  const isComplete = game.status === 'complete';
+  const challengerStatus = challengerMove ? '✅' : '⏳';
+  const opponentStatus = opponentMove ? '✅' : '⏳';
+  const statusLine = isComplete
+    ? '✅ Game finished.'
+    : '🕹️ Make your choice!';
+  const resultLines = [];
+
+  if (isComplete) {
+    const outcome = game.result?.outcome ?? 'draw';
+    if (outcome === 'draw') {
+      resultLines.push('**Result:** Draw 🤝');
+    } else if (outcome === 'challenger') {
+      resultLines.push(`**Result:** ${challengerMention} wins 🎉`);
+    } else if (outcome === 'opponent') {
+      resultLines.push(`**Result:** ${opponentMention} wins 🎉`);
+    }
+    if (challengerMove) {
+      resultLines.push(`${challengerMention} played ${getRpsMoveLabel(challengerMove)}.`);
+    }
+    if (opponentMove) {
+      resultLines.push(`${opponentMention} played ${getRpsMoveLabel(opponentMove)}.`);
+    }
+  }
+
+  const scoreLines = [];
+  const challengerScore = state.scores?.[game.challengerId];
+  if (challengerScore) {
+    scoreLines.push(
+      `${challengerMention} — ✅ ${challengerScore.wins} | ❌ ${challengerScore.losses} | 🤝 ${challengerScore.draws}`
+    );
+  }
+  if (game.opponentId) {
+    const opponentScore = state.scores?.[game.opponentId];
+    if (opponentScore) {
+      scoreLines.push(
+        `${opponentMention} — ✅ ${opponentScore.wins} | ❌ ${opponentScore.losses} | 🤝 ${opponentScore.draws}`
+      );
+    }
+  }
+
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: [
+            '🎮 **Rock Paper Scissors**',
+            `Challenger: ${challengerMention} ${challengerStatus}`,
+            `Opponent: ${opponentMention} ${opponentStatus}`,
+            statusLine,
+            '',
+            ...resultLines,
+            ...(resultLines.length ? [''] : []),
+            ...(scoreLines.length ? ['**Scoreboard**', ...scoreLines] : [])
+          ].filter(Boolean).join('\n')
+        },
+        {
+          type: ComponentType.Separator,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small
+        },
+        {
+          type: ComponentType.ActionRow,
+          components: RPS_MOVES.map((move) => ({
+            type: ComponentType.Button,
+            custom_id: `${RPS_CHOICE_PREFIX}${game.gameId}:${move}`,
+            label: RPS_MOVE_META[move]?.label ?? move,
+            style: ButtonStyle.Primary,
+            disabled: isComplete
+          }))
+        }
+      ]
+    }
+  ];
+}
+
+function ensureRpsState(state) {
+  if (!state.active_games) {
+    state.active_games = {};
+  }
+  if (!state.scores) {
+    state.scores = {};
+  }
+  return state;
 }
 
 function hasAdminPermission(member) {
@@ -850,6 +971,148 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton()) {
+      if (interaction.customId.startsWith(RPS_CHOICE_PREFIX)) {
+        if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+          await interaction.reply({
+            components: buildTextComponents('Tuto akci lze použít jen na serveru.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const parts = interaction.customId.split(':');
+        const gameId = parts[2];
+        const move = parts[3];
+        if (!gameId || !RPS_MOVES.includes(move)) {
+          await interaction.reply({
+            components: buildTextComponents('Neplatná volba pro RPS.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const state = getRpsState(interaction.guildId);
+        ensureRpsState(state);
+        const game = state.active_games?.[gameId];
+        if (!game) {
+          await interaction.reply({
+            components: buildTextComponents('Tato hra už není aktivní.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const allowedPlayers = [game.challengerId, game.opponentId].filter(Boolean);
+        if (!allowedPlayers.includes(interaction.user.id)) {
+          await interaction.reply({
+            components: buildTextComponents('Do této hry nejsi zapojen.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (game.status === 'complete') {
+          await interaction.reply({
+            components: buildTextComponents('Tato hra už byla dokončena.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (game.moves?.[interaction.user.id]) {
+          await interaction.reply({
+            components: buildTextComponents('Své rozhodnutí už jsi poslal.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        await updateRpsState(interaction.guildId, (nextState) => {
+          ensureRpsState(nextState);
+          const activeGame = nextState.active_games?.[gameId];
+          if (!activeGame) return;
+          activeGame.moves = activeGame.moves ?? {};
+          activeGame.moves[interaction.user.id] = move;
+          activeGame.updatedAt = new Date().toISOString();
+
+          if (!activeGame.opponentId) {
+            const botMove = RPS_MOVES[Math.floor(Math.random() * RPS_MOVES.length)];
+            activeGame.moves.bot = botMove;
+          }
+
+          const challengerMove = activeGame.moves?.[activeGame.challengerId];
+          const opponentMove = activeGame.opponentId
+            ? activeGame.moves?.[activeGame.opponentId]
+            : activeGame.moves?.bot;
+
+          if (challengerMove && opponentMove) {
+            const outcome = resolveRpsOutcome(challengerMove, opponentMove);
+            activeGame.status = 'complete';
+            activeGame.result = {
+              outcome,
+              challengerMove,
+              opponentMove
+            };
+            activeGame.completedAt = new Date().toISOString();
+
+            const ensureScore = (userId) => {
+              if (!userId) return null;
+              if (!nextState.scores[userId]) {
+                nextState.scores[userId] = { wins: 0, losses: 0, draws: 0 };
+              }
+              return nextState.scores[userId];
+            };
+
+            const challengerScore = ensureScore(activeGame.challengerId);
+            const opponentScore = activeGame.opponentId ? ensureScore(activeGame.opponentId) : null;
+
+            if (outcome === 'draw') {
+              if (challengerScore) challengerScore.draws += 1;
+              if (opponentScore) opponentScore.draws += 1;
+            } else if (outcome === 'challenger') {
+              if (challengerScore) challengerScore.wins += 1;
+              if (opponentScore) opponentScore.losses += 1;
+            } else if (outcome === 'opponent') {
+              if (challengerScore) challengerScore.losses += 1;
+              if (opponentScore) opponentScore.wins += 1;
+            }
+
+            const now = new Date().toISOString();
+            if (challengerScore) challengerScore.updatedAt = now;
+            if (opponentScore) opponentScore.updatedAt = now;
+          }
+
+          nextState.last_message = {
+            channelId: activeGame.channelId ?? interaction.channelId,
+            messageId: activeGame.messageId ?? interaction.message?.id ?? null,
+            updatedAt: new Date().toISOString()
+          };
+        });
+
+        const updatedState = getRpsState(interaction.guildId);
+        const updatedGame = updatedState.active_games?.[gameId];
+        if (!updatedGame) {
+          await interaction.reply({
+            components: buildTextComponents('Tato hra už není dostupná.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.update({
+          components: buildRpsMessageComponents(updatedGame, updatedState),
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+
       if (!interaction.customId.startsWith(CLAN_TICKET_DECISION_PREFIX)) return;
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
@@ -1033,6 +1296,122 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === 'rps') {
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('Tento příkaz lze použít jen na serveru.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const subcommand = interaction.options.getSubcommand(true);
+      if (subcommand === 'play') {
+        const opponent = interaction.options.getUser('opponent');
+        if (opponent && opponent.id === interaction.user.id) {
+          await interaction.reply({
+            components: buildTextComponents('Nemůžeš hrát sám se sebou.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (opponent?.bot && opponent.id !== client.user?.id) {
+          await interaction.reply({
+            components: buildTextComponents('S jinými boty se hrát nedá.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const gameId = interaction.id;
+        const game = {
+          gameId,
+          channelId: interaction.channelId,
+          messageId: null,
+          challengerId: interaction.user.id,
+          opponentId: opponent?.id ?? null,
+          moves: {},
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        await updateRpsState(interaction.guildId, (state) => {
+          ensureRpsState(state);
+          state.active_games[gameId] = game;
+        });
+
+        const response = await interaction.reply({
+          components: buildRpsMessageComponents(game, getRpsState(interaction.guildId)),
+          flags: MessageFlags.IsComponentsV2,
+          fetchReply: true
+        });
+
+        await updateRpsState(interaction.guildId, (state) => {
+          ensureRpsState(state);
+          const activeGame = state.active_games?.[gameId];
+          if (!activeGame) return;
+          activeGame.messageId = response?.id ?? null;
+          activeGame.channelId = response?.channelId ?? interaction.channelId;
+          activeGame.updatedAt = new Date().toISOString();
+          state.last_message = {
+            channelId: activeGame.channelId,
+            messageId: activeGame.messageId,
+            updatedAt: new Date().toISOString()
+          };
+        });
+        return;
+      }
+
+      if (subcommand === 'stats') {
+        const state = getRpsState(interaction.guildId);
+        ensureRpsState(state);
+        const entries = Object.entries(state.scores ?? {});
+        const sorted = entries.sort(([, a], [, b]) => {
+          const winDiff = (b.wins ?? 0) - (a.wins ?? 0);
+          if (winDiff !== 0) return winDiff;
+          const lossDiff = (a.losses ?? 0) - (b.losses ?? 0);
+          if (lossDiff !== 0) return lossDiff;
+          return (b.draws ?? 0) - (a.draws ?? 0);
+        });
+
+        const lines = sorted.length
+          ? sorted.slice(0, 10).map(([userId, score], index) => (
+            `${index + 1}. <@${userId}> — ✅ ${score.wins ?? 0} | ❌ ${score.losses ?? 0} | 🤝 ${score.draws ?? 0}`
+          ))
+          : ['Zatím tu nejsou žádné odehrané hry.'];
+
+        await interaction.reply({
+          components: buildTextComponents(['🏆 **RPS Statistiky**', '', ...lines].join('\n')),
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+
+      if (subcommand === 'reset') {
+        await updateRpsState(interaction.guildId, (state) => {
+          state.active_games = {};
+          state.scores = {};
+          state.last_message = {
+            channelId: null,
+            messageId: null,
+            updatedAt: new Date().toISOString()
+          };
+        });
+
+        await interaction.reply({
+          components: buildTextComponents('RPS statistiky byly resetovány.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+      }
+      return;
+    }
 
     if (interaction.commandName === 'config') {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {

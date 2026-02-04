@@ -12,6 +12,8 @@ const cachedWelcomeConfig = new Map();
 let cachedCommandsConfig = null;
 const cachedClanState = new Map();
 const clanStateWriteQueues = new Map();
+const cachedRpsState = new Map();
+const rpsStateWriteQueues = new Map();
 let legacyMigrationDone = false;
 
 function getDefaultClanState() {
@@ -28,6 +30,15 @@ function getDefaultClanState() {
     cooldowns: {},
     cooldowns_user: {},
     cooldowns_role: {}
+  };
+}
+
+function getDefaultRpsState() {
+  return {
+    schemaVersion: 1,
+    active_games: {},
+    scores: {},
+    last_message: null
   };
 }
 
@@ -51,11 +62,23 @@ function getGuildClanStatePath(guildId) {
   return path.join(getGuildDir(guildId), 'clan_state.json');
 }
 
+function getGuildRpsStatePath(guildId) {
+  return path.join(getGuildDir(guildId), 'rps_state.json');
+}
+
 function enqueueClanStateWrite(guildId, task) {
   const key = String(guildId);
   const queue = clanStateWriteQueues.get(key) ?? Promise.resolve();
   const nextQueue = queue.then(task, task);
   clanStateWriteQueues.set(key, nextQueue);
+  return nextQueue;
+}
+
+function enqueueRpsStateWrite(guildId, task) {
+  const key = String(guildId);
+  const queue = rpsStateWriteQueues.get(key) ?? Promise.resolve();
+  const nextQueue = queue.then(task, task);
+  rpsStateWriteQueues.set(key, nextQueue);
   return nextQueue;
 }
 
@@ -280,6 +303,48 @@ function persistClanState(guildId) {
   return enqueueClanStateWrite(key, () => atomicWriteJson(clanStatePath, cachedClanState.get(key)));
 }
 
+function loadRpsState(guildId) {
+  const key = String(guildId);
+  if (cachedRpsState.has(key)) return cachedRpsState.get(key);
+
+  const rpsStatePath = getGuildRpsStatePath(key);
+  if (!fs.existsSync(rpsStatePath)) {
+    const fallback = getDefaultRpsState();
+    cachedRpsState.set(key, fallback);
+    return fallback;
+  }
+
+  const raw = fs.readFileSync(rpsStatePath, 'utf8');
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      const fallback = getDefaultRpsState();
+      cachedRpsState.set(key, fallback);
+      return fallback;
+    }
+    const merged = {
+      ...getDefaultRpsState(),
+      ...parsed
+    };
+    cachedRpsState.set(key, merged);
+    return merged;
+  } catch (e) {
+    console.warn(`Invalid rps_state.json for guild ${key}, resetting:`, e);
+    const fallback = getDefaultRpsState();
+    cachedRpsState.set(key, fallback);
+    return fallback;
+  }
+}
+
+function persistRpsState(guildId) {
+  const key = String(guildId);
+  if (!cachedRpsState.has(key)) {
+    cachedRpsState.set(key, getDefaultRpsState());
+  }
+  const rpsStatePath = getGuildRpsStatePath(key);
+  return enqueueRpsStateWrite(key, () => atomicWriteJson(rpsStatePath, cachedRpsState.get(key)));
+}
+
 export function getClanState(guildId) {
   return loadClanState(guildId);
 }
@@ -300,6 +365,18 @@ export function updateClanState(guildId, mutator) {
     mutator(state);
   }
   return persistClanState(guildId).then(() => state);
+}
+
+export function getRpsState(guildId) {
+  return loadRpsState(guildId);
+}
+
+export function updateRpsState(guildId, mutator) {
+  const state = loadRpsState(guildId);
+  if (typeof mutator === 'function') {
+    mutator(state);
+  }
+  return persistRpsState(guildId).then(() => state);
 }
 
 export function getWelcomeConfig(guildId) {
