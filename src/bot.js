@@ -48,6 +48,7 @@ const CLAN_TICKET_DECISION_PREFIX = 'clan_ticket_decision:';
 const CLAN_TICKET_DECISION_TOGGLE = 'toggle';
 const CLAN_TICKET_DECISION_ACCEPT = 'accept';
 const CLAN_TICKET_DECISION_REJECT = 'reject';
+const CLAN_TICKET_DECISION_REMOVE = 'remove';
 const TICKET_STATUS_EMOJI = {
   awaiting: '🟡',
   [CLAN_TICKET_DECISION_ACCEPT]: '🟢',
@@ -267,7 +268,11 @@ function buildClanPanelComponents(guild, clanMap, panelDescription) {
 
 function buildTicketSummary(answers, decision) {
   const decisionText = decision?.status
-    ? `**Decision:** ${decision.status === CLAN_TICKET_DECISION_ACCEPT ? 'Accepted ✅' : 'Rejected ❌'}
+    ? `**Decision:** ${decision.status === CLAN_TICKET_DECISION_ACCEPT
+      ? 'Accepted ✅'
+      : decision.status === CLAN_TICKET_DECISION_REJECT
+        ? 'Rejected ❌'
+        : 'Removed 🗑️'}
 **Reviewer:** <@${decision.decidedBy}>
 **Updated:** ${decision.updatedAt}`
     : null;
@@ -301,6 +306,13 @@ function buildTicketSummary(answers, decision) {
               custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REJECT}`,
               label: 'Reject',
               style: ButtonStyle.Danger,
+              disabled: disableButtons
+            },
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REMOVE}`,
+              label: 'Remove ticket',
+              style: ButtonStyle.Secondary,
               disabled: disableButtons
             }
           ]
@@ -837,7 +849,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const action = interaction.customId.slice(CLAN_TICKET_DECISION_PREFIX.length);
-      if (![CLAN_TICKET_DECISION_TOGGLE, CLAN_TICKET_DECISION_ACCEPT, CLAN_TICKET_DECISION_REJECT]
+      if (![CLAN_TICKET_DECISION_TOGGLE, CLAN_TICKET_DECISION_ACCEPT, CLAN_TICKET_DECISION_REJECT, CLAN_TICKET_DECISION_REMOVE]
         .includes(action)) {
         await interaction.reply({
           components: buildTextComponents('Neplatná akce pro ticket.'),
@@ -934,6 +946,39 @@ client.on(Events.InteractionCreate, async (interaction) => {
         entry.decidedBy = interaction.user.id;
         entry.updatedAt = updatedAt;
       });
+
+      if (action === CLAN_TICKET_DECISION_REMOVE) {
+        const refreshedState = getClanState();
+        const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.guildId]?.[
+          interaction.channelId
+        ];
+        if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
+          try {
+            const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
+            await message.edit({
+              components: buildTicketSummary(refreshedEntry.answers ?? {}, refreshedEntry),
+              flags: MessageFlags.IsComponentsV2
+            });
+          } catch (error) {
+            console.warn('Failed to update ticket summary message:', error);
+          }
+        }
+
+        if (interaction.channel) {
+          try {
+            await interaction.channel.delete('Clan ticket removed.');
+          } catch (error) {
+            console.warn('Failed to delete removed ticket channel:', error);
+          }
+        }
+
+        await interaction.reply({
+          components: buildTextComponents('Ticket byl odstraněn.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
 
       if (action === CLAN_TICKET_DECISION_ACCEPT && clan.acceptCategoryId) {
         try {
