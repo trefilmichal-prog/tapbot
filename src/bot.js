@@ -439,8 +439,8 @@ function buildTicketModal(clanName) {
 }
 
 async function refreshClanPanelForGuild(guild, guildId) {
-  const state = getClanState();
-  const panelConfig = state.clan_panel_configs?.[guildId];
+  const state = getClanState(guildId);
+  const panelConfig = state.clan_panel_configs;
   if (!panelConfig?.channelId || !panelConfig?.messageId) return;
 
   let channel;
@@ -451,9 +451,9 @@ async function refreshClanPanelForGuild(guild, guildId) {
   }
 
   if (!channel || !channel.isTextBased()) {
-    await updateClanState((nextState) => {
-      if (nextState.clan_panel_configs?.[guildId]) {
-        nextState.clan_panel_configs[guildId] = {};
+    await updateClanState(guildId, (nextState) => {
+      if (nextState.clan_panel_configs) {
+        nextState.clan_panel_configs = {};
       }
     });
     return;
@@ -467,15 +467,15 @@ async function refreshClanPanelForGuild(guild, guildId) {
   }
 
   if (!message) {
-    await updateClanState((nextState) => {
-      if (nextState.clan_panel_configs?.[guildId]) {
-        nextState.clan_panel_configs[guildId] = {};
+    await updateClanState(guildId, (nextState) => {
+      if (nextState.clan_panel_configs) {
+        nextState.clan_panel_configs = {};
       }
     });
     return;
   }
 
-  const clanMap = state.clan_clans?.[guildId] ?? {};
+  const clanMap = state.clan_clans ?? {};
   const panelDescription = panelConfig?.description ?? null;
   try {
     await message.edit({
@@ -488,11 +488,12 @@ async function refreshClanPanelForGuild(guild, guildId) {
 }
 
 async function refreshClanPanelsOnStartup(readyClient) {
-  const state = getClanState();
-  const panelConfigs = state.clan_panel_configs ?? {};
   const invalidGuildIds = [];
+  const guildIds = readyClient.guilds.cache.map((guild) => guild.id);
 
-  for (const [guildId, config] of Object.entries(panelConfigs)) {
+  for (const guildId of guildIds) {
+    const state = getClanState(guildId);
+    const config = state.clan_panel_configs;
     if (!config?.channelId || !config?.messageId) continue;
 
     let guild;
@@ -527,7 +528,7 @@ async function refreshClanPanelsOnStartup(readyClient) {
       continue;
     }
 
-    const clanMap = state.clan_clans?.[guildId] ?? {};
+    const clanMap = state.clan_clans ?? {};
     const panelDescription = config?.description ?? null;
     try {
       await message.edit({
@@ -540,28 +541,28 @@ async function refreshClanPanelsOnStartup(readyClient) {
   }
 
   if (invalidGuildIds.length) {
-    await updateClanState((nextState) => {
-      for (const guildId of invalidGuildIds) {
-        if (nextState.clan_panel_configs?.[guildId]) {
-          nextState.clan_panel_configs[guildId] = {};
+    for (const guildId of invalidGuildIds) {
+      await updateClanState(guildId, (nextState) => {
+        if (nextState.clan_panel_configs) {
+          nextState.clan_panel_configs = {};
         }
-      }
-    });
+      });
+    }
   }
 }
 
-function ensureGuildClanState(state, guildId) {
-  if (!state.clan_clans[guildId]) {
-    state.clan_clans[guildId] = {};
+function ensureGuildClanState(state) {
+  if (!state.clan_clans) {
+    state.clan_clans = {};
   }
-  if (!state.clan_panel_configs[guildId]) {
-    state.clan_panel_configs[guildId] = {};
+  if (!state.clan_panel_configs) {
+    state.clan_panel_configs = {};
   }
-  if (!state.clan_ticket_reminders[guildId]) {
-    state.clan_ticket_reminders[guildId] = {};
+  if (!state.clan_ticket_reminders) {
+    state.clan_ticket_reminders = {};
   }
-  if (!state.clan_ticket_decisions[guildId]) {
-    state.clan_ticket_decisions[guildId] = {};
+  if (!state.clan_ticket_decisions) {
+    state.clan_ticket_decisions = {};
   }
   return state;
 }
@@ -622,8 +623,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const clanName = decodeURIComponent(
           interaction.customId.slice(CLAN_TICKET_MODAL_PREFIX.length)
         );
-        const state = getClanState();
-        const clan = state.clan_clans?.[interaction.guildId]?.[clanName];
+        const state = getClanState(interaction.guildId);
+        const clan = state.clan_clans?.[clanName];
         if (!clan) {
           await interaction.reply({
             components: buildTextComponents('Vybraný klan nebyl nalezen.'),
@@ -741,9 +742,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           flags: MessageFlags.IsComponentsV2
         });
 
-        await updateClanState((state) => {
-          ensureGuildClanState(state, interaction.guildId);
-          state.clan_ticket_decisions[interaction.guildId][ticketChannel.id] = {
+        await updateClanState(interaction.guildId, (state) => {
+          ensureGuildClanState(state);
+          state.clan_ticket_decisions[ticketChannel.id] = {
             clanName,
             applicantId: interaction.user.id,
             messageId: summaryMessage.id,
@@ -792,10 +793,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         ? rawDescription.trim()
         : null;
 
-      await updateClanState((state) => {
-        ensureGuildClanState(state, interaction.guildId);
-        state.clan_panel_configs[interaction.guildId] = {
-          ...state.clan_panel_configs[interaction.guildId],
+      await updateClanState(interaction.guildId, (state) => {
+        ensureGuildClanState(state);
+        state.clan_panel_configs = {
+          ...state.clan_panel_configs,
           description,
           updatedAt: new Date().toISOString()
         };
@@ -832,8 +833,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const state = getClanState();
-      const clan = state.clan_clans?.[interaction.guildId]?.[selectedClan];
+      const state = getClanState(interaction.guildId);
+      const clan = state.clan_clans?.[selectedClan];
       if (!clan) {
         await interaction.reply({
           components: buildTextComponents('Vybraný klan nebyl nalezen.'),
@@ -870,8 +871,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const state = getClanState();
-      const ticketEntry = state.clan_ticket_decisions?.[interaction.guildId]?.[interaction.channelId];
+      const state = getClanState(interaction.guildId);
+      const ticketEntry = state.clan_ticket_decisions?.[interaction.channelId];
       if (!ticketEntry) {
         await interaction.reply({
           components: buildTextComponents('Ticket nebyl nalezen nebo už není aktivní.'),
@@ -881,7 +882,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const clan = state.clan_clans?.[interaction.guildId]?.[ticketEntry.clanName];
+      const clan = state.clan_clans?.[ticketEntry.clanName];
       if (!clan) {
         await interaction.reply({
           components: buildTextComponents('Klan pro tento ticket nebyl nalezen.'),
@@ -905,17 +906,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (action === CLAN_TICKET_DECISION_TOGGLE) {
-        await updateClanState((nextState) => {
-          ensureGuildClanState(nextState, interaction.guildId);
-          const entry = nextState.clan_ticket_decisions[interaction.guildId][interaction.channelId];
+        await updateClanState(interaction.guildId, (nextState) => {
+          ensureGuildClanState(nextState);
+          const entry = nextState.clan_ticket_decisions[interaction.channelId];
           if (!entry) return;
           entry.controlsExpanded = !entry.controlsExpanded;
         });
 
-        const refreshedState = getClanState();
-        const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.guildId]?.[
-          interaction.channelId
-        ];
+        const refreshedState = getClanState(interaction.guildId);
+        const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.channelId];
         if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
           try {
             const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
@@ -948,9 +947,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const updatedAt = new Date().toISOString();
-      await updateClanState((nextState) => {
-        ensureGuildClanState(nextState, interaction.guildId);
-        const entry = nextState.clan_ticket_decisions[interaction.guildId][interaction.channelId];
+      await updateClanState(interaction.guildId, (nextState) => {
+        ensureGuildClanState(nextState);
+        const entry = nextState.clan_ticket_decisions[interaction.channelId];
         if (!entry) return;
         entry.status = action;
         entry.decidedBy = interaction.user.id;
@@ -958,10 +957,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
 
       if (action === CLAN_TICKET_DECISION_REMOVE) {
-        const refreshedState = getClanState();
-        const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.guildId]?.[
-          interaction.channelId
-        ];
+        const refreshedState = getClanState(interaction.guildId);
+        const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.channelId];
         if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
           try {
             const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
@@ -1009,10 +1006,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
-      const refreshedState = getClanState();
-      const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.guildId]?.[
-        interaction.channelId
-      ];
+      const refreshedState = getClanState(interaction.guildId);
+      const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.channelId];
       if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
         try {
           const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
@@ -1238,9 +1233,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const reviewRoleId = reviewRoleOption?.id ?? null;
           let existed = false;
 
-          await updateClanState((state) => {
-            ensureGuildClanState(state, guildId);
-            const entry = state.clan_clans[guildId];
+          await updateClanState(guildId, (state) => {
+            ensureGuildClanState(state);
+            const entry = state.clan_clans;
             if (entry[name]) {
               existed = true;
               return;
@@ -1288,9 +1283,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const reviewRoleId = reviewRoleOption?.id ?? null;
           let found = false;
 
-          await updateClanState((state) => {
-            ensureGuildClanState(state, guildId);
-            const entry = state.clan_clans[guildId];
+          await updateClanState(guildId, (state) => {
+            ensureGuildClanState(state);
+            const entry = state.clan_clans;
             if (!entry[name]) return;
             found = true;
             entry[name] = {
@@ -1327,10 +1322,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const name = interaction.options.getString('name', true).trim();
           let removed = false;
 
-          await updateClanState((state) => {
-            ensureGuildClanState(state, guildId);
-            if (state.clan_clans[guildId][name]) {
-              delete state.clan_clans[guildId][name];
+          await updateClanState(guildId, (state) => {
+            ensureGuildClanState(state);
+            if (state.clan_clans[name]) {
+              delete state.clan_clans[name];
               removed = true;
             }
           });
@@ -1350,8 +1345,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         if (subcommand === 'list') {
-          const state = getClanState();
-          const clans = sortClansForDisplay(Object.values(state.clan_clans[guildId] ?? {}));
+          const state = getClanState(guildId);
+          const clans = sortClansForDisplay(Object.values(state.clan_clans ?? {}));
           const listText = clans.length
             ? clans.map((clan) => {
                 const tag = clan.tag ? ` [${clan.tag}]` : '';
@@ -1370,8 +1365,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (!subcommandGroup && subcommand === 'edit') {
-        const state = getClanState();
-        const panelDescription = state.clan_panel_configs?.[guildId]?.description ?? '';
+        const state = getClanState(guildId);
+        const panelDescription = state.clan_panel_configs?.description ?? '';
         const input = new TextInputBuilder()
           .setCustomId(CLAN_PANEL_DESCRIPTION_INPUT_ID)
           .setLabel('Popisek clan panelu')
@@ -1403,18 +1398,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const state = getClanState();
-        const clanMap = state.clan_clans[guildId] ?? {};
-        const panelDescription = state.clan_panel_configs?.[guildId]?.description ?? null;
+        const state = getClanState(guildId);
+        const clanMap = state.clan_clans ?? {};
+        const panelDescription = state.clan_panel_configs?.description ?? null;
         const panelMessage = await channel.send({
           components: buildClanPanelComponents(interaction.guild, clanMap, panelDescription),
           flags: MessageFlags.IsComponentsV2
         });
 
-        await updateClanState((nextState) => {
-          ensureGuildClanState(nextState, guildId);
-          nextState.clan_panel_configs[guildId] = {
-            ...nextState.clan_panel_configs[guildId],
+        await updateClanState(guildId, (nextState) => {
+          ensureGuildClanState(nextState);
+          nextState.clan_panel_configs = {
+            ...nextState.clan_panel_configs,
             channelId: channel.id,
             messageId: panelMessage.id,
             updatedAt: new Date().toISOString()
@@ -1431,9 +1426,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (subcommand === 'ticket_reminders') {
         const enabled = interaction.options.getBoolean('enabled', true);
-        await updateClanState((state) => {
-          ensureGuildClanState(state, guildId);
-          state.clan_ticket_reminders[guildId] = {
+        await updateClanState(guildId, (state) => {
+          ensureGuildClanState(state);
+          state.clan_ticket_reminders = {
             enabled,
             updatedAt: new Date().toISOString()
           };
