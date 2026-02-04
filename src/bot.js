@@ -22,6 +22,7 @@ import path from 'node:path';
 import { loadConfig } from './config.js';
 import {
   getClanState,
+  getLogConfig,
   getRpsState,
   getPermissionRoleId,
   getWelcomeConfig,
