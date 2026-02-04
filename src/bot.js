@@ -236,16 +236,16 @@ function buildClanPanelComponents(guild, clanMap, panelDescription) {
     : '';
   const resolvedDescription = trimmedDescription || 'Bez popisku.';
   const selectOptions = clans.length
-    ? clans.map((clan) => ({
-        label: clan.name,
-        value: clan.name
-      }))
-    : [
-        {
-          label: 'Zatím nejsou evidovány žádné klany.',
-          value: 'no_clans_available'
-        }
-      ];
+      ? clans.map((clan) => ({
+          label: clan.name,
+          value: clan.name
+        }))
+      : [
+          {
+            label: 'No clans are registered yet.',
+            value: 'no_clans_available'
+          }
+        ];
 
   return [
     {
@@ -266,7 +266,7 @@ function buildClanPanelComponents(guild, clanMap, panelDescription) {
             {
               type: ComponentType.StringSelect,
               custom_id: CLAN_PANEL_SELECT_ID,
-              placeholder: `Vyber klan (${guild.name})`,
+              placeholder: `Select a clan (${guild.name})`,
               options: selectOptions,
               disabled: clans.length === 0
             }
@@ -816,7 +816,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.customId !== CLAN_PANEL_SELECT_ID) return;
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
-          components: buildTextComponents('Tento výběr lze použít jen na serveru.'),
+          components: buildTextComponents('This selection can only be used in a server.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -826,7 +826,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const selectedClan = interaction.values[0];
       if (!selectedClan || selectedClan === 'no_clans_available') {
         await interaction.reply({
-          components: buildTextComponents('Nejsou k dispozici žádné klany k výběru.'),
+          components: buildTextComponents('No clans are available to select.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -837,7 +837,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const clan = state.clan_clans?.[selectedClan];
       if (!clan) {
         await interaction.reply({
-          components: buildTextComponents('Vybraný klan nebyl nalezen.'),
+          components: buildTextComponents('The selected clan was not found.'),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
