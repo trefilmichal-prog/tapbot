@@ -48,6 +48,11 @@ const CLAN_TICKET_DECISION_PREFIX = 'clan_ticket_decision:';
 const CLAN_TICKET_DECISION_TOGGLE = 'toggle';
 const CLAN_TICKET_DECISION_ACCEPT = 'accept';
 const CLAN_TICKET_DECISION_REJECT = 'reject';
+const TICKET_STATUS_EMOJI = {
+  awaiting: '🟡',
+  [CLAN_TICKET_DECISION_ACCEPT]: '🟢',
+  [CLAN_TICKET_DECISION_REJECT]: '🔴'
+};
 
 client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
@@ -168,6 +173,48 @@ function sortClansForDisplay(clans) {
     if (createdComparison !== 0) return createdComparison;
     return (a.tag ?? '').localeCompare(b.tag ?? '');
   });
+}
+
+function sanitizeTicketChannelBase(rawName) {
+  return rawName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 90);
+}
+
+function stripTicketStatusPrefix(name) {
+  if (!name) return '';
+  const emojiPrefixes = Object.values(TICKET_STATUS_EMOJI);
+  let nextName = name;
+  for (const emoji of emojiPrefixes) {
+    const prefixPattern = new RegExp(`^${emoji}(?:[ -]+)?`);
+    if (prefixPattern.test(nextName)) {
+      nextName = nextName.replace(prefixPattern, '');
+      break;
+    }
+  }
+  return nextName;
+}
+
+function formatTicketChannelName(statusEmoji, baseName) {
+  const strippedBase = stripTicketStatusPrefix(baseName);
+  const normalizedBase = strippedBase.replace(/^[ -]+/, '').replace(/[ -]+$/, '');
+  if (!normalizedBase) {
+    return statusEmoji;
+  }
+  return `${statusEmoji}-${normalizedBase}`;
+}
+
+async function renameTicketChannelStatus(channel, statusEmoji) {
+  if (!channel || typeof channel.setName !== 'function') return;
+  const currentName = channel.name ?? '';
+  const baseName = stripTicketStatusPrefix(currentName) || currentName;
+  const nextName = formatTicketChannelName(statusEmoji, baseName);
+  if (nextName && currentName !== nextName) {
+    await channel.setName(nextName);
+  }
 }
 
 function buildClanPanelComponents(guild, clanMap, panelDescription) {
@@ -616,12 +663,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         try {
           const playerName = interaction.member.displayName || interaction.user.username;
           const rawChannelName = `${clanName} - ${playerName}`;
-          const channelName = rawChannelName
-            .toLowerCase()
-            .replace(/[^a-z0-9-]+/g, '-')
-            .replace(/-+/g, '-')
-            .replace(/^-|-$/g, '')
-            .slice(0, 90) || interaction.user.id;
+          const channelBaseName = sanitizeTicketChannelBase(rawChannelName) || interaction.user.id;
+          const channelName = formatTicketChannelName(TICKET_STATUS_EMOJI.awaiting, channelBaseName);
 
           ticketChannel = await interaction.guild.channels.create({
             name: channelName,
@@ -899,6 +942,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
         } catch (error) {
           console.warn('Failed to move accepted ticket channel:', error);
+        }
+      }
+
+      const statusEmoji = TICKET_STATUS_EMOJI[action];
+      if (statusEmoji) {
+        try {
+          await renameTicketChannelStatus(interaction.channel, statusEmoji);
+        } catch (error) {
+          console.warn('Failed to rename ticket channel:', error);
         }
       }
 
