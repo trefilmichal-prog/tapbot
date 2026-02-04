@@ -24,10 +24,12 @@ import {
   getClanState,
   getLogConfig,
   getPingRoleState,
+  getPingRolePanelConfig,
   getRpsState,
   getPermissionRoleId,
   getWelcomeConfig,
   setLogConfig,
+  setPingRolePanelConfig,
   setPermissionRoleId,
   setWelcomeConfig,
   updateClanState,
@@ -89,6 +91,7 @@ client.on(Events.ClientReady, (readyClient) => {
   (async () => {
     try {
       await refreshClanPanelsOnStartup(readyClient);
+      await refreshPingRolePanelsOnStartup(readyClient);
       const result = await syncApplicationCommands({
         token: cfg.token,
         clientId: cfg.clientId,
@@ -548,7 +551,9 @@ function buildPingRoleSelectComponents(guild, state, memberId) {
   const availableRoleEntries = state.available_roles
     .map((roleId) => guild.roles.cache.get(roleId))
     .filter(Boolean);
-  const selectedRoles = new Set(state.user_selections?.[memberId] ?? []);
+  const selectedRoles = memberId
+    ? new Set(state.user_selections?.[memberId] ?? [])
+    : new Set();
   const limitedRoles = availableRoleEntries.slice(0, 25);
   const options = limitedRoles.length
     ? limitedRoles.map((role) => ({
@@ -788,6 +793,110 @@ function buildTicketModal(clanName) {
       new ActionRowBuilder().addComponents(gamepassesInput),
       new ActionRowBuilder().addComponents(hoursInput)
     );
+}
+
+async function refreshPingRolePanelForGuild(guild, guildId) {
+  const panelConfig = getPingRolePanelConfig(guildId);
+  if (!panelConfig?.channelId || !panelConfig?.messageId) return;
+
+  let channel;
+  try {
+    channel = await guild.channels.fetch(panelConfig.channelId);
+  } catch (error) {
+    console.warn(`Failed to fetch ping roles panel channel ${panelConfig.channelId}:`, error);
+  }
+
+  if (!channel || !channel.isTextBased()) {
+    setPingRolePanelConfig(guildId, null);
+    return;
+  }
+
+  let message;
+  try {
+    message = await channel.messages.fetch(panelConfig.messageId);
+  } catch (error) {
+    console.warn(`Failed to fetch ping roles panel message ${panelConfig.messageId}:`, error);
+  }
+
+  if (!message) {
+    setPingRolePanelConfig(guildId, null);
+    return;
+  }
+
+  const state = getPingRoleState(guildId);
+  ensurePingRoleState(state);
+  try {
+    await message.edit({
+      components: buildPingRoleSelectComponents(guild, state, null),
+      flags: MessageFlags.IsComponentsV2
+    });
+  } catch (error) {
+    console.warn(`Failed to refresh ping roles panel message ${panelConfig.messageId}:`, error);
+  }
+}
+
+async function refreshPingRolePanelsOnStartup(readyClient) {
+  const invalidGuildIds = [];
+  const guildIds = readyClient.guilds.cache.map((guild) => guild.id);
+
+  for (const guildId of guildIds) {
+    const panelConfig = getPingRolePanelConfig(guildId);
+    if (!panelConfig?.channelId || !panelConfig?.messageId) continue;
+
+    let guild;
+    try {
+      guild = await readyClient.guilds.fetch(guildId);
+    } catch (error) {
+      console.warn(`Failed to fetch guild ${guildId} for ping roles panel refresh:`, error);
+      invalidGuildIds.push(guildId);
+      continue;
+    }
+
+    let channel;
+    try {
+      channel = await guild.channels.fetch(panelConfig.channelId);
+    } catch (error) {
+      console.warn(`Failed to fetch ping roles panel channel ${panelConfig.channelId}:`, error);
+      invalidGuildIds.push(guildId);
+      continue;
+    }
+
+    if (!channel || !channel.isTextBased()) {
+      invalidGuildIds.push(guildId);
+      continue;
+    }
+
+    let message;
+    try {
+      message = await channel.messages.fetch(panelConfig.messageId);
+    } catch (error) {
+      console.warn(`Failed to fetch ping roles panel message ${panelConfig.messageId}:`, error);
+      invalidGuildIds.push(guildId);
+      continue;
+    }
+
+    if (!message) {
+      invalidGuildIds.push(guildId);
+      continue;
+    }
+
+    const state = getPingRoleState(guildId);
+    ensurePingRoleState(state);
+    try {
+      await message.edit({
+        components: buildPingRoleSelectComponents(guild, state, null),
+        flags: MessageFlags.IsComponentsV2
+      });
+    } catch (error) {
+      console.warn(`Failed to refresh ping roles panel message ${panelConfig.messageId}:`, error);
+    }
+  }
+
+  if (invalidGuildIds.length) {
+    for (const guildId of invalidGuildIds) {
+      setPingRolePanelConfig(guildId, null);
+    }
+  }
 }
 
 async function refreshClanPanelForGuild(guild, guildId) {
@@ -1973,6 +2082,64 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const directSubcommand = interaction.options.getSubcommand(false);
+      if (directSubcommand === 'panel') {
+        if (!hasAdminPermission(interaction.member)) {
+          await interaction.reply({
+            components: buildTextComponents('Nemáš oprávnění použít tento příkaz.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const channel = interaction.options.getChannel('channel', true);
+        if (!channel || channel.type !== ChannelType.GuildText) {
+          await interaction.reply({
+            components: buildTextComponents('Prosím vyber textový kanál.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const state = getPingRoleState(interaction.guildId);
+        ensurePingRoleState(state);
+        const panelConfig = getPingRolePanelConfig(interaction.guildId);
+        let panelMessage = null;
+
+        if (panelConfig?.channelId === channel.id && panelConfig?.messageId) {
+          try {
+            panelMessage = await channel.messages.fetch(panelConfig.messageId);
+          } catch (error) {
+            console.warn(`Failed to fetch existing ping roles panel ${panelConfig.messageId}:`, error);
+          }
+        }
+
+        if (panelMessage) {
+          await panelMessage.edit({
+            components: buildPingRoleSelectComponents(interaction.guild, state, null),
+            flags: MessageFlags.IsComponentsV2
+          });
+        } else {
+          panelMessage = await channel.send({
+            components: buildPingRoleSelectComponents(interaction.guild, state, null),
+            flags: MessageFlags.IsComponentsV2
+          });
+        }
+
+        setPingRolePanelConfig(interaction.guildId, {
+          channelId: channel.id,
+          messageId: panelMessage.id
+        });
+
+        await interaction.reply({
+          components: buildTextComponents('Ping role panel byl uložen.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
       if (directSubcommand === 'choose') {
         const state = getPingRoleState(interaction.guildId);
         ensurePingRoleState(state);
