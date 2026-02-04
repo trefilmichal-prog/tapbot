@@ -91,6 +91,181 @@ export const defaultCommands = [
     ]
   },
   {
+    name: 'ping_roles',
+    description: 'Správa ping rolí a routování',
+    options: [
+      {
+        type: ApplicationCommandOptionType.SubcommandGroup,
+        name: 'roles',
+        description: 'Správa dostupných rolí',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'set',
+            description: 'Nastaví seznam dostupných rolí',
+            options: [
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_1',
+                description: 'Role 1',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_2',
+                description: 'Role 2',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_3',
+                description: 'Role 3',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_4',
+                description: 'Role 4',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_5',
+                description: 'Role 5',
+                required: false
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'add',
+            description: 'Přidá role do seznamu',
+            options: [
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_1',
+                description: 'Role 1',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_2',
+                description: 'Role 2',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_3',
+                description: 'Role 3',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_4',
+                description: 'Role 4',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_5',
+                description: 'Role 5',
+                required: false
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'remove',
+            description: 'Odebere role ze seznamu',
+            options: [
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_1',
+                description: 'Role 1',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_2',
+                description: 'Role 2',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_3',
+                description: 'Role 3',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_4',
+                description: 'Role 4',
+                required: false
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role_5',
+                description: 'Role 5',
+                required: false
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'list',
+            description: 'Vypíše dostupné role'
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.SubcommandGroup,
+        name: 'route',
+        description: 'Správa routování do kanálů',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'set',
+            description: 'Nastaví roli pro kanál',
+            options: [
+              {
+                type: ApplicationCommandOptionType.Channel,
+                name: 'channel',
+                description: 'Textový kanál',
+                required: true,
+                channel_types: [ChannelType.GuildText]
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'role',
+                description: 'Role pro tento kanál',
+                required: true
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'remove',
+            description: 'Odstraní routu pro kanál',
+            options: [
+              {
+                type: ApplicationCommandOptionType.Channel,
+                name: 'channel',
+                description: 'Textový kanál',
+                required: true,
+                channel_types: [ChannelType.GuildText]
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'list',
+            description: 'Vypíše seznam rout'
+          }
+        ]
+      }
+    ]
+  },
+  {
     name: 'clan_panel',
     description: 'Správa clan panelu',
     options: [
