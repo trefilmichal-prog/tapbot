@@ -27,6 +27,20 @@ export const defaultCommands = [
       },
       {
         type: ApplicationCommandOptionType.Subcommand,
+        name: 'logs',
+        description: 'Nastaví logovací kanál',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Channel,
+            name: 'channel',
+            description: 'Textový kanál pro logy (ponech prázdné pro reset)',
+            required: false,
+            channel_types: [ChannelType.GuildText]
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
         name: 'update',
         description: 'Aktualizuje bota',
         options: [
