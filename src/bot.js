@@ -3,6 +3,7 @@ import {
   Events,
   GatewayIntentBits,
   GuildMember,
+  Partials,
   PermissionsBitField,
   ModalBuilder,
   TextInputBuilder,
@@ -45,7 +46,15 @@ try {
   process.exit(1);
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ],
+  partials: [Partials.Message, Partials.Channel]
+});
 const CLAN_PANEL_EDIT_MODAL_ID = 'clan_panel_edit_modal';
 const CLAN_PANEL_DESCRIPTION_INPUT_ID = 'clan_panel_description_input';
 const CLAN_PANEL_SELECT_ID = 'clan_panel_select';
@@ -165,6 +174,79 @@ function buildTextComponents(content) {
       ]
     }
   ];
+}
+
+function formatLogContent(content) {
+  if (content === null || typeof content === 'undefined') {
+    return '*(not available)*';
+  }
+  const trimmed = String(content).trim();
+  return trimmed ? trimmed : '*(empty)*';
+}
+
+function formatMessageTimestamp(timestampMs) {
+  if (!Number.isFinite(timestampMs)) return 'Unknown';
+  const seconds = Math.floor(timestampMs / 1000);
+  return `<t:${seconds}:F>`;
+}
+
+function buildMessageLogComponents({ title, messageId, channelId, author, createdTimestamp, content }) {
+  const authorLabel = author
+    ? `<@${author.id}> (${author.tag ?? author.username ?? 'Unknown'})`
+    : 'Unknown';
+  const headerLines = [
+    title,
+    `Author: ${authorLabel}`,
+    `Channel: <#${channelId}>`,
+    `Message ID: ${messageId}`,
+    `Created: ${formatMessageTimestamp(createdTimestamp)}`
+  ];
+  const bodyLines = content ? [content] : [];
+
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: headerLines.join('\n')
+        },
+        {
+          type: ComponentType.Separator,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small
+        },
+        {
+          type: ComponentType.TextDisplay,
+          content: bodyLines.join('\n')
+        }
+      ]
+    }
+  ];
+}
+
+async function fetchMessageIfPartial(message) {
+  if (!message?.partial) return message;
+  try {
+    return await message.fetch();
+  } catch (error) {
+    console.warn('Failed to fetch partial message:', error);
+    return message;
+  }
+}
+
+async function resolveLogChannel(clientInstance, guildId, channelId) {
+  if (!guildId || !channelId) return null;
+  try {
+    const guild = await clientInstance.guilds.fetch(guildId);
+    const channel = await guild.channels.fetch(channelId);
+    if (channel && channel.isTextBased()) {
+      return channel;
+    }
+  } catch (error) {
+    console.warn(`Failed to resolve log channel ${channelId}:`, error);
+  }
+  return null;
 }
 
 function getRpsMoveLabel(move) {
@@ -726,6 +808,77 @@ client.on(Events.GuildMemberAdd, async (member) => {
     await sendWelcomeMessage(member, settings);
   } catch (e) {
     console.error('Failed to send welcome message:', e);
+  }
+});
+
+client.on(Events.MessageDelete, async (message) => {
+  if (!message.guildId) return;
+  const config = getLogConfig(message.guildId);
+  const logChannelId = config?.channelId ?? null;
+  if (!logChannelId) return;
+  if (message.channelId === logChannelId) return;
+
+  const resolvedMessage = await fetchMessageIfPartial(message);
+  const author = resolvedMessage.author ?? null;
+  if (author?.bot) return;
+
+  const logChannel = await resolveLogChannel(client, message.guildId, logChannelId);
+  if (!logChannel) return;
+
+  const components = buildMessageLogComponents({
+    title: '🗑️ **Message deleted**',
+    messageId: resolvedMessage.id ?? message.id,
+    channelId: resolvedMessage.channelId ?? message.channelId,
+    author,
+    createdTimestamp: resolvedMessage.createdTimestamp ?? null,
+    content: `**Content:** ${formatLogContent(resolvedMessage.content)}`
+  });
+
+  try {
+    await logChannel.send({
+      components,
+      flags: MessageFlags.IsComponentsV2
+    });
+  } catch (error) {
+    console.warn('Failed to send message delete log:', error);
+  }
+});
+
+client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
+  const guildId = newMessage.guildId ?? oldMessage.guildId;
+  if (!guildId) return;
+  const config = getLogConfig(guildId);
+  const logChannelId = config?.channelId ?? null;
+  if (!logChannelId) return;
+  const sourceChannelId = newMessage.channelId ?? oldMessage.channelId;
+  if (sourceChannelId === logChannelId) return;
+
+  const resolvedOldMessage = await fetchMessageIfPartial(oldMessage);
+  const resolvedNewMessage = await fetchMessageIfPartial(newMessage);
+  const author = resolvedNewMessage.author ?? resolvedOldMessage.author ?? null;
+  if (author?.bot) return;
+
+  const logChannel = await resolveLogChannel(client, guildId, logChannelId);
+  if (!logChannel) return;
+
+  const beforeContent = formatLogContent(resolvedOldMessage.content);
+  const afterContent = formatLogContent(resolvedNewMessage.content);
+  const components = buildMessageLogComponents({
+    title: '✏️ **Message updated**',
+    messageId: resolvedNewMessage.id ?? resolvedOldMessage.id ?? newMessage.id ?? oldMessage.id,
+    channelId: resolvedNewMessage.channelId ?? resolvedOldMessage.channelId ?? sourceChannelId,
+    author,
+    createdTimestamp: resolvedNewMessage.createdTimestamp ?? resolvedOldMessage.createdTimestamp ?? null,
+    content: `**Before:** ${beforeContent}\n\n**After:** ${afterContent}`
+  });
+
+  try {
+    await logChannel.send({
+      components,
+      flags: MessageFlags.IsComponentsV2
+    });
+  } catch (error) {
+    console.warn('Failed to send message update log:', error);
   }
 });
 
