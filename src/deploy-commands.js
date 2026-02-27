@@ -76,6 +76,25 @@ export const defaultCommands = [
             required: false
           }
         ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'welcome_room',
+        description: 'Configure welcome messages by channel ID',
+        options: [
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'channel_id',
+            description: 'ID of the text channel for welcome messages',
+            required: true
+          },
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'message',
+            description: 'Optional welcome message',
+            required: false
+          }
+        ]
       }
     ]
   },
