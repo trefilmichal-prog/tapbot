@@ -715,6 +715,21 @@ function buildTicketSummary(answers, decision) {
   ];
 }
 
+
+function buildTicketSettingsOpenedComponents() {
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: 'Ticket settings menu was opened.'
+        }
+      ]
+    }
+  ];
+}
+
 function buildRequiredScreenshotsNotice(reviewRoleId) {
   return [
     {
@@ -2059,6 +2074,84 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ephemeral: true
         });
       }
+      return;
+    }
+
+
+    if (interaction.commandName === 'settings') {
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('This command can only be used in a server.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const subcommand = interaction.options.getSubcommand(true);
+      if (subcommand !== 'menu') return;
+
+      const state = getClanState(interaction.guildId);
+      const ticketEntry = state.clan_ticket_decisions?.[interaction.channelId];
+      if (!ticketEntry) {
+        await interaction.reply({
+          components: buildTextComponents('This channel is not an active clan ticket.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const clan = state.clan_clans?.[ticketEntry.clanName];
+      if (!clan) {
+        await interaction.reply({
+          components: buildTextComponents('Clan for this ticket was not found.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const hasReviewPermission = hasAdminPermission(interaction.member)
+        || Boolean(clan.reviewRoleId && interaction.member.roles.cache.has(clan.reviewRoleId));
+      if (!hasReviewPermission) {
+        await interaction.reply({
+          components: buildTextComponents(
+            'You do not have permission to open ticket settings. The clan review role is required.'
+          ),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      await updateClanState(interaction.guildId, (nextState) => {
+        ensureGuildClanState(nextState);
+        const entry = nextState.clan_ticket_decisions[interaction.channelId];
+        if (!entry) return;
+        entry.controlsExpanded = true;
+        entry.updatedAt = new Date().toISOString();
+      });
+
+      const refreshedState = getClanState(interaction.guildId);
+      const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.channelId];
+      if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
+        try {
+          const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
+          await message.edit({
+            components: buildTicketSummary(refreshedEntry.answers ?? {}, refreshedEntry),
+            flags: MessageFlags.IsComponentsV2
+          });
+        } catch (error) {
+          console.warn('Failed to update ticket summary message:', error);
+        }
+      }
+
+      await interaction.reply({
+        components: buildTicketSettingsOpenedComponents(),
+        flags: MessageFlags.IsComponentsV2,
+        ephemeral: true
+      });
       return;
     }
 
