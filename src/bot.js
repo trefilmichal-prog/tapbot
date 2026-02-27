@@ -255,6 +255,17 @@ function formatLogContent(content) {
   return trimmed ? trimmed : '*(empty)*';
 }
 
+function sanitizeMentionLikeTokens(content) {
+  if (content === null || typeof content === 'undefined') {
+    return content;
+  }
+
+  return String(content)
+    .replace(/<@([!&]?\d+)>/g, '<@\u200b$1>')
+    .replace(/@everyone/g, '@\u200beveryone')
+    .replace(/@here/g, '@\u200bhere');
+}
+
 function formatMessageTimestamp(timestampMs) {
   if (!Number.isFinite(timestampMs)) return 'Unknown';
   const seconds = Math.floor(timestampMs / 1000);
@@ -1600,8 +1611,8 @@ client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
   const logChannel = await resolveLogChannel(client, guildId, logChannelId);
   if (!logChannel) return;
 
-  const beforeContent = formatLogContent(resolvedOldMessage.content);
-  const afterContent = formatLogContent(resolvedNewMessage.content);
+  const beforeContent = formatLogContent(sanitizeMentionLikeTokens(resolvedOldMessage.content));
+  const afterContent = formatLogContent(sanitizeMentionLikeTokens(resolvedNewMessage.content));
   const components = buildMessageLogComponents({
     title: '✏️ **Message updated**',
     messageId: resolvedNewMessage.id ?? resolvedOldMessage.id ?? newMessage.id ?? oldMessage.id,
@@ -1614,7 +1625,13 @@ client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
   try {
     await logChannel.send({
       components,
-      flags: MessageFlags.IsComponentsV2
+      flags: MessageFlags.IsComponentsV2,
+      allowedMentions: {
+        parse: [],
+        users: [],
+        roles: [],
+        repliedUser: false
+      }
     });
   } catch (error) {
     console.warn('Failed to send message update log:', error);
