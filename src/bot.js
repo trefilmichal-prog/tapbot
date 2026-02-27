@@ -68,10 +68,12 @@ const CLAN_TICKET_REBIRTHS_INPUT_ID = 'clan_ticket_rebirths_input';
 const CLAN_TICKET_GAMEPASSES_INPUT_ID = 'clan_ticket_gamepasses_input';
 const CLAN_TICKET_HOURS_INPUT_ID = 'clan_ticket_hours_input';
 const CLAN_TICKET_DECISION_PREFIX = 'clan_ticket_decision:';
+const CLAN_TICKET_REASSIGN_PREFIX = 'clan_ticket_reassign:';
 const CLAN_TICKET_DECISION_TOGGLE = 'toggle';
 const CLAN_TICKET_DECISION_ACCEPT = 'accept';
 const CLAN_TICKET_DECISION_REJECT = 'reject';
 const CLAN_TICKET_DECISION_REMOVE = 'remove';
+const CLAN_TICKET_DECISION_REASSIGN = 'reassign';
 const PING_ROLES_SELECT_ID = 'ping_roles_select';
 const RPS_CHOICE_PREFIX = 'rps:choose:';
 const RPS_MOVES = ['rock', 'paper', 'scissors'];
@@ -607,6 +609,7 @@ function buildPingRoleSelectComponents(guild, state, memberId) {
 }
 
 function buildTicketSummary(answers, decision) {
+  const activeReviewRoleId = decision?.activeReviewRoleId ?? null;
   const decisionText = decision?.status
     ? `**Decision:** ${decision.status === CLAN_TICKET_DECISION_ACCEPT
       ? 'Accepted ✅'
@@ -650,6 +653,13 @@ function buildTicketSummary(answers, decision) {
             },
             {
               type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REASSIGN}`,
+              label: 'Move/assign review role',
+              style: ButtonStyle.Primary,
+              disabled: disableButtons
+            },
+            {
+              type: ComponentType.Button,
               custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REMOVE}`,
               label: 'Remove ticket',
               style: ButtonStyle.Secondary,
@@ -688,7 +698,9 @@ function buildTicketSummary(answers, decision) {
             `> ${answers.gamepasses}`,
             '',
             '**How many hours a day do you play?**',
-            `> ${answers.hours}`
+            `> ${answers.hours}`,
+            '',
+            `**Current review role:** ${activeReviewRoleId ? `<@&${activeReviewRoleId}>` : 'Not set'}`
           ].join('\n')
         },
         {
@@ -710,6 +722,60 @@ function buildTicketSummary(answers, decision) {
             ]
           : []),
         ...actionRows
+      ]
+    }
+  ];
+}
+
+function buildReviewRoleOptions(guild, selectedRoleId) {
+  const roleOptions = guild.roles.cache
+    .filter((role) => role.id !== guild.roles.everyone.id && !role.managed)
+    .sort((a, b) => b.position - a.position)
+    .first(25)
+    .map((role) => ({
+      label: role.name.slice(0, 100),
+      value: role.id,
+      default: role.id === selectedRoleId
+    }));
+
+  if (!roleOptions.length) {
+    return [
+      {
+        label: 'No roles are available',
+        value: 'no_roles_available'
+      }
+    ];
+  }
+
+  return roleOptions;
+}
+
+function buildReviewRoleSelectComponents(channelId, selectedRoleId, options) {
+  const hasRoles = options.some((option) => option.value !== 'no_roles_available');
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: 'Select the review role to assign this ticket to.'
+        },
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.StringSelect,
+              custom_id: `${CLAN_TICKET_REASSIGN_PREFIX}${channelId}`,
+              placeholder: selectedRoleId
+                ? 'Choose a different review role'
+                : 'Choose a review role',
+              min_values: 1,
+              max_values: 1,
+              options,
+              disabled: !hasRoles
+            }
+          ]
+        }
       ]
     }
   ];
@@ -1318,11 +1384,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const summaryMessage = await ticketChannel.send({
-          components: buildTicketSummary({
-            rebirths,
-            gamepasses,
-            hours
-          }),
+          components: buildTicketSummary(
+            {
+              rebirths,
+              gamepasses,
+              hours
+            },
+            {
+              activeReviewRoleId: clan.reviewRoleId
+            }
+          ),
           flags: MessageFlags.IsComponentsV2
         });
 
@@ -1346,6 +1417,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             decidedBy: null,
             updatedAt: null,
             controlsExpanded: false,
+            activeReviewRoleId: clan.reviewRoleId,
             createdAt: new Date().toISOString()
           };
         });
@@ -1402,6 +1474,135 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isStringSelectMenu()) {
+      if (interaction.customId.startsWith(CLAN_TICKET_REASSIGN_PREFIX)) {
+        if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+          await interaction.reply({
+            components: buildTextComponents('This selection can only be used in a server.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetChannelId = interaction.customId.slice(CLAN_TICKET_REASSIGN_PREFIX.length);
+        if (!targetChannelId || targetChannelId !== interaction.channelId) {
+          await interaction.reply({
+            components: buildTextComponents('This review-role selector is no longer valid for this channel.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const selectedRoleId = interaction.values[0];
+        if (!selectedRoleId || selectedRoleId === 'no_roles_available') {
+          await interaction.reply({
+            components: buildTextComponents('No valid role was selected.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const state = getClanState(interaction.guildId);
+        const ticketEntry = state.clan_ticket_decisions?.[interaction.channelId];
+        if (!ticketEntry) {
+          await interaction.reply({
+            components: buildTextComponents('Ticket was not found or is no longer active.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (ticketEntry.status) {
+          await interaction.reply({
+            components: buildTextComponents('This ticket has already been decided.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const clan = state.clan_clans?.[ticketEntry.clanName];
+        if (!clan) {
+          await interaction.reply({
+            components: buildTextComponents('Clan for this ticket was not found.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const activeReviewRoleId = ticketEntry.activeReviewRoleId ?? clan.reviewRoleId;
+        const hasReviewPermission = hasAdminPermission(interaction.member)
+          || Boolean(activeReviewRoleId && interaction.member.roles.cache.has(activeReviewRoleId));
+        if (!hasReviewPermission) {
+          await interaction.reply({
+            components: buildTextComponents(
+              'You do not have permission to change the ticket review role. The current ticket review role is required.'
+            ),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (!interaction.guild.roles.cache.has(selectedRoleId)) {
+          await interaction.reply({
+            components: buildTextComponents('Selected role is no longer available in this server.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (interaction.channel?.isTextBased()) {
+          try {
+            if (activeReviewRoleId && activeReviewRoleId !== selectedRoleId) {
+              await interaction.channel.permissionOverwrites.delete(activeReviewRoleId);
+            }
+            await interaction.channel.permissionOverwrites.edit(selectedRoleId, {
+              ViewChannel: true,
+              SendMessages: true,
+              ReadMessageHistory: true
+            });
+          } catch (error) {
+            console.warn('Failed to update ticket channel permissions for new review role:', error);
+          }
+        }
+
+        const updatedAt = new Date().toISOString();
+        await updateClanState(interaction.guildId, (nextState) => {
+          ensureGuildClanState(nextState);
+          const entry = nextState.clan_ticket_decisions[interaction.channelId];
+          if (!entry) return;
+          entry.activeReviewRoleId = selectedRoleId;
+          entry.updatedAt = updatedAt;
+        });
+
+        const refreshedState = getClanState(interaction.guildId);
+        const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.channelId];
+        if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
+          try {
+            const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
+            await message.edit({
+              components: buildTicketSummary(refreshedEntry.answers ?? {}, refreshedEntry),
+              flags: MessageFlags.IsComponentsV2
+            });
+          } catch (error) {
+            console.warn('Failed to update ticket summary message after review-role change:', error);
+          }
+        }
+
+        await interaction.reply({
+          components: buildTextComponents(`Ticket review role updated to <@&${selectedRoleId}>.`),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
       if (interaction.customId === PING_ROLES_SELECT_ID) {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
           await interaction.reply({
@@ -1654,8 +1855,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const action = interaction.customId.slice(CLAN_TICKET_DECISION_PREFIX.length);
-      if (![CLAN_TICKET_DECISION_TOGGLE, CLAN_TICKET_DECISION_ACCEPT, CLAN_TICKET_DECISION_REJECT, CLAN_TICKET_DECISION_REMOVE]
-        .includes(action)) {
+      if ([
+        CLAN_TICKET_DECISION_TOGGLE,
+        CLAN_TICKET_DECISION_ACCEPT,
+        CLAN_TICKET_DECISION_REJECT,
+        CLAN_TICKET_DECISION_REASSIGN,
+        CLAN_TICKET_DECISION_REMOVE
+      ].includes(action) === false) {
         await interaction.reply({
           components: buildTextComponents('Invalid ticket action.'),
           flags: MessageFlags.IsComponentsV2,
@@ -1685,12 +1891,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      const activeReviewRoleId = ticketEntry.activeReviewRoleId ?? clan.reviewRoleId;
       const hasReviewPermission = hasAdminPermission(interaction.member)
-        || Boolean(clan.reviewRoleId && interaction.member.roles.cache.has(clan.reviewRoleId));
+        || Boolean(activeReviewRoleId && interaction.member.roles.cache.has(activeReviewRoleId));
       if (!hasReviewPermission) {
         await interaction.reply({
           components: buildTextComponents(
-            'You do not have permission to decide on this ticket. The clan review role is required.'
+            'You do not have permission to decide on this ticket. The current ticket review role is required.'
           ),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
@@ -1724,6 +1931,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
           components: buildTextComponents(
             refreshedEntry?.controlsExpanded ? 'Ticket controls expanded.' : 'Ticket controls collapsed.'
           ),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (action === CLAN_TICKET_DECISION_REASSIGN) {
+        if (ticketEntry.status) {
+          await interaction.reply({
+            components: buildTextComponents('This ticket has already been decided.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const options = buildReviewRoleOptions(interaction.guild, activeReviewRoleId);
+        await interaction.reply({
+          components: buildReviewRoleSelectComponents(interaction.channelId, activeReviewRoleId, options),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2144,12 +2370,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      const activeReviewRoleId = ticketEntry.activeReviewRoleId ?? clan.reviewRoleId;
       const hasReviewPermission = hasAdminPermission(interaction.member)
-        || Boolean(clan.reviewRoleId && interaction.member.roles.cache.has(clan.reviewRoleId));
+        || Boolean(activeReviewRoleId && interaction.member.roles.cache.has(activeReviewRoleId));
       if (!hasReviewPermission) {
         await interaction.reply({
           components: buildTextComponents(
-            'You do not have permission to open ticket settings. The clan review role is required.'
+            'You do not have permission to open ticket settings. The current ticket review role is required.'
           ),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
