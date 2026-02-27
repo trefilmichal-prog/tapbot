@@ -782,14 +782,14 @@ function buildReviewRoleSelectComponents(channelId, selectedRoleId, options) {
 }
 
 
-function buildTicketSettingsOpenedComponents() {
+function buildTicketSettingsOpenedComponents(activeReviewRoleId) {
   return [
     {
       type: ComponentType.Container,
       components: [
         {
           type: ComponentType.TextDisplay,
-          content: 'Ticket settings menu was opened.'
+          content: `Ticket settings menu was opened. Active review role: ${activeReviewRoleId ? `<@&${activeReviewRoleId}>` : 'Not set'}.`
         }
       ]
     }
@@ -817,6 +817,10 @@ function buildRequiredScreenshotsNotice(reviewRoleId) {
       ]
     }
   ];
+}
+
+function formatEffectiveReviewRoleText(reviewRoleId) {
+  return reviewRoleId ? `<@&${reviewRoleId}>` : 'Not set';
 }
 
 function collectRoleOptionIds(options) {
@@ -1534,13 +1538,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const activeReviewRoleId = ticketEntry.activeReviewRoleId ?? clan.reviewRoleId;
+        const effectiveReviewRoleId = ticketEntry.activeReviewRoleId ?? clan.reviewRoleId;
         const hasReviewPermission = hasAdminPermission(interaction.member)
-          || Boolean(activeReviewRoleId && interaction.member.roles.cache.has(activeReviewRoleId));
+          || Boolean(effectiveReviewRoleId && interaction.member.roles.cache.has(effectiveReviewRoleId));
         if (!hasReviewPermission) {
           await interaction.reply({
             components: buildTextComponents(
-              'You do not have permission to change the ticket review role. The current ticket review role is required.'
+              `You do not have permission to change the ticket review role. Required active review role: ${formatEffectiveReviewRoleText(effectiveReviewRoleId)}.`
             ),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
@@ -1559,8 +1563,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (interaction.channel?.isTextBased()) {
           try {
-            if (activeReviewRoleId && activeReviewRoleId !== selectedRoleId) {
-              await interaction.channel.permissionOverwrites.delete(activeReviewRoleId);
+            if (effectiveReviewRoleId && effectiveReviewRoleId !== selectedRoleId) {
+              await interaction.channel.permissionOverwrites.delete(effectiveReviewRoleId);
             }
             await interaction.channel.permissionOverwrites.edit(selectedRoleId, {
               ViewChannel: true,
@@ -1596,7 +1600,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         await interaction.reply({
-          components: buildTextComponents(`Ticket review role updated to <@&${selectedRoleId}>.`),
+          components: buildTextComponents(`Ticket review role updated from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to <@&${selectedRoleId}>.`),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1891,13 +1895,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const activeReviewRoleId = ticketEntry.activeReviewRoleId ?? clan.reviewRoleId;
+      const effectiveReviewRoleId = ticketEntry.activeReviewRoleId ?? clan.reviewRoleId;
       const hasReviewPermission = hasAdminPermission(interaction.member)
-        || Boolean(activeReviewRoleId && interaction.member.roles.cache.has(activeReviewRoleId));
+        || Boolean(effectiveReviewRoleId && interaction.member.roles.cache.has(effectiveReviewRoleId));
       if (!hasReviewPermission) {
         await interaction.reply({
           components: buildTextComponents(
-            'You do not have permission to decide on this ticket. The current ticket review role is required.'
+            `You do not have permission to decide on this ticket. Required active review role: ${formatEffectiveReviewRoleText(effectiveReviewRoleId)}.`
           ),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
@@ -1947,9 +1951,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const options = buildReviewRoleOptions(interaction.guild, activeReviewRoleId);
+        const options = buildReviewRoleOptions(interaction.guild, effectiveReviewRoleId);
         await interaction.reply({
-          components: buildReviewRoleSelectComponents(interaction.channelId, activeReviewRoleId, options),
+          components: buildReviewRoleSelectComponents(interaction.channelId, effectiveReviewRoleId, options),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2370,13 +2374,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const activeReviewRoleId = ticketEntry.activeReviewRoleId ?? clan.reviewRoleId;
+      const effectiveReviewRoleId = ticketEntry.activeReviewRoleId ?? clan.reviewRoleId;
       const hasReviewPermission = hasAdminPermission(interaction.member)
-        || Boolean(activeReviewRoleId && interaction.member.roles.cache.has(activeReviewRoleId));
+        || Boolean(effectiveReviewRoleId && interaction.member.roles.cache.has(effectiveReviewRoleId));
       if (!hasReviewPermission) {
         await interaction.reply({
           components: buildTextComponents(
-            'You do not have permission to open ticket settings. The current ticket review role is required.'
+            `You do not have permission to open ticket settings. Required active review role: ${formatEffectiveReviewRoleText(effectiveReviewRoleId)}.`
           ),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
@@ -2407,7 +2411,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await interaction.reply({
-        components: buildTicketSettingsOpenedComponents(),
+        components: buildTicketSettingsOpenedComponents(refreshedEntry?.activeReviewRoleId ?? clan.reviewRoleId),
         flags: MessageFlags.IsComponentsV2,
         ephemeral: true
       });
