@@ -14,15 +14,21 @@ if (-not ([System.Management.Automation.PSTypeName]'Windows.UI.Notifications.Man
   [Windows.UI.Notifications.UserNotificationChangedTriggerDetails, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 }
 
+if (-not ([System.Management.Automation.PSTypeName]'System.WindowsRuntimeSystemExtensions').Type) {
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime
+}
+
 $listener = [Windows.UI.Notifications.Management.UserNotificationListener]::Current
-$access = $listener.RequestAccessAsync().GetAwaiter().GetResult()
+$accessTask = [System.WindowsRuntimeSystemExtensions]::AsTask($listener.RequestAccessAsync())
+$access = $accessTask.GetAwaiter().GetResult()
 
 if ($access -ne [Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus]::Allowed) {
   throw "ACCESS_STATUS:$access"
 }
 
 $kinds = [Windows.UI.Notifications.NotificationKinds]::Toast
-$notifications = $listener.GetNotificationsAsync($kinds).GetAwaiter().GetResult()
+$notificationsTask = [System.WindowsRuntimeSystemExtensions]::AsTask($listener.GetNotificationsAsync($kinds))
+$notifications = $notificationsTask.GetAwaiter().GetResult()
 $result = @()
 
 foreach ($notification in $notifications) {
