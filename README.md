@@ -88,6 +88,26 @@ On Windows:
 3. It preserves local runtime data such as `config.json` and the `data/` folder.
 4. It starts the bot again through `run.bat`.
 
+## Windows notifications command
+
+The `/notifications read` command reads recent toast notifications from the Windows host where the bot process is running.
+
+### Windows runtime requirements
+
+- The bot must run on **Windows** (`win32`).
+- PowerShell (`powershell.exe`) must be available in `PATH`.
+- Windows notification access must be allowed for the running user session (otherwise access is denied).
+
+### Example usage
+
+- `/notifications read`
+
+Expected behavior:
+
+- returns a Components V2 text response with recent notifications (`title`, `body`, `app`, `timestamp`),
+- returns clear errors for unsupported platform, access denied, or unavailable notification API,
+- returns a clear message when no notifications are available.
+
 ## Data persistence and restart behavior
 
 Bot state needed after restart is persisted in the project data layer (JSON-backed storage used by `src/persistence.js`). This allows guild-specific configuration and panels to be restored during startup.

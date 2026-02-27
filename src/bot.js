@@ -38,6 +38,7 @@ import {
 } from './persistence.js';
 import { runUpdate } from './update.js';
 import { syncApplicationCommands } from './deploy-commands.js';
+import { readWindowsToastNotifications } from './windows-notifications.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason);
@@ -199,6 +200,30 @@ function formatMessageTimestamp(timestampMs) {
   if (!Number.isFinite(timestampMs)) return 'Unknown';
   const seconds = Math.floor(timestampMs / 1000);
   return `<t:${seconds}:F>`;
+}
+
+function formatNotificationTimestamp(isoTimestamp) {
+  if (!isoTimestamp) return 'Unknown';
+  const parsed = new Date(isoTimestamp);
+  if (Number.isNaN(parsed.getTime())) return 'Unknown';
+  return `<t:${Math.floor(parsed.getTime() / 1000)}:R>`;
+}
+
+function buildNotificationReadResponse(notifications) {
+  const header = ['📣 **Windows Notifications**', ''];
+  const lines = notifications.slice(0, 8).flatMap((item, index) => ([
+    `**${index + 1}.** ${item.title ?? '(no title)'}`,
+    `App: ${item.app ?? 'Unknown app'}`,
+    `Time: ${formatNotificationTimestamp(item.timestamp)}`,
+    item.body ? `Body: ${item.body}` : 'Body: *(empty)*',
+    ''
+  ]));
+
+  if (notifications.length > 8) {
+    lines.push(`...and ${notifications.length - 8} more notifications.`);
+  }
+
+  return [...header, ...lines].join('\n');
 }
 
 
@@ -3037,6 +3062,65 @@ client.on(Events.InteractionCreate, async (interaction) => {
             ephemeral: true
           });
         }
+      }
+      return;
+    }
+
+    if (interaction.commandName === 'notifications') {
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('This command can only be used in a server.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (!hasAdminPermission(interaction.member)) {
+        await interaction.reply({
+          components: buildTextComponents('You do not have permission to use this command.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const subcommand = interaction.options.getSubcommand(true);
+      if (subcommand === 'read') {
+        const result = await readWindowsToastNotifications();
+
+        if (!result.ok) {
+          let message = result.message || 'Failed to read notifications.';
+          if (result.errorCode === 'UNSUPPORTED_PLATFORM') {
+            message = 'Unsupported platform: this command works only when the bot is running on Windows.';
+          } else if (result.errorCode === 'ACCESS_DENIED') {
+            message = `Access denied: ${result.message}`;
+          } else if (result.errorCode === 'API_UNAVAILABLE') {
+            message = 'Windows notification API is unavailable in this environment.';
+          }
+
+          await interaction.reply({
+            components: buildTextComponents(message),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (!result.notifications.length) {
+          await interaction.reply({
+            components: buildTextComponents('No notifications were found in Windows Action Center.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.reply({
+          components: buildTextComponents(buildNotificationReadResponse(result.notifications)),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
       }
       return;
     }
