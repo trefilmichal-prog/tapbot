@@ -620,6 +620,9 @@ function buildTicketSummary(answers, decision) {
     : null;
   const disableButtons = Boolean(decision?.status);
   const disableRemove = decision?.status === CLAN_TICKET_DECISION_REMOVE;
+  const disableReassign = Boolean(
+    decision?.status && decision.status !== CLAN_TICKET_DECISION_ACCEPT
+  );
   const controlsExpanded = Boolean(decision?.controlsExpanded);
   const actionRows = controlsExpanded
     ? [
@@ -656,7 +659,7 @@ function buildTicketSummary(answers, decision) {
               custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REASSIGN}`,
               label: 'Move/assign review role',
               style: ButtonStyle.Primary,
-              disabled: disableButtons
+              disabled: disableReassign
             },
             {
               type: ComponentType.Button,
@@ -1519,9 +1522,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        if (ticketEntry.status) {
+        if (ticketEntry.status && ticketEntry.status !== CLAN_TICKET_DECISION_ACCEPT) {
           await interaction.reply({
-            components: buildTextComponents('This ticket has already been decided.'),
+            components: buildTextComponents('This ticket has already been decided and can no longer be moved.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1947,9 +1950,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (action === CLAN_TICKET_DECISION_REASSIGN) {
-        if (ticketEntry.status) {
+        if (ticketEntry.status && ticketEntry.status !== CLAN_TICKET_DECISION_ACCEPT) {
           await interaction.reply({
-            components: buildTextComponents('This ticket has already been decided.'),
+            components: buildTextComponents('This ticket has already been decided and can no longer be moved.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
