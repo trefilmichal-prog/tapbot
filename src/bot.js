@@ -68,8 +68,9 @@ const CLAN_TICKET_REBIRTHS_INPUT_ID = 'clan_ticket_rebirths_input';
 const CLAN_TICKET_GAMEPASSES_INPUT_ID = 'clan_ticket_gamepasses_input';
 const CLAN_TICKET_HOURS_INPUT_ID = 'clan_ticket_hours_input';
 const CLAN_TICKET_DECISION_PREFIX = 'clan_ticket_decision:';
+const CLAN_TICKET_PRIVATE_DECISION_PREFIX = 'clan_ticket_private_decision:';
+const CLAN_TICKET_PUBLIC_MENU_ID = 'clan_ticket_public_menu_open';
 const CLAN_TICKET_REASSIGN_PREFIX = 'clan_ticket_reassign:';
-const CLAN_TICKET_DECISION_TOGGLE = 'toggle';
 const CLAN_TICKET_DECISION_ACCEPT = 'accept';
 const CLAN_TICKET_DECISION_REJECT = 'reject';
 const CLAN_TICKET_DECISION_REMOVE = 'remove';
@@ -712,67 +713,20 @@ function buildTicketSummary(answers, decision) {
   const disableReassign = Boolean(
     decision?.status && decision.status !== CLAN_TICKET_DECISION_ACCEPT
   );
-  const controlsExpanded = Boolean(decision?.controlsExpanded);
-  const actionRows = controlsExpanded
-    ? [
+  const actionRows = [
+    {
+      type: ComponentType.ActionRow,
+      components: [
         {
-          type: ComponentType.ActionRow,
-          components: [
-            {
-              type: ComponentType.Button,
-              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_TOGGLE}`,
-              label: '⚙️',
-              style: ButtonStyle.Secondary
-            }
-          ]
-        },
-        {
-          type: ComponentType.ActionRow,
-          components: [
-            {
-              type: ComponentType.Button,
-              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_ACCEPT}`,
-              label: 'Accept',
-              style: ButtonStyle.Success,
-              disabled: disableButtons
-            },
-            {
-              type: ComponentType.Button,
-              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REJECT}`,
-              label: 'Reject',
-              style: ButtonStyle.Danger,
-              disabled: disableButtons
-            },
-            {
-              type: ComponentType.Button,
-              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REASSIGN}`,
-              label: 'Move/assign review role',
-              style: ButtonStyle.Primary,
-              disabled: disableReassign
-            },
-            {
-              type: ComponentType.Button,
-              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_REMOVE}`,
-              label: 'Remove ticket',
-              style: ButtonStyle.Secondary,
-              disabled: disableRemove
-            }
-          ]
+          type: ComponentType.Button,
+          custom_id: CLAN_TICKET_PUBLIC_MENU_ID,
+          label: '⚙️',
+          style: ButtonStyle.Secondary,
+          disabled: disableButtons && disableReassign && disableRemove
         }
       ]
-    : [
-        {
-          type: ComponentType.ActionRow,
-          components: [
-            {
-              type: ComponentType.Button,
-              custom_id: `${CLAN_TICKET_DECISION_PREFIX}${CLAN_TICKET_DECISION_TOGGLE}`,
-              label: '⚙️',
-              style: ButtonStyle.Secondary
-            }
-          ]
-        }
-      ];
+    }
+  ];
   return [
     {
       type: ComponentType.Container,
@@ -814,6 +768,66 @@ function buildTicketSummary(answers, decision) {
             ]
           : []),
         ...actionRows
+      ]
+    }
+  ];
+}
+
+function buildPrivateTicketSettingsMenu(activeReviewRoleId, decision) {
+  const disableButtons = Boolean(decision?.status);
+  const disableRemove = decision?.status === CLAN_TICKET_DECISION_REMOVE;
+  const disableReassign = Boolean(
+    decision?.status && decision.status !== CLAN_TICKET_DECISION_ACCEPT
+  );
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: [
+            `Ticket settings menu opened privately for <@${decision?.openedBy ?? decision?.decidedBy ?? '0'}>.`,
+            `Active review role: ${activeReviewRoleId ? `<@&${activeReviewRoleId}>` : 'Not set'}.`
+          ].join('\n')
+        },
+        {
+          type: ComponentType.Separator,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small
+        },
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_PRIVATE_DECISION_PREFIX}${CLAN_TICKET_DECISION_ACCEPT}`,
+              label: 'Accept',
+              style: ButtonStyle.Success,
+              disabled: disableButtons
+            },
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_PRIVATE_DECISION_PREFIX}${CLAN_TICKET_DECISION_REJECT}`,
+              label: 'Reject',
+              style: ButtonStyle.Danger,
+              disabled: disableButtons
+            },
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_PRIVATE_DECISION_PREFIX}${CLAN_TICKET_DECISION_REASSIGN}`,
+              label: 'Move/assign review role',
+              style: ButtonStyle.Primary,
+              disabled: disableReassign
+            },
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_TICKET_PRIVATE_DECISION_PREFIX}${CLAN_TICKET_DECISION_REMOVE}`,
+              label: 'Remove ticket',
+              style: ButtonStyle.Secondary,
+              disabled: disableRemove
+            }
+          ]
+        }
       ]
     }
   ];
@@ -872,20 +886,6 @@ function buildReviewRoleSelectComponents(channelId, selectedClanName, options) {
   ];
 }
 
-
-function buildTicketSettingsOpenedComponents(activeReviewRoleId) {
-  return [
-    {
-      type: ComponentType.Container,
-      components: [
-        {
-          type: ComponentType.TextDisplay,
-          content: `Ticket settings menu was opened. Active review role: ${activeReviewRoleId ? `<@&${activeReviewRoleId}>` : 'Not set'}.`
-        }
-      ]
-    }
-  ];
-}
 
 function buildRequiredScreenshotsNotice(reviewRoleId) {
   return [
@@ -1537,7 +1537,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             status: null,
             decidedBy: null,
             updatedAt: null,
-            controlsExpanded: false,
             activeReviewRoleId: clan.reviewRoleId,
             lastMoveAt: null,
             createdAt: new Date().toISOString()
@@ -2057,7 +2056,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (!interaction.customId.startsWith(CLAN_TICKET_DECISION_PREFIX)) return;
+      const isPublicMenuOpenAction = interaction.customId === CLAN_TICKET_PUBLIC_MENU_ID;
+      const isPublicTicketDecisionAction = interaction.customId.startsWith(CLAN_TICKET_DECISION_PREFIX);
+      const isPrivateTicketDecisionAction = interaction.customId.startsWith(CLAN_TICKET_PRIVATE_DECISION_PREFIX);
+      if (!isPublicMenuOpenAction && !isPublicTicketDecisionAction && !isPrivateTicketDecisionAction) return;
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This action can only be used in a server.'),
@@ -2067,14 +2069,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const action = interaction.customId.slice(CLAN_TICKET_DECISION_PREFIX.length);
+      const action = isPrivateTicketDecisionAction
+        ? interaction.customId.slice(CLAN_TICKET_PRIVATE_DECISION_PREFIX.length)
+        : isPublicTicketDecisionAction
+          ? interaction.customId.slice(CLAN_TICKET_DECISION_PREFIX.length)
+          : null;
       if ([
-        CLAN_TICKET_DECISION_TOGGLE,
         CLAN_TICKET_DECISION_ACCEPT,
         CLAN_TICKET_DECISION_REJECT,
         CLAN_TICKET_DECISION_REASSIGN,
         CLAN_TICKET_DECISION_REMOVE
-      ].includes(action) === false) {
+      ].includes(action) === false && !isPublicMenuOpenAction) {
         await interaction.reply({
           components: buildTextComponents('Invalid ticket action.'),
           flags: MessageFlags.IsComponentsV2,
@@ -2118,32 +2123,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (action === CLAN_TICKET_DECISION_TOGGLE) {
-        await updateClanState(interaction.guildId, (nextState) => {
-          ensureGuildClanState(nextState);
-          const entry = nextState.clan_ticket_decisions[interaction.channelId];
-          if (!entry) return;
-          entry.controlsExpanded = !entry.controlsExpanded;
-        });
-
-        const refreshedState = getClanState(interaction.guildId);
-        const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.channelId];
-        if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
-          try {
-            const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
-            await message.edit({
-              components: buildTicketSummary(refreshedEntry.answers ?? {}, refreshedEntry),
-              flags: MessageFlags.IsComponentsV2
-            });
-          } catch (error) {
-            console.warn('Failed to update ticket summary message:', error);
-          }
-        }
-
+      if (isPublicMenuOpenAction) {
         await interaction.reply({
-          components: buildTextComponents(
-            refreshedEntry?.controlsExpanded ? 'Ticket controls expanded.' : 'Ticket controls collapsed.'
-          ),
+          components: buildPrivateTicketSettingsMenu(effectiveReviewRoleId, {
+            ...ticketEntry,
+            openedBy: interaction.user.id
+          }),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2656,30 +2641,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      await updateClanState(interaction.guildId, (nextState) => {
-        ensureGuildClanState(nextState);
-        const entry = nextState.clan_ticket_decisions[interaction.channelId];
-        if (!entry) return;
-        entry.controlsExpanded = true;
-        entry.updatedAt = new Date().toISOString();
-      });
-
-      const refreshedState = getClanState(interaction.guildId);
-      const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.channelId];
-      if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
-        try {
-          const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
-          await message.edit({
-            components: buildTicketSummary(refreshedEntry.answers ?? {}, refreshedEntry),
-            flags: MessageFlags.IsComponentsV2
-          });
-        } catch (error) {
-          console.warn('Failed to update ticket summary message:', error);
-        }
-      }
-
       await interaction.reply({
-        components: buildTicketSettingsOpenedComponents(refreshedEntry?.activeReviewRoleId ?? clan.reviewRoleId),
+        components: buildPrivateTicketSettingsMenu(effectiveReviewRoleId, {
+          ...ticketEntry,
+          openedBy: interaction.user.id
+        }),
         flags: MessageFlags.IsComponentsV2,
         ephemeral: true
       });
