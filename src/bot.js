@@ -1570,7 +1570,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isModalSubmit()) {
       if (interaction.customId.startsWith(CLAN_TICKET_MODAL_PREFIX)) {
-        if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        if (!interaction.inGuild()) {
           await interaction.reply({
             components: buildTextComponents('This dialog can only be used in a server.'),
             flags: MessageFlags.IsComponentsV2,
@@ -1633,6 +1633,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const robloxNick = interaction.fields
           .getTextInputValue(CLAN_TICKET_ROBLOX_NICK_INPUT_ID)
           .trim();
+        const robloxNickForNickname = robloxNick ? robloxNick.slice(0, 32) : '';
+
+        let member = interaction.member instanceof GuildMember ? interaction.member : null;
+        if (!member) {
+          try {
+            member = await interaction.guild.members.fetch(interaction.user.id);
+          } catch (error) {
+            console.warn(`Failed to fetch member ${interaction.user.id} for clan ticket:`, error);
+          }
+        }
+
+        if (!member) {
+          await interaction.reply({
+            components: buildTextComponents('Unable to resolve your server member profile.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        let nicknameUpdateFailed = false;
+        if (robloxNickForNickname) {
+          try {
+            await member.setNickname(robloxNickForNickname, 'Roblox nick from clan ticket');
+          } catch (error) {
+            nicknameUpdateFailed = true;
+            console.warn(
+              `Failed to update nickname for ${interaction.user.id} in guild ${interaction.guildId}:`,
+              error
+            );
+          }
+        }
 
         const adminRoles = interaction.guild.roles.cache
           .filter((role) => role.permissions.has(PermissionsBitField.Flags.Administrator))
@@ -1647,8 +1679,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         let ticketChannel;
         try {
-          const fallbackPlayerName = interaction.member.displayName || interaction.user.username;
-          const ticketPlayerName = robloxNick || fallbackPlayerName;
+          const fallbackPlayerName = member.displayName || interaction.user.username;
+          const ticketPlayerName = robloxNickForNickname || fallbackPlayerName;
           const rawChannelName = `${clanName} - ${ticketPlayerName}`;
           const channelBaseName = sanitizeTicketChannelBase(rawChannelName) || interaction.user.id;
           const channelName = formatTicketChannelName(TICKET_STATUS_EMOJI.awaiting, channelBaseName);
@@ -1717,7 +1749,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             applicantId: interaction.user.id,
             messageId: summaryMessage.id,
             answers: {
-              robloxNick,
+              robloxNick: robloxNickForNickname,
               rebirths,
               gamepasses,
               hours
@@ -1731,8 +1763,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
           };
         });
 
+        const ticketCreatedMessage = nicknameUpdateFailed
+          ? `Ticket was created: <#${ticketChannel.id}>\n⚠️ Ticket was created, but your nickname could not be updated.`
+          : robloxNickForNickname
+            ? `Ticket was created: <#${ticketChannel.id}>\n✅ Your nickname was updated to **${robloxNickForNickname}**.`
+            : `Ticket was created: <#${ticketChannel.id}>`;
+
         await interaction.reply({
-          components: buildTextComponents(`Ticket was created: <#${ticketChannel.id}>`),
+          components: buildTextComponents(ticketCreatedMessage),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
