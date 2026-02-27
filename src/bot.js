@@ -230,6 +230,39 @@ function formatCooldownRemaining(remainingMs) {
   return `${minutes} min ${seconds} s`;
 }
 
+async function ensureTicketApplicantAccess(channel, applicantId) {
+  if (!channel?.permissionOverwrites || typeof channel.permissionOverwrites.edit !== 'function') {
+    console.warn('Unable to ensure applicant access: channel does not support permission overwrites.');
+    return {
+      ok: false,
+      warning: 'Applicant channel access could not be verified for this channel type.'
+    };
+  }
+
+  if (!applicantId) {
+    console.warn('Unable to ensure applicant access: applicantId is missing.');
+    return {
+      ok: false,
+      warning: 'Applicant ID is missing, so applicant access could not be restored automatically.'
+    };
+  }
+
+  try {
+    await channel.permissionOverwrites.edit(applicantId, {
+      ViewChannel: true,
+      SendMessages: true,
+      ReadMessageHistory: true
+    });
+    return { ok: true, warning: null };
+  } catch (error) {
+    console.warn(`Failed to ensure applicant access for ${applicantId}:`, error);
+    return {
+      ok: false,
+      warning: 'Applicant access overwrite could not be applied automatically.'
+    };
+  }
+}
+
 function buildMessageLogComponents({ title, messageId, channelId, author, createdTimestamp, content }) {
   const authorLabel = author
     ? `<@${author.id}> (${author.tag ?? author.username ?? 'Unknown'})`
@@ -1715,6 +1748,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
+        let applicantAccessWarning = null;
         if (interaction.channel?.isTextBased()) {
           try {
             if (effectiveReviewRoleId && effectiveReviewRoleId !== nextReviewRoleId) {
@@ -1736,6 +1770,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 await interaction.channel.setParent(targetCategoryIdForMove, {
                   lockPermissions: true
                 });
+                const applicantAccessResult = await ensureTicketApplicantAccess(
+                  interaction.channel,
+                  ticketEntry.applicantId
+                );
+                if (!applicantAccessResult.ok) {
+                  applicantAccessWarning = applicantAccessResult.warning;
+                }
               } catch (error) {
                 console.warn('Failed to move ticket channel with permission sync for clan reassignment:', error);
                 await interaction.reply({
@@ -1816,9 +1857,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
             ? ` Accepted ticket was moved to <#${targetCategoryIdForMove}>.`
             : ' Accepted ticket was not moved because the selected clan has no accept category set.'
           : '';
+        const applicantAccessSuffix = applicantAccessWarning
+          ? ` Move completed with warning: ${applicantAccessWarning}`
+          : '';
 
         await interaction.reply({
-          components: buildTextComponents(`Ticket clan updated to **${selectedClanName}**. Channel renamed to **${nextChannelName}**. Review role changed from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to ${formatEffectiveReviewRoleText(nextReviewRoleId)}.${moveSuffix}${applicantRoleChangeSuffix}`),
+          components: buildTextComponents(`Ticket clan updated to **${selectedClanName}**. Channel renamed to **${nextChannelName}**. Review role changed from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to ${formatEffectiveReviewRoleText(nextReviewRoleId)}.${moveSuffix}${applicantRoleChangeSuffix}${applicantAccessSuffix}`),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -2224,11 +2268,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       let acceptMoveSyncWarning = null;
+      let acceptApplicantAccessWarning = null;
       if (action === CLAN_TICKET_DECISION_ACCEPT && clan.acceptCategoryId) {
         try {
           await interaction.channel?.setParent(clan.acceptCategoryId, {
             lockPermissions: true
           });
+          const applicantAccessResult = await ensureTicketApplicantAccess(
+            interaction.channel,
+            ticketEntry.applicantId
+          );
+          if (!applicantAccessResult.ok) {
+            acceptApplicantAccessWarning = applicantAccessResult.warning;
+          }
         } catch (error) {
           console.warn('Failed to move accepted ticket channel:', error);
           acceptMoveSyncWarning = 'Ticket was accepted, but permission sync with the accept category failed. Please check bot permissions (Manage Channels / Manage Roles).';
@@ -2269,7 +2321,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({
         components: buildTextComponents(
           action === CLAN_TICKET_DECISION_ACCEPT
-            ? `<@${refreshedEntry.applicantId}> Ticket was accepted.${acceptMoveSyncWarning ? `\n${acceptMoveSyncWarning}` : ''}`
+            ? `<@${refreshedEntry.applicantId}> Ticket was accepted.${acceptMoveSyncWarning ? `\n${acceptMoveSyncWarning}` : ''}${acceptApplicantAccessWarning ? `\nTicket move completed with warning: ${acceptApplicantAccessWarning}` : ''}`
             : `<@${refreshedEntry.applicantId}> Ticket was rejected.`
         ),
         flags: MessageFlags.IsComponentsV2,
