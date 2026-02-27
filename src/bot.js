@@ -1564,7 +1564,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.channel?.isTextBased()) {
           try {
             if (effectiveReviewRoleId && effectiveReviewRoleId !== selectedRoleId) {
-              await interaction.channel.permissionOverwrites.delete(effectiveReviewRoleId);
+              await interaction.channel.permissionOverwrites.edit(effectiveReviewRoleId, {
+                ViewChannel: false,
+                SendMessages: false,
+                ReadMessageHistory: false
+              });
             }
             await interaction.channel.permissionOverwrites.edit(selectedRoleId, {
               ViewChannel: true,
@@ -1582,6 +1586,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const entry = nextState.clan_ticket_decisions[interaction.channelId];
           if (!entry) return;
           entry.activeReviewRoleId = selectedRoleId;
+          entry.reassignedBy = interaction.user.id;
           entry.updatedAt = updatedAt;
         });
 

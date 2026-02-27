@@ -368,15 +368,39 @@ function loadClanState(guildId) {
 
 function migrateClanState(state) {
   const clans = state.clan_clans ?? {};
-  if (!clans || typeof clans !== 'object') return;
-  for (const clanKey of Object.keys(clans)) {
-    const clan = clans[clanKey];
-    if (!clan || typeof clan !== 'object') continue;
-    if (clan.ticketCategoryId == null && clan.ticketRoomId != null) {
-      clan.ticketCategoryId = clan.ticketRoomId;
+  if (clans && typeof clans === 'object') {
+    for (const clanKey of Object.keys(clans)) {
+      const clan = clans[clanKey];
+      if (!clan || typeof clan !== 'object') continue;
+      if (clan.ticketCategoryId == null && clan.ticketRoomId != null) {
+        clan.ticketCategoryId = clan.ticketRoomId;
+      }
+      if ('ticketRoomId' in clan) {
+        delete clan.ticketRoomId;
+      }
     }
-    if ('ticketRoomId' in clan) {
-      delete clan.ticketRoomId;
+  }
+
+  const ticketDecisions = state.clan_ticket_decisions;
+  if (!ticketDecisions || typeof ticketDecisions !== 'object' || Array.isArray(ticketDecisions)) {
+    state.clan_ticket_decisions = {};
+    return;
+  }
+
+  for (const [channelId, decision] of Object.entries(ticketDecisions)) {
+    if (!decision || typeof decision !== 'object' || Array.isArray(decision)) {
+      delete ticketDecisions[channelId];
+      continue;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(decision, 'activeReviewRoleId')) {
+      decision.activeReviewRoleId = null;
+    } else if (decision.activeReviewRoleId != null) {
+      decision.activeReviewRoleId = String(decision.activeReviewRoleId);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(decision, 'reassignedBy') && decision.reassignedBy != null) {
+      decision.reassignedBy = String(decision.reassignedBy);
     }
   }
 }
