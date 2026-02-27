@@ -15,16 +15,16 @@ set "PM2_ARGS=--name %PM2_NAME% --time --output \"%LOG_DIR%\\pm2-out.log\" --err
 
 pm2 describe %PM2_NAME% 1>>"%DEBUG_LOG%" 2>>&1
 if errorlevel 1 (
-  echo PM2 process %PM2_NAME% neni registrovan, spoustim novy. 1>>"%DEBUG_LOG%" 2>>&1
+  echo PM2 process %PM2_NAME% is not registered. Starting a new one. 1>>"%DEBUG_LOG%" 2>>&1
   pm2 start %PM2_SCRIPT% %PM2_ARGS% 1>>"%DEBUG_LOG%" 2>>&1
   if errorlevel 1 (
-    echo Spusteni pm2 procesu selhalo. 1>>"%DEBUG_LOG%" 2>>&1
+    echo Failed to start the PM2 process. 1>>"%DEBUG_LOG%" 2>>&1
     if "%KEEP_OPEN%"=="1" pause
     exit /b 1
   )
   pm2 save 1>>"%DEBUG_LOG%" 2>>&1
   if errorlevel 1 (
-    echo Ulozeni pm2 procesu selhalo. 1>>"%DEBUG_LOG%" 2>>&1
+    echo Failed to save the PM2 process list. 1>>"%DEBUG_LOG%" 2>>&1
     if "%KEEP_OPEN%"=="1" pause
     exit /b 1
   )
@@ -33,21 +33,21 @@ if errorlevel 1 (
 
 pm2 stop %PM2_NAME% 1>>"%DEBUG_LOG%" 2>>&1
 if errorlevel 1 (
-  echo Zastaveni pm2 procesu selhalo. 1>>"%DEBUG_LOG%" 2>>&1
+  echo Failed to stop the PM2 process. 1>>"%DEBUG_LOG%" 2>>&1
   if "%KEEP_OPEN%"=="1" pause
   exit /b 1
 )
 
 pm2 start %PM2_NAME% 1>>"%DEBUG_LOG%" 2>>&1
 if errorlevel 1 (
-  echo Start pm2 procesu selhal. 1>>"%DEBUG_LOG%" 2>>&1
+  echo Failed to start the PM2 process. 1>>"%DEBUG_LOG%" 2>>&1
   if "%KEEP_OPEN%"=="1" pause
   exit /b 1
 )
 
 pm2 save 1>>"%DEBUG_LOG%" 2>>&1
 if errorlevel 1 (
-  echo Ulozeni pm2 procesu selhalo. 1>>"%DEBUG_LOG%" 2>>&1
+  echo Failed to save the PM2 process list. 1>>"%DEBUG_LOG%" 2>>&1
   if "%KEEP_OPEN%"=="1" pause
   exit /b 1
 )

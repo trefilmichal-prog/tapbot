@@ -1643,7 +1643,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (elapsedSinceLastMoveMs < TICKET_MOVE_COOLDOWN_MS) {
             const remaining = formatCooldownRemaining(TICKET_MOVE_COOLDOWN_MS - elapsedSinceLastMoveMs);
             await interaction.reply({
-              components: buildTextComponents(`Move je v cooldownu, zbývá ${remaining}.`),
+              components: buildTextComponents(`Move is on cooldown. Time remaining: ${remaining}.`),
               flags: MessageFlags.IsComponentsV2,
               ephemeral: true
             });
