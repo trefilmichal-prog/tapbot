@@ -28,7 +28,9 @@ import {
   getRpsState,
   getPermissionRoleId,
   getWelcomeConfig,
+  getNotificationForwardConfig,
   setLogConfig,
+  setNotificationForwardConfig,
   setPingRolePanelConfig,
   setPermissionRoleId,
   setWelcomeConfig,
@@ -97,6 +99,7 @@ client.on(Events.ClientReady, (readyClient) => {
     try {
       await refreshClanPanelsOnStartup(readyClient);
       await refreshPingRolePanelsOnStartup(readyClient);
+      await startNotificationForwardPolling(readyClient);
       const result = await syncApplicationCommands({
         token: cfg.token,
         clientId: cfg.clientId,
@@ -224,6 +227,116 @@ function buildNotificationReadResponse(notifications) {
   }
 
   return [...header, ...lines].join('\n');
+}
+
+
+function buildForwardNotificationMessage(item) {
+  return [
+    '📣 **New Windows Notification**',
+    '',
+    `**Title:** ${item.title ?? '(no title)'}`,
+    `**App:** ${item.app ?? 'Unknown app'}`,
+    `**Time:** ${formatNotificationTimestamp(item.timestamp)}`,
+    `**Body:** ${item.body ?? '*(empty)*'}`
+  ].join('\n');
+}
+
+function buildNotificationSignature(item) {
+  return [
+    item?.timestamp ?? '',
+    item?.app ?? '',
+    item?.title ?? '',
+    item?.body ?? ''
+  ].join('|');
+}
+
+const NOTIFICATION_FORWARD_POLL_INTERVAL_MS = 2000;
+const NOTIFICATION_SIGNATURE_HISTORY_LIMIT = 500;
+let notificationForwardPollTimer = null;
+const notificationForwardSeenByGuild = new Map();
+
+function pruneNotificationSignatureSet(signatureSet) {
+  while (signatureSet.size > NOTIFICATION_SIGNATURE_HISTORY_LIMIT) {
+    const firstKey = signatureSet.values().next().value;
+    if (!firstKey) break;
+    signatureSet.delete(firstKey);
+  }
+}
+
+async function initializeNotificationForwardCache(readyClient) {
+  const result = await readWindowsToastNotifications();
+  if (!result.ok || !result.notifications.length) {
+    return;
+  }
+
+  for (const [guildId] of readyClient.guilds.cache) {
+    const config = getNotificationForwardConfig(guildId);
+    if (!config.enabled || !config.channelId) continue;
+    const signatureSet = new Set(result.notifications.map(buildNotificationSignature));
+    pruneNotificationSignatureSet(signatureSet);
+    notificationForwardSeenByGuild.set(guildId, signatureSet);
+  }
+}
+
+async function runNotificationForwardTick(readyClient) {
+  const result = await readWindowsToastNotifications();
+  if (!result.ok || !result.notifications.length) {
+    return;
+  }
+
+  const sortedNotifications = result.notifications
+    .slice()
+    .sort((a, b) => (new Date(a.timestamp ?? 0).getTime() || 0) - (new Date(b.timestamp ?? 0).getTime() || 0));
+
+  for (const [guildId, guild] of readyClient.guilds.cache) {
+    const config = getNotificationForwardConfig(guildId);
+    if (!config.enabled || !config.channelId) continue;
+
+    const signatureSet = notificationForwardSeenByGuild.get(guildId) ?? new Set();
+    notificationForwardSeenByGuild.set(guildId, signatureSet);
+
+    let channel;
+    try {
+      channel = await guild.channels.fetch(config.channelId);
+    } catch (error) {
+      console.warn(`Failed to fetch notification forward channel ${config.channelId}:`, error);
+      continue;
+    }
+
+    if (!channel || !channel.isTextBased()) {
+      continue;
+    }
+
+    for (const notification of sortedNotifications) {
+      const signature = buildNotificationSignature(notification);
+      if (signatureSet.has(signature)) {
+        continue;
+      }
+      signatureSet.add(signature);
+      pruneNotificationSignatureSet(signatureSet);
+      try {
+        await channel.send({
+          components: buildTextComponents(buildForwardNotificationMessage(notification)),
+          flags: MessageFlags.IsComponentsV2
+        });
+      } catch (error) {
+        console.warn(`Failed to forward notification to guild ${guildId}:`, error);
+      }
+    }
+  }
+}
+
+async function startNotificationForwardPolling(readyClient) {
+  if (notificationForwardPollTimer) {
+    clearInterval(notificationForwardPollTimer);
+  }
+
+  await initializeNotificationForwardCache(readyClient);
+  notificationForwardPollTimer = setInterval(() => {
+    runNotificationForwardTick(readyClient).catch((error) => {
+      console.warn('Notification forward poll failed:', error);
+    });
+  }, NOTIFICATION_FORWARD_POLL_INTERVAL_MS);
 }
 
 
@@ -3086,6 +3199,59 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const subcommand = interaction.options.getSubcommand(true);
+      if (subcommand === 'start') {
+        const channel = interaction.options.getChannel('channel', true);
+        if (!channel || channel.type !== ChannelType.GuildText) {
+          await interaction.reply({
+            components: buildTextComponents('Please select a text channel.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        setNotificationForwardConfig(interaction.guildId, {
+          enabled: true,
+          channelId: channel.id
+        });
+        notificationForwardSeenByGuild.delete(interaction.guildId);
+
+        await interaction.reply({
+          components: buildTextComponents(`Automatic notification forwarding was enabled for <#${channel.id}>.`),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (subcommand === 'stop') {
+        setNotificationForwardConfig(interaction.guildId, {
+          enabled: false,
+          channelId: null
+        });
+        notificationForwardSeenByGuild.delete(interaction.guildId);
+
+        await interaction.reply({
+          components: buildTextComponents('Automatic notification forwarding was disabled.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (subcommand === 'status') {
+        const config = getNotificationForwardConfig(interaction.guildId);
+        const statusMessage = config.enabled && config.channelId
+          ? `Forwarding is enabled to <#${config.channelId}>.`
+          : 'Forwarding is currently disabled.';
+        await interaction.reply({
+          components: buildTextComponents(statusMessage),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
       if (subcommand === 'read') {
         const result = await readWindowsToastNotifications();
 
