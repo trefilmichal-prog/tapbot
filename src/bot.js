@@ -2280,10 +2280,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
           );
           if (!applicantAccessResult.ok) {
             acceptApplicantAccessWarning = applicantAccessResult.warning;
+            console.warn(`Accepted ticket applicant access warning (${interaction.channelId}): ${acceptApplicantAccessWarning}`);
           }
         } catch (error) {
           console.warn('Failed to move accepted ticket channel:', error);
           acceptMoveSyncWarning = 'Ticket was accepted, but permission sync with the accept category failed. Please check bot permissions (Manage Channels / Manage Roles).';
+          console.warn(`Accepted ticket move warning (${interaction.channelId}): ${acceptMoveSyncWarning}`);
         }
       }
 
@@ -2321,14 +2323,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (action === CLAN_TICKET_DECISION_ACCEPT && refreshedEntry?.applicantId && interaction.channel?.isTextBased()) {
         await interaction.channel.send({
           components: buildTextComponents(
-            `<@${refreshedEntry.applicantId}> Ticket was accepted.${acceptMoveSyncWarning ? `\n${acceptMoveSyncWarning}` : ''}${acceptApplicantAccessWarning ? `\nTicket move completed with warning: ${acceptApplicantAccessWarning}` : ''}`
+            `<@${refreshedEntry.applicantId}> Your ticket was accepted.`
           ),
           flags: MessageFlags.IsComponentsV2
         });
       }
 
+      const reviewerWarnings = [];
+      if (acceptMoveSyncWarning) {
+        reviewerWarnings.push(`⚠️ ${acceptMoveSyncWarning}`);
+      }
+      if (acceptApplicantAccessWarning) {
+        reviewerWarnings.push(`⚠️ Applicant access warning: ${acceptApplicantAccessWarning}`);
+      }
+
       await interaction.reply({
-        components: buildTextComponents('Decision saved.'),
+        components: buildTextComponents(
+          reviewerWarnings.length
+            ? `Decision saved.\n\n${reviewerWarnings.join('\n')}`
+            : 'Decision saved.'
+        ),
         flags: MessageFlags.IsComponentsV2,
         ephemeral: true
       });
