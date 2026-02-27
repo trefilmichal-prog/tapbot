@@ -399,6 +399,19 @@ function migrateClanState(state) {
       decision.activeReviewRoleId = String(decision.activeReviewRoleId);
     }
 
+    if (!Object.prototype.hasOwnProperty.call(decision, 'lastMoveAt')) {
+      decision.lastMoveAt = null;
+    } else if (decision.lastMoveAt == null) {
+      decision.lastMoveAt = null;
+    } else {
+      const normalizedLastMoveAt = String(decision.lastMoveAt);
+      const hasIsoShape = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))$/.test(normalizedLastMoveAt);
+      const parsedTimestamp = new Date(normalizedLastMoveAt).getTime();
+      decision.lastMoveAt = hasIsoShape && Number.isFinite(parsedTimestamp)
+        ? normalizedLastMoveAt
+        : null;
+    }
+
     if (Object.prototype.hasOwnProperty.call(decision, 'reassignedBy') && decision.reassignedBy != null) {
       decision.reassignedBy = String(decision.reassignedBy);
     }

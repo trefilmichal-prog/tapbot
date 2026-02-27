@@ -1498,6 +1498,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             updatedAt: null,
             controlsExpanded: false,
             activeReviewRoleId: clan.reviewRoleId,
+            lastMoveAt: null,
             createdAt: new Date().toISOString()
           };
         });
