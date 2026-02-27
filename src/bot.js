@@ -70,6 +70,7 @@ const CLAN_TICKET_MODAL_PREFIX = 'clan_ticket_modal:';
 const CLAN_TICKET_REBIRTHS_INPUT_ID = 'clan_ticket_rebirths_input';
 const CLAN_TICKET_GAMEPASSES_INPUT_ID = 'clan_ticket_gamepasses_input';
 const CLAN_TICKET_HOURS_INPUT_ID = 'clan_ticket_hours_input';
+const CLAN_TICKET_ROBLOX_NICK_INPUT_ID = 'clan_ticket_roblox_nick_input';
 const CLAN_TICKET_DECISION_PREFIX = 'clan_ticket_decision:';
 const CLAN_TICKET_PRIVATE_DECISION_PREFIX = 'clan_ticket_private_decision:';
 const CLAN_TICKET_PUBLIC_MENU_ID = 'clan_ticket_public_menu_open';
@@ -908,6 +909,9 @@ function buildTicketSummary(answers, decision) {
             '✨ **CLAN APPLICATION** ✨',
             '_Please fill this out and send the required screenshots._',
             '',
+            '**What is your Roblox nickname?**',
+            `> ${answers.robloxNick ?? 'Not provided'}`,
+            '',
             `**How many rebirths do you have?**`,
             `> ${answers.rebirths}`,
             '',
@@ -1114,6 +1118,13 @@ function formatRouteList(routes) {
 }
 
 function buildTicketModal(clanName) {
+  const robloxNickInput = new TextInputBuilder()
+    .setCustomId(CLAN_TICKET_ROBLOX_NICK_INPUT_ID)
+    .setLabel('What is your Roblox nickname?')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(32);
+
   const rebirthsInput = new TextInputBuilder()
     .setCustomId(CLAN_TICKET_REBIRTHS_INPUT_ID)
     .setLabel('How many rebirths do you have?')
@@ -1136,6 +1147,7 @@ function buildTicketModal(clanName) {
     .setCustomId(`${CLAN_TICKET_MODAL_PREFIX}${encodeURIComponent(clanName)}`)
     .setTitle(`Join ${clanName}`)
     .addComponents(
+      new ActionRowBuilder().addComponents(robloxNickInput),
       new ActionRowBuilder().addComponents(rebirthsInput),
       new ActionRowBuilder().addComponents(gamepassesInput),
       new ActionRowBuilder().addComponents(hoursInput)
@@ -1618,6 +1630,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const rebirths = interaction.fields.getTextInputValue(CLAN_TICKET_REBIRTHS_INPUT_ID);
         const gamepasses = interaction.fields.getTextInputValue(CLAN_TICKET_GAMEPASSES_INPUT_ID);
         const hours = interaction.fields.getTextInputValue(CLAN_TICKET_HOURS_INPUT_ID);
+        const robloxNick = interaction.fields
+          .getTextInputValue(CLAN_TICKET_ROBLOX_NICK_INPUT_ID)
+          .trim();
 
         const adminRoles = interaction.guild.roles.cache
           .filter((role) => role.permissions.has(PermissionsBitField.Flags.Administrator))
@@ -1632,8 +1647,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         let ticketChannel;
         try {
-          const playerName = interaction.member.displayName || interaction.user.username;
-          const rawChannelName = `${clanName} - ${playerName}`;
+          const fallbackPlayerName = interaction.member.displayName || interaction.user.username;
+          const ticketPlayerName = robloxNick || fallbackPlayerName;
+          const rawChannelName = `${clanName} - ${ticketPlayerName}`;
           const channelBaseName = sanitizeTicketChannelBase(rawChannelName) || interaction.user.id;
           const channelName = formatTicketChannelName(TICKET_STATUS_EMOJI.awaiting, channelBaseName);
 
@@ -1701,6 +1717,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             applicantId: interaction.user.id,
             messageId: summaryMessage.id,
             answers: {
+              robloxNick,
               rebirths,
               gamepasses,
               hours
