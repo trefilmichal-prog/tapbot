@@ -1565,6 +1565,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const nextReviewRoleId = targetClan.reviewRoleId ?? null;
+        const shouldMoveAcceptedTicket = ticketEntry.status === CLAN_TICKET_DECISION_ACCEPT;
+        const targetCategoryIdForMove = shouldMoveAcceptedTicket
+          ? targetClan.acceptCategoryId ?? null
+          : null;
 
         if (interaction.channel?.isTextBased()) {
           try {
@@ -1580,6 +1584,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 ViewChannel: true,
                 SendMessages: true,
                 ReadMessageHistory: true
+              });
+            }
+            if (targetCategoryIdForMove) {
+              await interaction.channel.setParent(targetCategoryIdForMove, {
+                lockPermissions: false
               });
             }
           } catch (error) {
@@ -1612,8 +1621,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
         }
 
+        const moveSuffix = shouldMoveAcceptedTicket
+          ? targetCategoryIdForMove
+            ? ` Accepted ticket was moved to <#${targetCategoryIdForMove}>.`
+            : ' Accepted ticket was not moved because the selected clan has no accept category set.'
+          : '';
+
         await interaction.reply({
-          components: buildTextComponents(`Ticket clan updated to **${selectedClanName}**. Review role changed from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to ${formatEffectiveReviewRoleText(nextReviewRoleId)}.`),
+          components: buildTextComponents(`Ticket clan updated to **${selectedClanName}**. Review role changed from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to ${formatEffectiveReviewRoleText(nextReviewRoleId)}.${moveSuffix}`),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
