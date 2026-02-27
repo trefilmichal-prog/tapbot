@@ -1726,6 +1726,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const summaryMessage = await ticketChannel.send({
           components: buildTicketSummary(
             {
+              robloxNick,
               rebirths,
               gamepasses,
               hours
