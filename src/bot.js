@@ -1479,6 +1479,80 @@ function incrementOfficerAction(state, userId, actionKey) {
   stats.updatedAt = new Date().toISOString();
 }
 
+function isTicketOpenForReviewRoleSync(ticketEntry) {
+  const status = ticketEntry?.status ?? null;
+  return !status || status === 'awaiting' || status === CLAN_TICKET_DECISION_ACCEPT;
+}
+
+async function syncOpenTicketReviewRoleForClan(guild, guildId, clanName, oldRoleId, newRoleId) {
+  if (!guild || !guildId || !clanName) {
+    return {
+      syncedTickets: 0,
+      failedChannelUpdates: 0
+    };
+  }
+
+  const state = getClanState(guildId);
+  const ticketEntries = Object.entries(state.clan_ticket_decisions ?? {}).filter(([, entry]) => {
+    if (!entry || entry.clanName !== clanName) return false;
+    return isTicketOpenForReviewRoleSync(entry);
+  });
+
+  let failedChannelUpdates = 0;
+  for (const [channelId] of ticketEntries) {
+    let channel;
+    try {
+      channel = await guild.channels.fetch(channelId);
+    } catch (error) {
+      console.warn(`Failed to fetch ticket channel ${channelId} for review role sync:`, error);
+      failedChannelUpdates += 1;
+      continue;
+    }
+
+    if (!channel?.permissionOverwrites) {
+      failedChannelUpdates += 1;
+      continue;
+    }
+
+    try {
+      if (oldRoleId && oldRoleId !== newRoleId) {
+        await channel.permissionOverwrites.edit(oldRoleId, {
+          ViewChannel: false,
+          SendMessages: false,
+          ReadMessageHistory: false
+        });
+      }
+      if (newRoleId) {
+        await channel.permissionOverwrites.edit(newRoleId, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true
+        });
+      }
+    } catch (error) {
+      console.warn(`Failed to sync review role permissions in ticket channel ${channelId}:`, error);
+      failedChannelUpdates += 1;
+    }
+  }
+
+  if (ticketEntries.length) {
+    const openTicketIds = new Set(ticketEntries.map(([channelId]) => channelId));
+    await updateClanState(guildId, (nextState) => {
+      ensureGuildClanState(nextState);
+      for (const [channelId, entry] of Object.entries(nextState.clan_ticket_decisions ?? {})) {
+        if (!entry || !openTicketIds.has(channelId)) continue;
+        entry.activeReviewRoleId = newRoleId ?? null;
+        entry.updatedAt = new Date().toISOString();
+      }
+    });
+  }
+
+  return {
+    syncedTickets: ticketEntries.length,
+    failedChannelUpdates
+  };
+}
+
 async function getBotVersion() {
   const versionPath = path.resolve(process.cwd(), 'verze.txt');
   try {
@@ -3691,12 +3765,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const reviewRoleId = reviewRoleOption?.id ?? null;
           const acceptRoleId = acceptRoleOption?.id ?? null;
           let found = false;
+          let previousReviewRoleId = null;
+          let nextReviewRoleId = null;
 
           await updateClanState(guildId, (state) => {
             ensureGuildClanState(state);
             const entry = state.clan_clans;
             if (!entry[name]) return;
             found = true;
+            previousReviewRoleId = entry[name].reviewRoleId ?? null;
+            nextReviewRoleId = reviewRoleOption ? reviewRoleId : entry[name].reviewRoleId ?? null;
             entry[name] = {
               ...entry[name],
               tag: tag ?? entry[name].tag ?? null,
@@ -3704,7 +3782,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               ticketCategoryId: ticketRoomOption
                 ? ticketCategoryId
                 : entry[name].ticketCategoryId ?? null,
-              reviewRoleId: reviewRoleOption ? reviewRoleId : entry[name].reviewRoleId ?? null,
+              reviewRoleId: nextReviewRoleId,
               acceptCategoryId: acceptCategoryOption
                 ? acceptCategoryId
                 : entry[name].acceptCategoryId ?? null,
@@ -3714,13 +3792,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
             };
           });
 
+          let syncResult = null;
+          if (found && previousReviewRoleId !== nextReviewRoleId) {
+            syncResult = await syncOpenTicketReviewRoleForClan(
+              interaction.guild,
+              guildId,
+              name,
+              previousReviewRoleId,
+              nextReviewRoleId
+            );
+            console.log(
+              `Clan ${name} review role synced for ${syncResult.syncedTickets} open ticket(s). Failed channel updates: ${syncResult.failedChannelUpdates}.`
+            );
+          }
+
           if (found) {
             await refreshClanPanelForGuild(interaction.guild, guildId);
           }
 
+          const syncSummary = syncResult
+            ? ` Review-role sync: ${syncResult.syncedTickets} ticket(s) updated, ${syncResult.failedChannelUpdates} channel update(s) failed.`
+            : '';
+
           await interaction.reply({
             components: buildTextComponents(
-              found ? `Clan "${name}" was updated.` : `Clan "${name}" was not found.`
+              found
+                ? `Clan "${name}" was updated.${syncSummary}`
+                : `Clan "${name}" was not found.`
             ),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
