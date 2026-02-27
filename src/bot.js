@@ -1699,6 +1699,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const targetCategoryIdForMove = shouldMoveAcceptedTicket
           ? targetClan.acceptCategoryId ?? null
           : null;
+        const previousAcceptRoleId = clan.acceptRoleId ?? null;
+        const nextAcceptRoleId = targetClan.acceptRoleId ?? null;
         const nextChannelName = buildReassignedTicketChannelName({
           currentName: interaction.channel?.name ?? '',
           currentClanName: ticketEntry.clanName,
@@ -1783,6 +1785,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
         }
 
+        let applicantRoleChangeSuffix = '';
+        if (shouldMoveAcceptedTicket && refreshedEntry?.applicantId) {
+          try {
+            const applicantMember = await interaction.guild.members.fetch(refreshedEntry.applicantId);
+            if (previousAcceptRoleId && previousAcceptRoleId !== nextAcceptRoleId) {
+              await applicantMember.roles.remove(previousAcceptRoleId).catch(() => null);
+            }
+            if (nextAcceptRoleId && !applicantMember.roles.cache.has(nextAcceptRoleId)) {
+              await applicantMember.roles.add(nextAcceptRoleId);
+            }
+            applicantRoleChangeSuffix = ` Applicant role updated from ${formatEffectiveReviewRoleText(previousAcceptRoleId)} to ${formatEffectiveReviewRoleText(nextAcceptRoleId)}.`;
+          } catch (error) {
+            console.warn('Failed to update applicant accepted role after ticket move:', error);
+            applicantRoleChangeSuffix = ' Applicant role could not be updated automatically.';
+          }
+        }
+
         const moveSuffix = shouldMoveAcceptedTicket
           ? targetCategoryIdForMove
             ? ` Accepted ticket was moved to <#${targetCategoryIdForMove}>.`
@@ -1790,7 +1809,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           : '';
 
         await interaction.reply({
-          components: buildTextComponents(`Ticket clan updated to **${selectedClanName}**. Channel renamed to **${nextChannelName}**. Review role changed from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to ${formatEffectiveReviewRoleText(nextReviewRoleId)}.${moveSuffix}`),
+          components: buildTextComponents(`Ticket clan updated to **${selectedClanName}**. Channel renamed to **${nextChannelName}**. Review role changed from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to ${formatEffectiveReviewRoleText(nextReviewRoleId)}.${moveSuffix}${applicantRoleChangeSuffix}`),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
