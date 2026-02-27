@@ -3583,6 +3583,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (!subcommandGroup && subcommand === 'edit') {
+        const directText = interaction.options.getString('text', false);
+        if (typeof directText === 'string') {
+          const description = directText.trim() ? directText.trim() : null;
+
+          await updateClanState(guildId, (state) => {
+            ensureGuildClanState(state);
+            state.clan_panel_configs = {
+              ...state.clan_panel_configs,
+              description,
+              updatedAt: new Date().toISOString()
+            };
+          });
+
+          await refreshClanPanelForGuild(interaction.guild, guildId);
+
+          await interaction.reply({
+            components: buildTextComponents('Clan panel description saved.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
         const state = getClanState(guildId);
         const panelDescription = state.clan_panel_configs?.description ?? '';
         const input = new TextInputBuilder()
