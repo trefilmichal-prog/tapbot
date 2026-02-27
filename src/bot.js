@@ -200,6 +200,21 @@ function formatMessageTimestamp(timestampMs) {
   return `<t:${seconds}:F>`;
 }
 
+
+function formatOfficerStatsDisplay(userId, stats) {
+  const safeStats = stats && typeof stats === 'object' ? stats : {};
+  return [
+    `Officer: <@${userId}>`,
+    '',
+    `✅ Accepted tickets: ${Number(safeStats.ticketsAccepted) || 0}`,
+    `❌ Rejected tickets: ${Number(safeStats.ticketsRejected) || 0}`,
+    `🗑️ Removed tickets: ${Number(safeStats.ticketsRemoved) || 0}`,
+    `🔁 Moved tickets: ${Number(safeStats.ticketsMoved) || 0}`,
+    `📊 Total actions: ${Number(safeStats.totalActions) || 0}`,
+    safeStats.updatedAt ? `🕒 Updated: <t:${Math.floor(new Date(safeStats.updatedAt).getTime() / 1000)}:R>` : '🕒 Updated: never'
+  ].join('\n');
+}
+
 function formatCooldownRemaining(remainingMs) {
   const safeRemainingMs = Math.max(0, Number(remainingMs) || 0);
   const totalSeconds = Math.ceil(safeRemainingMs / 1000);
@@ -1186,7 +1201,33 @@ function ensureGuildClanState(state) {
   if (!state.clan_ticket_decisions) {
     state.clan_ticket_decisions = {};
   }
+  if (!state.officer_stats) {
+    state.officer_stats = {};
+  }
   return state;
+}
+
+function getOfficerStatsEntry(state, userId) {
+  ensureGuildClanState(state);
+  if (!state.officer_stats[userId] || typeof state.officer_stats[userId] !== 'object') {
+    state.officer_stats[userId] = {
+      ticketsAccepted: 0,
+      ticketsRejected: 0,
+      ticketsRemoved: 0,
+      ticketsMoved: 0,
+      totalActions: 0,
+      updatedAt: null
+    };
+  }
+  return state.officer_stats[userId];
+}
+
+function incrementOfficerAction(state, userId, actionKey) {
+  if (!userId || !actionKey) return;
+  const stats = getOfficerStatsEntry(state, userId);
+  stats[actionKey] = (Number(stats[actionKey]) || 0) + 1;
+  stats.totalActions = (Number(stats.totalActions) || 0) + 1;
+  stats.updatedAt = new Date().toISOString();
 }
 
 async function getBotVersion() {
@@ -1725,6 +1766,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           entry.lastMoveAt = updatedAt;
           entry.reassignedBy = interaction.user.id;
           entry.updatedAt = updatedAt;
+          incrementOfficerAction(nextState, interaction.user.id, 'ticketsMoved');
         });
 
         const refreshedState = getClanState(interaction.guildId);
@@ -2125,6 +2167,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         entry.status = action;
         entry.decidedBy = interaction.user.id;
         entry.updatedAt = updatedAt;
+        if (action === CLAN_TICKET_DECISION_ACCEPT) {
+          incrementOfficerAction(nextState, interaction.user.id, 'ticketsAccepted');
+        }
+        if (action === CLAN_TICKET_DECISION_REJECT) {
+          incrementOfficerAction(nextState, interaction.user.id, 'ticketsRejected');
+        }
+        if (action === CLAN_TICKET_DECISION_REMOVE) {
+          incrementOfficerAction(nextState, interaction.user.id, 'ticketsRemoved');
+        }
       });
 
       if (action === CLAN_TICKET_DECISION_REMOVE) {
@@ -2487,6 +2538,48 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+
+
+    if (interaction.commandName === 'admin') {
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('This command can only be used in a server.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (!hasAdminPermission(interaction.member)) {
+        await interaction.reply({
+          components: buildTextComponents('You do not have permission to use this command.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const subcommand = interaction.options.getSubcommand(true);
+      if (subcommand === 'stats') {
+        const officer = interaction.options.getUser('nick', true);
+        const state = getClanState(interaction.guildId);
+        ensureGuildClanState(state);
+        const stats = state.officer_stats?.[officer.id] ?? {
+          ticketsAccepted: 0,
+          ticketsRejected: 0,
+          ticketsRemoved: 0,
+          ticketsMoved: 0,
+          totalActions: 0,
+          updatedAt: null
+        };
+
+        await interaction.reply({
+          components: buildTextComponents(formatOfficerStatsDisplay(officer.id, stats)),
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+    }
 
     if (interaction.commandName === 'settings') {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
