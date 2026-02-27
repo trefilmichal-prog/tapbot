@@ -730,38 +730,37 @@ function buildTicketSummary(answers, decision) {
   ];
 }
 
-function buildReviewRoleOptions(guild, selectedRoleId) {
-  const roleOptions = guild.roles.cache
-    .filter((role) => role.id !== guild.roles.everyone.id && !role.managed)
-    .sort((a, b) => b.position - a.position)
-    .first(25)
-    .map((role) => ({
-      label: role.name.slice(0, 100),
-      value: role.id,
-      default: role.id === selectedRoleId
+function buildReassignClanOptions(clanMap, selectedClanName) {
+  const clans = sortClansForDisplay(Object.values(clanMap ?? {}));
+  const clanOptions = clans
+    .slice(0, 25)
+    .map((clan) => ({
+      label: clan.name.slice(0, 100),
+      value: clan.name,
+      default: clan.name === selectedClanName
     }));
 
-  if (!roleOptions.length) {
+  if (!clanOptions.length) {
     return [
       {
-        label: 'No roles are available',
-        value: 'no_roles_available'
+        label: 'No clans are available',
+        value: 'no_clans_available'
       }
     ];
   }
 
-  return roleOptions;
+  return clanOptions;
 }
 
-function buildReviewRoleSelectComponents(channelId, selectedRoleId, options) {
-  const hasRoles = options.some((option) => option.value !== 'no_roles_available');
+function buildReviewRoleSelectComponents(channelId, selectedClanName, options) {
+  const hasRoles = options.some((option) => option.value !== 'no_clans_available');
   return [
     {
       type: ComponentType.Container,
       components: [
         {
           type: ComponentType.TextDisplay,
-          content: 'Select the review role to assign this ticket to.'
+          content: 'Select the clan to move this ticket to.'
         },
         {
           type: ComponentType.ActionRow,
@@ -769,9 +768,9 @@ function buildReviewRoleSelectComponents(channelId, selectedRoleId, options) {
             {
               type: ComponentType.StringSelect,
               custom_id: `${CLAN_TICKET_REASSIGN_PREFIX}${channelId}`,
-              placeholder: selectedRoleId
-                ? 'Choose a different review role'
-                : 'Choose a review role',
+              placeholder: selectedClanName
+                ? 'Choose a different clan'
+                : 'Choose a clan',
               min_values: 1,
               max_values: 1,
               options,
@@ -1494,17 +1493,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const targetChannelId = interaction.customId.slice(CLAN_TICKET_REASSIGN_PREFIX.length);
         if (!targetChannelId || targetChannelId !== interaction.channelId) {
           await interaction.reply({
-            components: buildTextComponents('This review-role selector is no longer valid for this channel.'),
+            components: buildTextComponents('This move selector is no longer valid for this channel.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
           return;
         }
 
-        const selectedRoleId = interaction.values[0];
-        if (!selectedRoleId || selectedRoleId === 'no_roles_available') {
+        const selectedClanName = interaction.values[0];
+        if (!selectedClanName || selectedClanName === 'no_clans_available') {
           await interaction.reply({
-            components: buildTextComponents('No valid role was selected.'),
+            components: buildTextComponents('No valid clan was selected.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
@@ -1555,31 +1554,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        if (!interaction.guild.roles.cache.has(selectedRoleId)) {
+        const targetClan = state.clan_clans?.[selectedClanName];
+        if (!targetClan) {
           await interaction.reply({
-            components: buildTextComponents('Selected role is no longer available in this server.'),
+            components: buildTextComponents('Selected clan no longer exists.'),
             flags: MessageFlags.IsComponentsV2,
             ephemeral: true
           });
           return;
         }
 
+        const nextReviewRoleId = targetClan.reviewRoleId ?? null;
+
         if (interaction.channel?.isTextBased()) {
           try {
-            if (effectiveReviewRoleId && effectiveReviewRoleId !== selectedRoleId) {
+            if (effectiveReviewRoleId && effectiveReviewRoleId !== nextReviewRoleId) {
               await interaction.channel.permissionOverwrites.edit(effectiveReviewRoleId, {
                 ViewChannel: false,
                 SendMessages: false,
                 ReadMessageHistory: false
               });
             }
-            await interaction.channel.permissionOverwrites.edit(selectedRoleId, {
-              ViewChannel: true,
-              SendMessages: true,
-              ReadMessageHistory: true
-            });
+            if (nextReviewRoleId) {
+              await interaction.channel.permissionOverwrites.edit(nextReviewRoleId, {
+                ViewChannel: true,
+                SendMessages: true,
+                ReadMessageHistory: true
+              });
+            }
           } catch (error) {
-            console.warn('Failed to update ticket channel permissions for new review role:', error);
+            console.warn('Failed to update ticket channel permissions for new clan review role:', error);
           }
         }
 
@@ -1588,7 +1592,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ensureGuildClanState(nextState);
           const entry = nextState.clan_ticket_decisions[interaction.channelId];
           if (!entry) return;
-          entry.activeReviewRoleId = selectedRoleId;
+          entry.clanName = selectedClanName;
+          entry.activeReviewRoleId = nextReviewRoleId;
           entry.reassignedBy = interaction.user.id;
           entry.updatedAt = updatedAt;
         });
@@ -1608,7 +1613,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         await interaction.reply({
-          components: buildTextComponents(`Ticket review role updated from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to <@&${selectedRoleId}>.`),
+          components: buildTextComponents(`Ticket clan updated to **${selectedClanName}**. Review role changed from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to ${formatEffectiveReviewRoleText(nextReviewRoleId)}.`),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -1959,9 +1964,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const options = buildReviewRoleOptions(interaction.guild, effectiveReviewRoleId);
+        const options = buildReassignClanOptions(state.clan_clans, ticketEntry.clanName);
         await interaction.reply({
-          components: buildReviewRoleSelectComponents(interaction.channelId, effectiveReviewRoleId, options),
+          components: buildReviewRoleSelectComponents(interaction.channelId, ticketEntry.clanName, options),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
