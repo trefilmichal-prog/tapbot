@@ -27,6 +27,7 @@ function getDefaultClanState() {
     clan_clans: {},
     clan_applications: {},
     clan_ticket_decisions: {},
+    officer_stats: {},
     clan_ticket_vacations: {},
     clan_ticket_reminders: {},
     permission_role_id: null,
@@ -167,6 +168,7 @@ function migrateLegacyClanState() {
     'clan_clans',
     'clan_applications',
     'clan_ticket_decisions',
+    'officer_stats',
     'clan_ticket_vacations',
     'clan_ticket_reminders',
     'permission_roles',
@@ -192,6 +194,7 @@ function migrateLegacyClanState() {
     nextState.clan_clans = parsed.clan_clans?.[guildId] ?? {};
     nextState.clan_applications = parsed.clan_applications?.[guildId] ?? {};
     nextState.clan_ticket_decisions = parsed.clan_ticket_decisions?.[guildId] ?? {};
+    nextState.officer_stats = parsed.officer_stats?.[guildId] ?? {};
     nextState.clan_ticket_vacations = parsed.clan_ticket_vacations?.[guildId] ?? {};
     nextState.clan_ticket_reminders = parsed.clan_ticket_reminders?.[guildId] ?? {};
     nextState.permission_role_id = parsed.permission_roles?.[guildId] ?? null;
@@ -367,6 +370,27 @@ function loadClanState(guildId) {
 }
 
 function migrateClanState(state) {
+  const officerStats = state.officer_stats;
+  if (!officerStats || typeof officerStats !== 'object' || Array.isArray(officerStats)) {
+    state.officer_stats = {};
+  } else {
+    for (const [userId, stats] of Object.entries(officerStats)) {
+      if (!stats || typeof stats !== 'object' || Array.isArray(stats)) {
+        delete officerStats[userId];
+        continue;
+      }
+      const normalized = {
+        ticketsAccepted: Number(stats.ticketsAccepted) || 0,
+        ticketsRejected: Number(stats.ticketsRejected) || 0,
+        ticketsRemoved: Number(stats.ticketsRemoved) || 0,
+        ticketsMoved: Number(stats.ticketsMoved) || 0,
+        totalActions: Number(stats.totalActions) || 0,
+        updatedAt: stats.updatedAt ?? null
+      };
+      officerStats[userId] = normalized;
+    }
+  }
+
   const clans = state.clan_clans ?? {};
   if (clans && typeof clans === 'object') {
     for (const clanKey of Object.keys(clans)) {

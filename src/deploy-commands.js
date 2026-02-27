@@ -498,6 +498,25 @@ export const defaultCommands = [
     ]
   },
   {
+    name: 'admin',
+    description: 'Administrative officer tools',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'stats',
+        description: 'Show officer ticket statistics',
+        options: [
+          {
+            type: ApplicationCommandOptionType.User,
+            name: 'nick',
+            description: 'Officer to inspect',
+            required: true
+          }
+        ]
+      }
+    ]
+  },
+  {
     name: 'settings',
     description: 'Ticket settings controls',
     options: [
