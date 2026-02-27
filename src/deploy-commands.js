@@ -375,6 +375,12 @@ export const defaultCommands = [
                 channel_types: [ChannelType.GuildCategory]
               },
               {
+                type: ApplicationCommandOptionType.Role,
+                name: 'accept_role',
+                description: 'Role assigned to accepted applicants',
+                required: false
+              },
+              {
                 type: ApplicationCommandOptionType.Integer,
                 name: 'order_position',
                 description: 'Clan order in the list',
@@ -424,6 +430,12 @@ export const defaultCommands = [
                 description: 'New category for accepted tickets',
                 required: false,
                 channel_types: [ChannelType.GuildCategory]
+              },
+              {
+                type: ApplicationCommandOptionType.Role,
+                name: 'accept_role',
+                description: 'New role assigned to accepted applicants',
+                required: false
               },
               {
                 type: ApplicationCommandOptionType.Integer,

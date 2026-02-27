@@ -2230,6 +2230,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const refreshedState = getClanState(interaction.guildId);
       const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.channelId];
+      if (action === CLAN_TICKET_DECISION_ACCEPT && clan.acceptRoleId && refreshedEntry?.applicantId) {
+        try {
+          const applicantMember = await interaction.guild.members.fetch(refreshedEntry.applicantId);
+          await applicantMember.roles.add(clan.acceptRoleId);
+        } catch (error) {
+          console.warn('Failed to assign accept role to applicant:', error);
+        }
+      }
       if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
         try {
           const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
@@ -3044,6 +3052,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const ticketRoomOption = interaction.options.getChannel('ticket_room');
           const reviewRoleOption = interaction.options.getRole('review_role');
           const acceptCategoryOption = interaction.options.getChannel('accept_category');
+          const acceptRoleOption = interaction.options.getRole('accept_role');
           const orderPosition = interaction.options.getInteger('order_position');
           const ticketCategoryId = ticketRoomOption?.type === ChannelType.GuildCategory
             ? ticketRoomOption.id
@@ -3052,6 +3061,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             ? acceptCategoryOption.id
             : null;
           const reviewRoleId = reviewRoleOption?.id ?? null;
+          const acceptRoleId = acceptRoleOption?.id ?? null;
           let existed = false;
 
           await updateClanState(guildId, (state) => {
@@ -3068,6 +3078,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               ticketCategoryId,
               reviewRoleId,
               acceptCategoryId,
+              acceptRoleId,
               orderPosition: orderPosition ?? null,
               createdAt: new Date().toISOString()
             };
@@ -3094,6 +3105,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const ticketRoomOption = interaction.options.getChannel('ticket_room');
           const reviewRoleOption = interaction.options.getRole('review_role');
           const acceptCategoryOption = interaction.options.getChannel('accept_category');
+          const acceptRoleOption = interaction.options.getRole('accept_role');
           const orderPositionOption = interaction.options.getInteger('order_position');
           const ticketCategoryId = ticketRoomOption?.type === ChannelType.GuildCategory
             ? ticketRoomOption.id
@@ -3102,6 +3114,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             ? acceptCategoryOption.id
             : null;
           const reviewRoleId = reviewRoleOption?.id ?? null;
+          const acceptRoleId = acceptRoleOption?.id ?? null;
           let found = false;
 
           await updateClanState(guildId, (state) => {
@@ -3120,6 +3133,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               acceptCategoryId: acceptCategoryOption
                 ? acceptCategoryId
                 : entry[name].acceptCategoryId ?? null,
+              acceptRoleId: acceptRoleOption ? acceptRoleId : entry[name].acceptRoleId ?? null,
               orderPosition: orderPositionOption ?? entry[name].orderPosition ?? null,
               updatedAt: new Date().toISOString()
             };
