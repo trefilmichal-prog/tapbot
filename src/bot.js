@@ -2017,7 +2017,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (targetCategoryIdForMove) {
               try {
                 await interaction.channel.setParent(targetCategoryIdForMove, {
-                  lockPermissions: true
+                  lockPermissions: false
                 });
                 const applicantAccessResult = await ensureTicketApplicantAccess(
                   interaction.channel,
@@ -2027,9 +2027,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
                   applicantAccessWarning = applicantAccessResult.warning;
                 }
               } catch (error) {
-                console.warn('Failed to move ticket channel with permission sync for clan reassignment:', error);
+                console.warn('Failed to move ticket channel for clan reassignment:', error);
                 await interaction.reply({
-                  components: buildTextComponents('Move failed because permission sync with the target category could not be completed. Please check bot permissions (Manage Channels / Manage Roles) and try again.'),
+                  components: buildTextComponents('Move failed because the channel could not be moved to the target category. Please check bot permissions (Manage Channels / Manage Roles) and try again.'),
                   flags: MessageFlags.IsComponentsV2,
                   ephemeral: true
                 });
@@ -2581,7 +2581,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (action === CLAN_TICKET_DECISION_ACCEPT && clan.acceptCategoryId) {
         try {
           await interaction.channel?.setParent(clan.acceptCategoryId, {
-            lockPermissions: true
+            lockPermissions: false
           });
           const applicantAccessResult = await ensureTicketApplicantAccess(
             interaction.channel,
@@ -2593,7 +2593,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
         } catch (error) {
           console.warn('Failed to move accepted ticket channel:', error);
-          acceptMoveSyncWarning = 'Ticket was accepted, but permission sync with the accept category failed. Please check bot permissions (Manage Channels / Manage Roles).';
+          acceptMoveSyncWarning = 'Ticket was accepted, but moving to the accept category failed. Please check bot permissions (Manage Channels / Manage Roles).';
           console.warn(`Accepted ticket move warning (${interaction.channelId}): ${acceptMoveSyncWarning}`);
         }
       }
