@@ -110,6 +110,31 @@ export const defaultCommands = [
     ]
   },
   {
+    name: 'sz',
+    description: 'Soukrome zpravy mezi uzivateli',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'send',
+        description: 'Posle soukromou zpravu zadanemu uzivateli',
+        options: [
+          {
+            type: ApplicationCommandOptionType.User,
+            name: 'to',
+            description: 'Prijemce zpravy',
+            required: true
+          },
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'message',
+            description: 'Obsah zpravy',
+            required: true
+          }
+        ]
+      }
+    ]
+  },
+  {
     name: 'ping_roles',
     description: 'Manage ping roles and routing',
     options: [

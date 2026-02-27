@@ -18,6 +18,8 @@ const cachedPingRoleState = new Map();
 const pingRoleStateWriteQueues = new Map();
 const cachedPingRolePanelConfig = new Map();
 const cachedNotificationForwardConfig = new Map();
+const cachedPrivateMessageState = new Map();
+const privateMessageStateWriteQueues = new Map();
 let legacyMigrationDone = false;
 
 function getDefaultClanState() {
@@ -53,6 +55,13 @@ function getDefaultPingRoleState() {
     available_roles: [],
     user_selections: {},
     channel_routes: {}
+  };
+}
+
+function getDefaultPrivateMessageState() {
+  return {
+    schemaVersion: 1,
+    messages: {}
   };
 }
 
@@ -100,6 +109,10 @@ function getGuildNotificationForwardConfigPath(guildId) {
   return path.join(getGuildDir(guildId), 'notification-forward.json');
 }
 
+function getGuildPrivateMessageStatePath(guildId) {
+  return path.join(getGuildDir(guildId), 'private-messages.json');
+}
+
 function enqueueClanStateWrite(guildId, task) {
   const key = String(guildId);
   const queue = clanStateWriteQueues.get(key) ?? Promise.resolve();
@@ -121,6 +134,14 @@ function enqueuePingRoleStateWrite(guildId, task) {
   const queue = pingRoleStateWriteQueues.get(key) ?? Promise.resolve();
   const nextQueue = queue.then(task, task);
   pingRoleStateWriteQueues.set(key, nextQueue);
+  return nextQueue;
+}
+
+function enqueuePrivateMessageStateWrite(guildId, task) {
+  const key = String(guildId);
+  const queue = privateMessageStateWriteQueues.get(key) ?? Promise.resolve();
+  const nextQueue = queue.then(task, task);
+  privateMessageStateWriteQueues.set(key, nextQueue);
   return nextQueue;
 }
 
@@ -626,10 +647,54 @@ function loadNotificationForwardConfig(guildId) {
   return entry;
 }
 
+function loadPrivateMessageState(guildId) {
+  const key = String(guildId);
+  if (cachedPrivateMessageState.has(key)) return cachedPrivateMessageState.get(key);
+
+  const statePath = getGuildPrivateMessageStatePath(key);
+  if (!fs.existsSync(statePath)) {
+    const fallback = getDefaultPrivateMessageState();
+    cachedPrivateMessageState.set(key, fallback);
+    return fallback;
+  }
+
+  const raw = fs.readFileSync(statePath, 'utf8');
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn(`Invalid private-messages.json for guild ${key}, resetting:`, e);
+    const fallback = getDefaultPrivateMessageState();
+    cachedPrivateMessageState.set(key, fallback);
+    return fallback;
+  }
+
+  const fallback = getDefaultPrivateMessageState();
+  const entry = parsed && typeof parsed === 'object'
+    ? {
+        ...fallback,
+        ...parsed,
+        messages: parsed.messages && typeof parsed.messages === 'object'
+          ? parsed.messages
+          : {}
+      }
+    : fallback;
+  cachedPrivateMessageState.set(key, entry);
+  return entry;
+}
+
 function persistNotificationForwardConfig(guildId, config) {
   const configPath = getGuildNotificationForwardConfigPath(guildId);
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+}
+
+function persistPrivateMessageState(guildId) {
+  const key = String(guildId);
+  return enqueuePrivateMessageStateWrite(key, async () => {
+    const state = cachedPrivateMessageState.get(key) ?? getDefaultPrivateMessageState();
+    await atomicWriteJson(getGuildPrivateMessageStatePath(key), state);
+  });
 }
 
 export function getClanState(guildId) {
@@ -706,6 +771,25 @@ export function getNotificationForwardConfig(guildId) {
     enabled: Boolean(entry.enabled),
     channelId: entry.channelId ?? null
   };
+}
+
+export function getPrivateMessageState(guildId) {
+  const state = loadPrivateMessageState(guildId);
+  return {
+    schemaVersion: Number(state.schemaVersion) || 1,
+    messages: state.messages && typeof state.messages === 'object' ? state.messages : {}
+  };
+}
+
+export function updatePrivateMessageState(guildId, mutator) {
+  const state = loadPrivateMessageState(guildId);
+  if (typeof mutator === 'function') {
+    mutator(state);
+  }
+  if (!state.messages || typeof state.messages !== 'object') {
+    state.messages = {};
+  }
+  return persistPrivateMessageState(guildId).then(() => state);
 }
 
 export function setNotificationForwardConfig(guildId, config) {

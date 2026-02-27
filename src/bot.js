@@ -25,6 +25,7 @@ import {
   getLogConfig,
   getPingRoleState,
   getPingRolePanelConfig,
+  getPrivateMessageState,
   getRpsState,
   getPermissionRoleId,
   getWelcomeConfig,
@@ -35,6 +36,7 @@ import {
   setPermissionRoleId,
   setWelcomeConfig,
   updateClanState,
+  updatePrivateMessageState,
   updatePingRoleState,
   updateRpsState
 } from './persistence.js';
@@ -81,6 +83,7 @@ const CLAN_TICKET_DECISION_REMOVE = 'remove';
 const CLAN_TICKET_DECISION_REASSIGN = 'reassign';
 const TICKET_MOVE_COOLDOWN_MS = 10 * 60 * 1000;
 const PING_ROLES_SELECT_ID = 'ping_roles_select';
+const PRIVATE_MESSAGE_READ_PREFIX = 'pm:read:';
 const RPS_CHOICE_PREFIX = 'rps:choose:';
 const RPS_MOVES = ['rock', 'paper', 'scissors'];
 const RPS_MOVE_META = {
@@ -93,6 +96,58 @@ const TICKET_STATUS_EMOJI = {
   [CLAN_TICKET_DECISION_ACCEPT]: '🟢',
   [CLAN_TICKET_DECISION_REJECT]: '🔴'
 };
+
+function buildPrivateMessageCreatedComponents({ fromUserId, toUserId }) {
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: '✉️ **New private message**'
+        },
+        {
+          type: ComponentType.TextDisplay,
+          content: `From: <@${fromUserId}>\nTo: <@${toUserId}>\nClick Read to view the message content.`
+        }
+      ]
+    }
+  ];
+}
+
+function buildPrivateMessageReadButton(messageId) {
+  return [
+    {
+      type: ComponentType.ActionRow,
+      components: [
+        {
+          type: ComponentType.Button,
+          custom_id: `${PRIVATE_MESSAGE_READ_PREFIX}${messageId}`,
+          label: 'Read',
+          style: ButtonStyle.Primary
+        }
+      ]
+    }
+  ];
+}
+
+function buildPrivateMessageContentComponents(entry) {
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: '✉️ **Private message content**'
+        },
+        {
+          type: ComponentType.TextDisplay,
+          content: `From: <@${entry.fromUserId}>\nTo: <@${entry.toUserId}>\n\n${entry.content}`
+        }
+      ]
+    }
+  ];
+}
 
 client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
@@ -2171,6 +2226,57 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton()) {
+      if (interaction.customId.startsWith(PRIVATE_MESSAGE_READ_PREFIX)) {
+        if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+          await interaction.reply({
+            components: buildTextComponents('This action can only be used in a server.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const messageId = interaction.customId.slice(PRIVATE_MESSAGE_READ_PREFIX.length);
+        if (!messageId) {
+          await interaction.reply({
+            components: buildTextComponents('Invalid private message identifier.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const state = getPrivateMessageState(interaction.guildId);
+        const entry = state.messages?.[messageId];
+        if (!entry) {
+          await interaction.reply({
+            components: buildTextComponents('This private message was not found.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const canRead = hasAdminPermission(interaction.member)
+          || entry.fromUserId === interaction.user.id
+          || entry.toUserId === interaction.user.id;
+        if (!canRead) {
+          await interaction.reply({
+            components: buildTextComponents('You are not allowed to read this private message.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.reply({
+          components: buildPrivateMessageContentComponents(entry),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
       if (interaction.customId.startsWith(RPS_CHOICE_PREFIX)) {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
           await interaction.reply({
@@ -3351,6 +3457,75 @@ client.on(Events.InteractionCreate, async (interaction) => {
           components: buildTextComponents(buildNotificationReadResponse(result.notifications)),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
+        });
+      }
+      return;
+    }
+
+    if (interaction.commandName === 'sz') {
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('This command can only be used in a server.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      const subcommand = interaction.options.getSubcommand(true);
+      if (subcommand === 'send') {
+        const targetUser = interaction.options.getUser('to', true);
+        const rawMessage = interaction.options.getString('message', true);
+        const content = rawMessage.trim();
+
+        if (!content) {
+          await interaction.reply({
+            components: buildTextComponents('Message content cannot be empty.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (targetUser.id === interaction.user.id) {
+          await interaction.reply({
+            components: buildTextComponents('You cannot send a private message to yourself.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (targetUser.bot) {
+          await interaction.reply({
+            components: buildTextComponents('You cannot send a private message to bots.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const privateMessageId = `${Date.now()}_${interaction.id}`;
+        await updatePrivateMessageState(interaction.guildId, (state) => {
+          state.messages = state.messages ?? {};
+          state.messages[privateMessageId] = {
+            id: privateMessageId,
+            fromUserId: interaction.user.id,
+            toUserId: targetUser.id,
+            content,
+            createdAt: new Date().toISOString()
+          };
+        });
+
+        await interaction.reply({
+          components: [
+            ...buildPrivateMessageCreatedComponents({
+              fromUserId: interaction.user.id,
+              toUserId: targetUser.id
+            }),
+            ...buildPrivateMessageReadButton(privateMessageId)
+          ],
+          flags: MessageFlags.IsComponentsV2
         });
       }
       return;
