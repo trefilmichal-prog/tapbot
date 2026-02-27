@@ -2034,27 +2034,59 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (subcommand === 'welcome') {
-        const channel = interaction.options.getChannel('channel', true);
-        if (!channel || channel.type !== ChannelType.GuildText) {
-          await interaction.reply({
-            components: buildTextComponents('Please select a text channel.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-          return;
+      if (subcommand === 'welcome' || subcommand === 'welcome_room') {
+        let channelId;
+
+        if (subcommand === 'welcome') {
+          const channel = interaction.options.getChannel('channel', true);
+          if (!channel || channel.type !== ChannelType.GuildText) {
+            await interaction.reply({
+              components: buildTextComponents('Please select a text channel.'),
+              flags: MessageFlags.IsComponentsV2,
+              ephemeral: true
+            });
+            return;
+          }
+          channelId = channel.id;
+        } else {
+          const channelIdRaw = interaction.options.getString('channel_id', true).trim();
+          if (!/^\d{17,20}$/.test(channelIdRaw)) {
+            await interaction.reply({
+              components: buildTextComponents('Please provide a valid Discord channel ID.'),
+              flags: MessageFlags.IsComponentsV2,
+              ephemeral: true
+            });
+            return;
+          }
+
+          let channel = null;
+          try {
+            channel = await interaction.guild.channels.fetch(channelIdRaw);
+          } catch (e) {
+            channel = null;
+          }
+
+          if (!channel || channel.type !== ChannelType.GuildText) {
+            await interaction.reply({
+              components: buildTextComponents('Channel not found or is not a text channel in this server.'),
+              flags: MessageFlags.IsComponentsV2,
+              ephemeral: true
+            });
+            return;
+          }
+          channelId = channel.id;
         }
 
         const messageRaw = interaction.options.getString('message');
         const message = messageRaw && messageRaw.trim() ? messageRaw.trim() : null;
 
         setWelcomeConfig(interaction.guildId, {
-          channelId: channel.id,
+          channelId,
           message
         });
 
         await interaction.reply({
-          components: buildTextComponents('Welcome settings saved.'),
+          components: buildTextComponents(`Welcome settings saved for <#${channelId}>.`),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
