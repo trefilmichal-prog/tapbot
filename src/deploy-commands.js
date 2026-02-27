@@ -477,6 +477,17 @@ export const defaultCommands = [
         description: 'Reset statistics'
       }
     ]
+  },
+  {
+    name: 'settings',
+    description: 'Ticket settings controls',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'menu',
+        description: 'Open the ticket settings menu in the current ticket channel'
+      }
+    ]
   }
 ];
 
