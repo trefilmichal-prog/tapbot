@@ -17,6 +17,7 @@ const rpsStateWriteQueues = new Map();
 const cachedPingRoleState = new Map();
 const pingRoleStateWriteQueues = new Map();
 const cachedPingRolePanelConfig = new Map();
+const cachedNotificationForwardConfig = new Map();
 let legacyMigrationDone = false;
 
 function getDefaultClanState() {
@@ -93,6 +94,10 @@ function getGuildPingRoleStatePath(guildId) {
 
 function getGuildPingRolePanelConfigPath(guildId) {
   return path.join(getGuildDir(guildId), 'ping_roles_panel.json');
+}
+
+function getGuildNotificationForwardConfigPath(guildId) {
+  return path.join(getGuildDir(guildId), 'notification-forward.json');
 }
 
 function enqueueClanStateWrite(guildId, task) {
@@ -580,6 +585,53 @@ function persistPingRolePanelConfig(guildId, config) {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
 }
 
+function loadNotificationForwardConfig(guildId) {
+  const key = String(guildId);
+  if (cachedNotificationForwardConfig.has(key)) return cachedNotificationForwardConfig.get(key);
+
+  const configPath = getGuildNotificationForwardConfigPath(key);
+  if (!fs.existsSync(configPath)) {
+    const fallback = {
+      enabled: false,
+      channelId: null
+    };
+    cachedNotificationForwardConfig.set(key, fallback);
+    return fallback;
+  }
+
+  const raw = fs.readFileSync(configPath, 'utf8');
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn(`Invalid notification-forward.json for guild ${key}, resetting:`, e);
+    const fallback = {
+      enabled: false,
+      channelId: null
+    };
+    cachedNotificationForwardConfig.set(key, fallback);
+    return fallback;
+  }
+
+  const entry = parsed && typeof parsed === 'object'
+    ? {
+        enabled: Boolean(parsed.enabled),
+        channelId: parsed.channelId ?? null
+      }
+    : {
+        enabled: false,
+        channelId: null
+      };
+  cachedNotificationForwardConfig.set(key, entry);
+  return entry;
+}
+
+function persistNotificationForwardConfig(guildId, config) {
+  const configPath = getGuildNotificationForwardConfigPath(guildId);
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+}
+
 export function getClanState(guildId) {
   return loadClanState(guildId);
 }
@@ -645,6 +697,25 @@ export function setPingRolePanelConfig(guildId, config) {
     : null;
   cachedPingRolePanelConfig.set(key, entry);
   persistPingRolePanelConfig(key, entry);
+  return entry;
+}
+
+export function getNotificationForwardConfig(guildId) {
+  const entry = loadNotificationForwardConfig(guildId);
+  return {
+    enabled: Boolean(entry.enabled),
+    channelId: entry.channelId ?? null
+  };
+}
+
+export function setNotificationForwardConfig(guildId, config) {
+  const key = String(guildId);
+  const entry = {
+    enabled: Boolean(config?.enabled),
+    channelId: config?.channelId ?? null
+  };
+  cachedNotificationForwardConfig.set(key, entry);
+  persistNotificationForwardConfig(key, entry);
   return entry;
 }
 

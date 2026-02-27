@@ -541,12 +541,36 @@ export const defaultCommands = [
   },
   {
     name: 'notifications',
-    description: 'Read host system notifications',
+    description: 'Manage host notification forwarding',
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
+        name: 'start',
+        description: 'Enable automatic forwarding to a text channel',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Channel,
+            name: 'channel',
+            description: 'Destination text channel',
+            required: true,
+            channel_types: [ChannelType.GuildText]
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'stop',
+        description: 'Disable automatic notification forwarding'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'status',
+        description: 'Show current notification forwarding settings'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
         name: 'read',
-        description: 'Read recent Windows toast notifications'
+        description: 'Read recent Windows toast notifications immediately'
       }
     ]
   }
