@@ -2318,12 +2318,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
+      if (action === CLAN_TICKET_DECISION_ACCEPT && refreshedEntry?.applicantId && interaction.channel?.isTextBased()) {
+        await interaction.channel.send({
+          components: buildTextComponents(
+            `<@${refreshedEntry.applicantId}> Ticket was accepted.${acceptMoveSyncWarning ? `\n${acceptMoveSyncWarning}` : ''}${acceptApplicantAccessWarning ? `\nTicket move completed with warning: ${acceptApplicantAccessWarning}` : ''}`
+          ),
+          flags: MessageFlags.IsComponentsV2
+        });
+      }
+
       await interaction.reply({
-        components: buildTextComponents(
-          action === CLAN_TICKET_DECISION_ACCEPT
-            ? `<@${refreshedEntry.applicantId}> Ticket was accepted.${acceptMoveSyncWarning ? `\n${acceptMoveSyncWarning}` : ''}${acceptApplicantAccessWarning ? `\nTicket move completed with warning: ${acceptApplicantAccessWarning}` : ''}`
-            : `<@${refreshedEntry.applicantId}> Ticket was rejected.`
-        ),
+        components: buildTextComponents('Decision saved.'),
         flags: MessageFlags.IsComponentsV2,
         ephemeral: true
       });
