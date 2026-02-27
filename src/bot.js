@@ -496,6 +496,65 @@ function stripTicketStatusPrefix(name) {
   return nextName;
 }
 
+function getTicketStatusEmojiFromName(name) {
+  if (!name) return null;
+  const emojiPrefixes = Object.values(TICKET_STATUS_EMOJI);
+  for (const emoji of emojiPrefixes) {
+    const prefixPattern = new RegExp(`^${emoji}(?:[ -]+)?`);
+    if (prefixPattern.test(name)) {
+      return emoji;
+    }
+  }
+  return null;
+}
+
+function replaceTicketClanInBaseName({ currentName, currentClanName, selectedClanName }) {
+  const sanitizedSelectedClan = sanitizeTicketChannelBase(selectedClanName);
+  if (!sanitizedSelectedClan) return null;
+
+  const strippedCurrentName = stripTicketStatusPrefix(currentName ?? '');
+  const sanitizedBase = sanitizeTicketChannelBase(strippedCurrentName);
+  const sanitizedCurrentClan = sanitizeTicketChannelBase(currentClanName ?? '');
+
+  let nameRemainder = sanitizedBase;
+  if (sanitizedCurrentClan && sanitizedBase === sanitizedCurrentClan) {
+    nameRemainder = '';
+  } else if (sanitizedCurrentClan && sanitizedBase.startsWith(`${sanitizedCurrentClan}-`)) {
+    nameRemainder = sanitizedBase.slice(sanitizedCurrentClan.length + 1);
+  } else {
+    nameRemainder = sanitizedBase.replace(/^[^-]+-?/, '');
+  }
+
+  const rebuiltBase = sanitizeTicketChannelBase(
+    nameRemainder ? `${sanitizedSelectedClan}-${nameRemainder}` : sanitizedSelectedClan
+  );
+  return rebuiltBase || sanitizedSelectedClan;
+}
+
+function buildReassignedTicketChannelName({ currentName, currentClanName, selectedClanName }) {
+  const statusEmoji = getTicketStatusEmojiFromName(currentName) ?? TICKET_STATUS_EMOJI.awaiting;
+  const replacedBase = replaceTicketClanInBaseName({
+    currentName,
+    currentClanName,
+    selectedClanName
+  });
+  if (!replacedBase || !/^[a-z0-9-]+$/.test(replacedBase)) {
+    return null;
+  }
+
+  const maxBaseLength = Math.max(1, 100 - `${statusEmoji}-`.length);
+  const limitedBase = replacedBase.slice(0, maxBaseLength);
+  if (!limitedBase || !/^[a-z0-9-]+$/.test(limitedBase)) {
+    return null;
+  }
+
+  const nextName = formatTicketChannelName(statusEmoji, limitedBase);
+  if (!nextName || nextName.length > 100) {
+    return null;
+  }
+  return nextName;
+}
+
 function formatTicketChannelName(statusEmoji, baseName) {
   const strippedBase = stripTicketStatusPrefix(baseName);
   const normalizedBase = strippedBase.replace(/^[ -]+/, '').replace(/[ -]+$/, '');
@@ -1598,6 +1657,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const targetCategoryIdForMove = shouldMoveAcceptedTicket
           ? targetClan.acceptCategoryId ?? null
           : null;
+        const nextChannelName = buildReassignedTicketChannelName({
+          currentName: interaction.channel?.name ?? '',
+          currentClanName: ticketEntry.clanName,
+          selectedClanName
+        });
+
+        if (!nextChannelName) {
+          await interaction.reply({
+            components: buildTextComponents('Unable to rename ticket channel for the selected clan.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
 
         if (interaction.channel?.isTextBased()) {
           try {
@@ -1620,9 +1693,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 lockPermissions: false
               });
             }
+            if (interaction.channel.name !== nextChannelName) {
+              await interaction.channel.setName(nextChannelName);
+            }
           } catch (error) {
             console.warn('Failed to update ticket channel permissions for new clan review role:', error);
+            await interaction.reply({
+              components: buildTextComponents('Move failed because channel update (including rename) could not be completed.'),
+              flags: MessageFlags.IsComponentsV2,
+              ephemeral: true
+            });
+            return;
           }
+        } else {
+          await interaction.reply({
+            components: buildTextComponents('Move failed because this channel type cannot be renamed.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
         }
 
         const updatedAt = new Date().toISOString();
@@ -1658,7 +1747,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           : '';
 
         await interaction.reply({
-          components: buildTextComponents(`Ticket clan updated to **${selectedClanName}**. Review role changed from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to ${formatEffectiveReviewRoleText(nextReviewRoleId)}.${moveSuffix}`),
+          components: buildTextComponents(`Ticket clan updated to **${selectedClanName}**. Channel renamed to **${nextChannelName}**. Review role changed from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to ${formatEffectiveReviewRoleText(nextReviewRoleId)}.${moveSuffix}`),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
