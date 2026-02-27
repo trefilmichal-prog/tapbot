@@ -378,6 +378,9 @@ function migrateClanState(state) {
       if ('ticketRoomId' in clan) {
         delete clan.ticketRoomId;
       }
+      clan.reviewRoleId = clan.reviewRoleId != null ? String(clan.reviewRoleId) : null;
+      clan.acceptCategoryId = clan.acceptCategoryId != null ? String(clan.acceptCategoryId) : null;
+      clan.acceptRoleId = clan.acceptRoleId != null ? String(clan.acceptRoleId) : null;
     }
   }
 
