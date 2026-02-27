@@ -324,7 +324,16 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'edit',
-        description: 'Edit the clan panel description'
+        description: 'Edit the clan panel description',
+        options: [
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'text',
+            description: 'New clan panel description (optional, opens modal when omitted)',
+            required: false,
+            max_length: 1000
+          }
+        ]
       },
       {
         type: ApplicationCommandOptionType.SubcommandGroup,
