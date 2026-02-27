@@ -538,6 +538,17 @@ export const defaultCommands = [
         description: 'Open the ticket settings menu in the current ticket channel'
       }
     ]
+  },
+  {
+    name: 'notifications',
+    description: 'Read host system notifications',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'read',
+        description: 'Read recent Windows toast notifications'
+      }
+    ]
   }
 ];
 
