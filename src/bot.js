@@ -1732,9 +1732,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
               });
             }
             if (targetCategoryIdForMove) {
-              await interaction.channel.setParent(targetCategoryIdForMove, {
-                lockPermissions: false
-              });
+              try {
+                await interaction.channel.setParent(targetCategoryIdForMove, {
+                  lockPermissions: true
+                });
+              } catch (error) {
+                console.warn('Failed to move ticket channel with permission sync for clan reassignment:', error);
+                await interaction.reply({
+                  components: buildTextComponents('Move failed because permission sync with the target category could not be completed. Please check bot permissions (Manage Channels / Manage Roles) and try again.'),
+                  flags: MessageFlags.IsComponentsV2,
+                  ephemeral: true
+                });
+                return;
+              }
             }
             if (interaction.channel.name !== nextChannelName) {
               await interaction.channel.setName(nextChannelName);
@@ -2213,13 +2223,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      let acceptMoveSyncWarning = null;
       if (action === CLAN_TICKET_DECISION_ACCEPT && clan.acceptCategoryId) {
         try {
           await interaction.channel?.setParent(clan.acceptCategoryId, {
-            lockPermissions: false
+            lockPermissions: true
           });
         } catch (error) {
           console.warn('Failed to move accepted ticket channel:', error);
+          acceptMoveSyncWarning = 'Ticket was accepted, but permission sync with the accept category failed. Please check bot permissions (Manage Channels / Manage Roles).';
         }
       }
 
@@ -2257,7 +2269,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({
         components: buildTextComponents(
           action === CLAN_TICKET_DECISION_ACCEPT
-            ? `<@${refreshedEntry.applicantId}> Ticket was accepted.`
+            ? `<@${refreshedEntry.applicantId}> Ticket was accepted.${acceptMoveSyncWarning ? `\n${acceptMoveSyncWarning}` : ''}`
             : `<@${refreshedEntry.applicantId}> Ticket was rejected.`
         ),
         flags: MessageFlags.IsComponentsV2,
