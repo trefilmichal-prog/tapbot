@@ -74,6 +74,7 @@ const CLAN_TICKET_DECISION_ACCEPT = 'accept';
 const CLAN_TICKET_DECISION_REJECT = 'reject';
 const CLAN_TICKET_DECISION_REMOVE = 'remove';
 const CLAN_TICKET_DECISION_REASSIGN = 'reassign';
+const TICKET_MOVE_COOLDOWN_MS = 10 * 60 * 1000;
 const PING_ROLES_SELECT_ID = 'ping_roles_select';
 const RPS_CHOICE_PREFIX = 'rps:choose:';
 const RPS_MOVES = ['rock', 'paper', 'scissors'];
@@ -197,6 +198,20 @@ function formatMessageTimestamp(timestampMs) {
   if (!Number.isFinite(timestampMs)) return 'Unknown';
   const seconds = Math.floor(timestampMs / 1000);
   return `<t:${seconds}:F>`;
+}
+
+function formatCooldownRemaining(remainingMs) {
+  const safeRemainingMs = Math.max(0, Number(remainingMs) || 0);
+  const totalSeconds = Math.ceil(safeRemainingMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) {
+    return `${seconds} s`;
+  }
+  if (seconds === 0) {
+    return `${minutes} min`;
+  }
+  return `${minutes} min ${seconds} s`;
 }
 
 function buildMessageLogComponents({ title, messageId, channelId, author, createdTimestamp, content }) {
@@ -1521,6 +1536,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
+        const lastMoveTimestamp = ticketEntry.lastMoveAt ? new Date(ticketEntry.lastMoveAt).getTime() : NaN;
+        if (Number.isFinite(lastMoveTimestamp)) {
+          const elapsedSinceLastMoveMs = Date.now() - lastMoveTimestamp;
+          if (elapsedSinceLastMoveMs < TICKET_MOVE_COOLDOWN_MS) {
+            const remaining = formatCooldownRemaining(TICKET_MOVE_COOLDOWN_MS - elapsedSinceLastMoveMs);
+            await interaction.reply({
+              components: buildTextComponents(`Move je v cooldownu, zbývá ${remaining}.`),
+              flags: MessageFlags.IsComponentsV2,
+              ephemeral: true
+            });
+            return;
+          }
+        }
+
         if (ticketEntry.status && ticketEntry.status !== CLAN_TICKET_DECISION_ACCEPT) {
           await interaction.reply({
             components: buildTextComponents('This ticket has already been decided and can no longer be moved.'),
@@ -1603,6 +1632,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (!entry) return;
           entry.clanName = selectedClanName;
           entry.activeReviewRoleId = nextReviewRoleId;
+          entry.lastMoveAt = updatedAt;
           entry.reassignedBy = interaction.user.id;
           entry.updatedAt = updatedAt;
         });
