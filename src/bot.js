@@ -1999,6 +1999,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ? ` Move completed with warning: ${applicantAccessWarning}`
           : '';
 
+        if (shouldMoveAcceptedTicket && refreshedEntry?.applicantId && interaction.channel?.isTextBased()) {
+          await interaction.channel.send({
+            components: buildTextComponents(
+              `<@${refreshedEntry.applicantId}> Your accepted ticket was moved to **${selectedClanName}**.`
+            ),
+            flags: MessageFlags.IsComponentsV2
+          });
+        }
+
         await interaction.reply({
           components: buildTextComponents(`Ticket clan updated to **${selectedClanName}**. Channel renamed to **${nextChannelName}**. Review role changed from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to ${formatEffectiveReviewRoleText(nextReviewRoleId)}.${moveSuffix}${applicantRoleChangeSuffix}${applicantAccessSuffix}`),
           flags: MessageFlags.IsComponentsV2,
