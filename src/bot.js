@@ -11,10 +11,12 @@ import {
   ChannelType,
   ComponentType,
   MessageFlags,
-  SeparatorSpacingSize
+  SeparatorSpacingSize,
+  TextInputStyle
 } from 'discord-api-types/v10';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { loadConfig } from './config.js';
 import {
   getClanState,
@@ -68,16 +70,13 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel]
 });
 const CLAN_PANEL_SELECT_ID = 'clan_panel_select';
+const CLAN_APPLICATION_MODAL_PREFIX = 'clan_apply_modal:';
 const CLAN_WORKFLOW_CANCEL_PREFIX = 'clan_workflow_cancel:';
 const CLAN_WORKFLOW_RESTART_PREFIX = 'clan_workflow_restart:';
-const CLAN_PENDING_TYPE_TICKET_APPLICATION = 'ticket_application';
 const CLAN_PENDING_TYPE_PANEL_EDIT = 'panel_edit';
-const CLAN_PENDING_STEP_ROBLOX_NICK = 'roblox_nick';
-const CLAN_PENDING_STEP_REBIRTHS = 'rebirths';
-const CLAN_PENDING_STEP_GAMEPASSES = 'gamepasses';
-const CLAN_PENDING_STEP_HOURS = 'hours';
 const CLAN_PENDING_STEP_PANEL_DESCRIPTION = 'panel_description';
 const CLAN_PENDING_WORKFLOW_TTL_MS = 30 * 60 * 1000;
+const CLAN_MODAL_SESSION_TTL_MS = 30 * 60 * 1000;
 const CLAN_TICKET_DECISION_PREFIX = 'clan_ticket_decision:';
 const CLAN_TICKET_PRIVATE_DECISION_PREFIX = 'clan_ticket_private_decision:';
 const CLAN_TICKET_PUBLIC_MENU_ID = 'clan_ticket_public_menu_open';
@@ -2000,21 +1999,6 @@ function getClanPendingWorkflow(state, userId) {
 }
 
 function getClanPendingStepPrompt(workflow) {
-  if (workflow.type === CLAN_PENDING_TYPE_TICKET_APPLICATION) {
-    if (workflow.step === CLAN_PENDING_STEP_ROBLOX_NICK) {
-      return 'Step 1/4: Send your Roblox nickname as a normal message.';
-    }
-    if (workflow.step === CLAN_PENDING_STEP_REBIRTHS) {
-      return 'Step 2/4: How many rebirths do you have?';
-    }
-    if (workflow.step === CLAN_PENDING_STEP_GAMEPASSES) {
-      return 'Step 3/4: What gamepasses do you have?';
-    }
-    if (workflow.step === CLAN_PENDING_STEP_HOURS) {
-      return 'Step 4/4: How many hours a day do you play?';
-    }
-  }
-
   if (workflow.type === CLAN_PENDING_TYPE_PANEL_EDIT) {
     return 'Send the new clan panel description as a normal message. Send `-` to clear description.';
   }
@@ -2023,9 +2007,7 @@ function getClanPendingStepPrompt(workflow) {
 }
 
 function buildClanPendingWorkflowComponents(workflow, instructionOverride = null) {
-  const title = workflow.type === CLAN_PENDING_TYPE_TICKET_APPLICATION
-    ? `📝 **Clan ticket application: ${workflow.clanName}**`
-    : '🛠️ **Clan panel edit**';
+  const title = '🛠️ **Clan panel edit**';
   const instruction = instructionOverride ?? getClanPendingStepPrompt(workflow);
 
   return [
@@ -2056,6 +2038,88 @@ function buildClanPendingWorkflowComponents(workflow, instructionOverride = null
               style: ButtonStyle.Primary
             }
           ]
+        }
+      ]
+    }
+  ];
+}
+
+
+
+function buildClanApplicationModalCustomId({ guildId, userId, sessionId }) {
+  return `${CLAN_APPLICATION_MODAL_PREFIX}${guildId}:${userId}:${sessionId}`;
+}
+
+function parseClanApplicationModalCustomId(customId) {
+  if (!customId || !customId.startsWith(CLAN_APPLICATION_MODAL_PREFIX)) {
+    return null;
+  }
+
+  const payload = customId.slice(CLAN_APPLICATION_MODAL_PREFIX.length);
+  const [guildId, userId, sessionId] = payload.split(':');
+  if (!guildId || !userId || !sessionId) {
+    return null;
+  }
+
+  return { guildId, userId, sessionId };
+}
+
+function createClanApplicationModalComponents() {
+  return [
+    {
+      type: ComponentType.ActionRow,
+      components: [
+        {
+          type: ComponentType.TextInput,
+          custom_id: 'robloxNick',
+          style: TextInputStyle.Short,
+          label: 'Roblox nickname',
+          required: true,
+          min_length: 1,
+          max_length: 32,
+          placeholder: 'Your Roblox username'
+        }
+      ]
+    },
+    {
+      type: ComponentType.ActionRow,
+      components: [
+        {
+          type: ComponentType.TextInput,
+          custom_id: 'rebirths',
+          style: TextInputStyle.Short,
+          label: 'How many rebirths do you have?',
+          required: true,
+          min_length: 1,
+          max_length: 100
+        }
+      ]
+    },
+    {
+      type: ComponentType.ActionRow,
+      components: [
+        {
+          type: ComponentType.TextInput,
+          custom_id: 'gamepasses',
+          style: TextInputStyle.Paragraph,
+          label: 'What gamepasses do you have?',
+          required: true,
+          min_length: 1,
+          max_length: 1000
+        }
+      ]
+    },
+    {
+      type: ComponentType.ActionRow,
+      components: [
+        {
+          type: ComponentType.TextInput,
+          custom_id: 'hours',
+          style: TextInputStyle.Short,
+          label: 'How many hours a day do you play?',
+          required: true,
+          min_length: 1,
+          max_length: 100
         }
       ]
     }
@@ -2455,6 +2519,9 @@ function ensureGuildClanState(state) {
   if (!state.clan_pending_workflows) {
     state.clan_pending_workflows = {};
   }
+  if (!state.clan_modal_sessions) {
+    state.clan_modal_sessions = {};
+  }
   return state;
 }
 
@@ -2633,88 +2700,6 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
 
-    if (pendingWorkflow.type === CLAN_PENDING_TYPE_TICKET_APPLICATION) {
-      const updatedWorkflow = {
-        ...pendingWorkflow,
-        answers: {
-          ...(pendingWorkflow.answers ?? {})
-        },
-        updatedAt: new Date().toISOString()
-      };
-
-      if (updatedWorkflow.step === CLAN_PENDING_STEP_ROBLOX_NICK) {
-        updatedWorkflow.answers.robloxNick = trimmedContent.slice(0, 32);
-        updatedWorkflow.step = CLAN_PENDING_STEP_REBIRTHS;
-        await updateClanState(message.guild.id, (nextState) => {
-          ensureGuildClanState(nextState);
-          nextState.clan_pending_workflows[message.author.id] = updatedWorkflow;
-        });
-        await message.reply({
-          components: buildClanPendingWorkflowComponents(updatedWorkflow),
-          flags: buildInteractionFlags({ componentsV2: true })
-        });
-        return;
-      }
-
-      if (updatedWorkflow.step === CLAN_PENDING_STEP_REBIRTHS) {
-        updatedWorkflow.answers.rebirths = trimmedContent;
-        updatedWorkflow.step = CLAN_PENDING_STEP_GAMEPASSES;
-        await updateClanState(message.guild.id, (nextState) => {
-          ensureGuildClanState(nextState);
-          nextState.clan_pending_workflows[message.author.id] = updatedWorkflow;
-        });
-        await message.reply({
-          components: buildClanPendingWorkflowComponents(updatedWorkflow),
-          flags: buildInteractionFlags({ componentsV2: true })
-        });
-        return;
-      }
-
-      if (updatedWorkflow.step === CLAN_PENDING_STEP_GAMEPASSES) {
-        updatedWorkflow.answers.gamepasses = trimmedContent;
-        updatedWorkflow.step = CLAN_PENDING_STEP_HOURS;
-        await updateClanState(message.guild.id, (nextState) => {
-          ensureGuildClanState(nextState);
-          nextState.clan_pending_workflows[message.author.id] = updatedWorkflow;
-        });
-        await message.reply({
-          components: buildClanPendingWorkflowComponents(updatedWorkflow),
-          flags: buildInteractionFlags({ componentsV2: true })
-        });
-        return;
-      }
-
-      if (updatedWorkflow.step === CLAN_PENDING_STEP_HOURS) {
-        updatedWorkflow.answers.hours = trimmedContent;
-        const result = await createClanTicketFromAnswers({
-          guild: message.guild,
-          guildId: message.guild.id,
-          userId: message.author.id,
-          userTag: message.author.username,
-          member: message.member,
-          clanName: updatedWorkflow.clanName,
-          answers: updatedWorkflow.answers
-        });
-
-        if (result.error) {
-          await updateClanState(message.guild.id, (nextState) => {
-            ensureGuildClanState(nextState);
-            delete nextState.clan_pending_workflows[message.author.id];
-          });
-          await message.reply({
-            components: buildTextComponents(result.error),
-            flags: buildInteractionFlags({ componentsV2: true })
-          });
-          return;
-        }
-
-        await message.reply({
-          components: buildTextComponents(result.successMessage),
-          flags: buildInteractionFlags({ componentsV2: true })
-        });
-        return;
-      }
-    }
   }
 
   const state = getPingRoleState(message.guild.id);
@@ -3157,24 +3142,127 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (!clan.ticketCategoryId) {
+        await interaction.reply({
+          components: buildTextComponents('No ticket category is set for this clan.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      if (!clan.reviewRoleId) {
+        await interaction.reply({
+          components: buildTextComponents('No review role is set for this clan.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      const sessionId = randomBytes(12).toString('hex');
+      const createdAtIso = new Date().toISOString();
       await updateClanState(interaction.guildId, (nextState) => {
         ensureGuildClanState(nextState);
-        nextState.clan_pending_workflows[interaction.user.id] = {
-          type: CLAN_PENDING_TYPE_TICKET_APPLICATION,
+        nextState.clan_modal_sessions[sessionId] = {
+          type: 'ticket_application',
+          guildId: interaction.guildId,
+          userId: interaction.user.id,
           clanName: selectedClan,
-          step: CLAN_PENDING_STEP_ROBLOX_NICK,
-          answers: {},
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          createdAt: createdAtIso,
+          updatedAt: createdAtIso
         };
+        delete nextState.clan_pending_workflows[interaction.user.id];
       });
 
+      const modalCustomId = buildClanApplicationModalCustomId({
+        guildId: interaction.guildId,
+        userId: interaction.user.id,
+        sessionId
+      });
+      await interaction.showModal({
+        custom_id: modalCustomId,
+        title: `Clan application • ${selectedClan}`.slice(0, 45),
+        components: createClanApplicationModalComponents()
+      });
+      return;
+    }
+
+    if (interaction.isModalSubmit()) {
+      const modalContext = parseClanApplicationModalCustomId(interaction.customId);
+      if (!modalContext) return;
+
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('This form can only be submitted in a server.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      const { guildId: modalGuildId, userId: modalUserId, sessionId } = modalContext;
+      if (interaction.guildId !== modalGuildId || interaction.user.id !== modalUserId) {
+        await interaction.reply({
+          components: buildTextComponents('This form is not valid for your account or server.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      const stateAfterLoad = getClanState(interaction.guildId);
+      ensureGuildClanState(stateAfterLoad);
+      const session = stateAfterLoad.clan_modal_sessions?.[sessionId];
+      if (!session || session.type !== 'ticket_application') {
+        await interaction.reply({
+          components: buildTextComponents('This form session expired. Please select your clan again.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      const createdAtMs = Date.parse(session.createdAt ?? '');
+      if (!Number.isFinite(createdAtMs) || Date.now() - createdAtMs > CLAN_MODAL_SESSION_TTL_MS) {
+        await updateClanState(interaction.guildId, (nextState) => {
+          ensureGuildClanState(nextState);
+          delete nextState.clan_modal_sessions[sessionId];
+        });
+        await interaction.reply({
+          components: buildTextComponents('This form session expired. Please select your clan again.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      const answers = {
+        robloxNick: interaction.fields.getTextInputValue('robloxNick'),
+        rebirths: interaction.fields.getTextInputValue('rebirths'),
+        gamepasses: interaction.fields.getTextInputValue('gamepasses'),
+        hours: interaction.fields.getTextInputValue('hours')
+      };
+
+      const result = await createClanTicketFromAnswers({
+        guild: interaction.guild,
+        guildId: interaction.guildId,
+        userId: interaction.user.id,
+        userTag: interaction.user.username,
+        member: interaction.member,
+        clanName: session.clanName,
+        answers
+      });
+
+      await updateClanState(interaction.guildId, (nextState) => {
+        ensureGuildClanState(nextState);
+        delete nextState.clan_modal_sessions[sessionId];
+      });
+
+      if (result.error) {
+        await interaction.reply({
+          components: buildTextComponents(result.error),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
       await interaction.reply({
-        components: buildClanPendingWorkflowComponents({
-          type: CLAN_PENDING_TYPE_TICKET_APPLICATION,
-          clanName: selectedClan,
-          step: CLAN_PENDING_STEP_ROBLOX_NICK
-        }),
+        components: buildTextComponents(result.successMessage),
         flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
       });
       return;
@@ -3216,24 +3304,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!workflow) {
           await interaction.reply({
             components: buildTextComponents('No active workflow found.'),
-            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          });
-          return;
-        }
-
-        if (workflow.type === CLAN_PENDING_TYPE_TICKET_APPLICATION) {
-          const restarted = {
-            ...workflow,
-            step: CLAN_PENDING_STEP_ROBLOX_NICK,
-            answers: {},
-            updatedAt: new Date().toISOString()
-          };
-          await updateClanState(interaction.guildId, (nextState) => {
-            ensureGuildClanState(nextState);
-            nextState.clan_pending_workflows[interaction.user.id] = restarted;
-          });
-          await interaction.reply({
-            components: buildClanPendingWorkflowComponents(restarted),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
