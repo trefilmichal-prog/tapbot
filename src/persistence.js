@@ -186,7 +186,8 @@ function getDefaultNotificationForwardConfig() {
     channelId: null,
     mode: 'poll',
     lastBridgeStatus: null,
-    lastDeliveredNotificationSignature: null
+    lastDeliveredNotificationSignature: null,
+    lastDeliveryError: null
   };
 }
 
@@ -197,6 +198,9 @@ function normalizeNotificationForwardMode(mode) {
 function normalizeNotificationForwardConfig(config) {
   const fallback = getDefaultNotificationForwardConfig();
   const parsed = config && typeof config === 'object' ? config : {};
+  const parsedLastDeliveryError = parsed.lastDeliveryError && typeof parsed.lastDeliveryError === 'object'
+    ? parsed.lastDeliveryError
+    : null;
   return {
     enabled: Boolean(parsed.enabled),
     channelId: parsed.channelId ?? null,
@@ -210,7 +214,18 @@ function normalizeNotificationForwardConfig(config) {
       : fallback.lastBridgeStatus,
     lastDeliveredNotificationSignature: typeof parsed.lastDeliveredNotificationSignature === 'string'
       ? parsed.lastDeliveredNotificationSignature
-      : fallback.lastDeliveredNotificationSignature
+      : fallback.lastDeliveredNotificationSignature,
+    lastDeliveryError: parsedLastDeliveryError
+      ? {
+          category: typeof parsedLastDeliveryError.category === 'string' ? parsedLastDeliveryError.category : 'unknown',
+          code: parsedLastDeliveryError.code ?? null,
+          message: typeof parsedLastDeliveryError.message === 'string' ? parsedLastDeliveryError.message : null,
+          channelId: parsedLastDeliveryError.channelId ?? null,
+          firstFailedAt: typeof parsedLastDeliveryError.firstFailedAt === 'string' ? parsedLastDeliveryError.firstFailedAt : null,
+          lastFailedAt: typeof parsedLastDeliveryError.lastFailedAt === 'string' ? parsedLastDeliveryError.lastFailedAt : null,
+          repeatCount: Number(parsedLastDeliveryError.repeatCount) > 0 ? Number(parsedLastDeliveryError.repeatCount) : 1
+        }
+      : fallback.lastDeliveryError
   };
 }
 
@@ -714,7 +729,8 @@ function loadNotificationForwardConfig(guildId) {
   const migrationNeeded = !parsed || typeof parsed !== 'object'
     || !Object.prototype.hasOwnProperty.call(parsed, 'mode')
     || !Object.prototype.hasOwnProperty.call(parsed, 'lastBridgeStatus')
-    || !Object.prototype.hasOwnProperty.call(parsed, 'lastDeliveredNotificationSignature');
+    || !Object.prototype.hasOwnProperty.call(parsed, 'lastDeliveredNotificationSignature')
+    || !Object.prototype.hasOwnProperty.call(parsed, 'lastDeliveryError');
 
   if (migrationNeeded) {
     try {
