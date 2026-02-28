@@ -110,7 +110,27 @@ If the daemon is not reachable, `/notifications read` and forwarding return `API
 
 ### Python daemon mode
 
-`bridge/windows_notifications_daemon.py` runs as a long-lived process, subscribes to WinRT notification-change events, and serves JSON over localhost TCP for the Node bot.
+`bridge/windows_notifications_daemon.py` runs as a long-lived process, subscribes to WinRT notification-change events, and serves JSON-over-newline frames over localhost TCP for the Node bot.
+
+Supported request frames (client -> daemon):
+
+- `{ "id": "...", "type": "ping" }` -> `{ "id": "...", "ok": true, "type": "pong" }`
+- `{ "id": "...", "type": "read_notifications" }` -> `{ "id": "...", "ok", "errorCode", "message", "notifications": [...] }`
+- `{ "id": "...", "type": "subscribe_notifications" }` -> `{ "id": "...", "ok": true, "message": "Subscribed ..." }`
+
+Push/event frames (daemon -> subscribed clients, no `id`):
+
+- `{ "type": "notifications", "notifications": [...] }`
+
+`notifications` entries are objects with:
+
+- `type` (`"notification"`)
+- `timestamp` (ISO-like string or `null`)
+- `title` (`string | null`)
+- `body` (`string | null`)
+- `app` (`string | null`)
+
+`read_notifications` remains supported for polling fallback compatibility.
 
 #### Dependencies
 

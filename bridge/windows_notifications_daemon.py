@@ -11,7 +11,7 @@ import logging
 import signal
 import threading
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional, Set
 
 
 LOGGER = logging.getLogger("windows_notifications_daemon")
@@ -47,6 +47,15 @@ class NotificationCollector:
         self._available = False
         self._access_denied = False
         self._last_error = None
+        self._snapshot_callback: Optional[
+            Callable[[List[Dict[str, Optional[str]]]], Optional[Awaitable[None]]]
+        ] = None
+
+    def set_snapshot_callback(
+        self,
+        callback: Callable[[List[Dict[str, Optional[str]]]], Optional[Awaitable[None]]],
+    ) -> None:
+        self._snapshot_callback = callback
 
     def _resolve_listener(self, UserNotificationListener):
         """Resolve listener instance across WINRT binding API variants."""
@@ -164,6 +173,12 @@ class NotificationCollector:
             cleaned.sort(key=lambda item: item.timestamp or "", reverse=True)
             with self._lock:
                 self._cache = cleaned[: self.max_cache]
+
+            if self._snapshot_callback:
+                payload = [item.to_json() for item in self._cache]
+                callback_result = self._snapshot_callback(payload)
+                if asyncio.iscoroutine(callback_result):
+                    await callback_result
         except Exception:
             LOGGER.exception("Failed to refresh notification snapshot")
 
@@ -241,6 +256,7 @@ class TcpBridgeServer:
         self.host = host
         self.port = port
         self.collector = collector
+        self._subscribers: Set[asyncio.StreamWriter] = set()
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         peer = writer.get_extra_info("peername")
@@ -251,17 +267,32 @@ class TcpBridgeServer:
                 if not line:
                     break
 
-                response = self._handle_message(line)
-                writer.write((json.dumps(response, ensure_ascii=False) + "\n").encode("utf-8"))
-                await writer.drain()
+                response = self._handle_message(line, writer)
+                if response is not None:
+                    sent = await self._send_json(writer, response)
+                    if not sent:
+                        break
         except Exception:
             LOGGER.exception("Client connection failed")
         finally:
+            self._subscribers.discard(writer)
             writer.close()
             await writer.wait_closed()
             LOGGER.info("Client disconnected: %s", peer)
 
-    def _handle_message(self, raw: bytes) -> Dict[str, object]:
+    async def _send_json(self, writer: asyncio.StreamWriter, payload: Dict[str, object]) -> bool:
+        try:
+            writer.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+            await writer.drain()
+            return True
+        except Exception:
+            self._subscribers.discard(writer)
+            LOGGER.exception("Failed to write response/event to subscriber")
+            return False
+
+    def _handle_message(
+        self, raw: bytes, writer: asyncio.StreamWriter
+    ) -> Optional[Dict[str, object]]:
         try:
             message = json.loads(raw.decode("utf-8"))
             request_id = message.get("id")
@@ -272,6 +303,13 @@ class TcpBridgeServer:
                 payload = self.collector.read()
                 payload["id"] = request_id
                 return payload
+            if message_type == "subscribe_notifications":
+                self._subscribers.add(writer)
+                return {
+                    "id": request_id,
+                    "ok": True,
+                    "message": "Subscribed to notifications push events.",
+                }
             return {
                 "id": request_id,
                 "ok": False,
@@ -288,6 +326,25 @@ class TcpBridgeServer:
                 "notifications": [],
             }
 
+    async def broadcast_notifications(
+        self, notifications: List[Dict[str, Optional[str]]]
+    ) -> None:
+        if not self._subscribers:
+            return
+
+        frame: Dict[str, object] = {
+            "type": "notifications",
+            "notifications": notifications,
+        }
+        dead_subscribers: List[asyncio.StreamWriter] = []
+        for subscriber in self._subscribers:
+            sent = await self._send_json(subscriber, frame)
+            if not sent:
+                dead_subscribers.append(subscriber)
+
+        for subscriber in dead_subscribers:
+            self._subscribers.discard(subscriber)
+
     async def run(self) -> None:
         server = await asyncio.start_server(self.handle_client, self.host, self.port)
         addresses = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
@@ -299,9 +356,10 @@ class TcpBridgeServer:
 async def async_main(host: str, port: int) -> int:
     loop = asyncio.get_running_loop()
     collector = NotificationCollector(loop=loop)
+    bridge = TcpBridgeServer(host=host, port=port, collector=collector)
+    collector.set_snapshot_callback(bridge.broadcast_notifications)
     await collector.start()
 
-    bridge = TcpBridgeServer(host=host, port=port, collector=collector)
     await bridge.run()
     return 0
 
