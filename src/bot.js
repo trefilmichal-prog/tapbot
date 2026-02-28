@@ -102,6 +102,20 @@ const TICKET_STATUS_EMOJI = {
   [CLAN_TICKET_DECISION_REJECT]: '🔴'
 };
 
+function buildInteractionFlags({ componentsV2 = false, ephemeral = false } = {}) {
+  let flags = 0;
+
+  if (componentsV2) {
+    flags |= MessageFlags.IsComponentsV2;
+  }
+
+  if (ephemeral) {
+    flags |= MessageFlags.Ephemeral;
+  }
+
+  return flags;
+}
+
 function buildPrivateMessageCreatedComponents({ fromUserId, toUserId }) {
   return [
     {
@@ -634,7 +648,7 @@ async function sendNotificationDeliveryFailureAlert(guildId, guild, channelId, s
       components: buildTextComponents(
         `⚠️ Notification forwarding delivery failed for <#${channelId}>: ${errorLine}. ${storedError.message ?? ''}`.trim()
       ),
-      flags: MessageFlags.IsComponentsV2
+      flags: buildInteractionFlags({ componentsV2: true })
     });
   } catch (error) {
     console.warn(`Failed to send notification forwarding delivery alert to guild ${guildId}:`, error);
@@ -750,7 +764,7 @@ async function sendNotificationForwardSystemAlert(guildId, guild, config, result
       components: buildTextComponents(
         `⚠️ Notification forwarding is enabled, but host notifications cannot be read (${result.errorCode}). ${result.message ?? ''}`.trim()
       ),
-      flags: MessageFlags.IsComponentsV2
+      flags: buildInteractionFlags({ componentsV2: true })
     });
     notificationForwardSystemAlertSentByGuild.set(alertKey, Date.now());
   } catch (error) {
@@ -956,7 +970,7 @@ async function dispatchForwardNotificationsToGuilds(readyClient, notifications) 
       try {
         await channel.send({
           components: buildTextComponents(buildForwardNotificationMessage(notification)),
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
         await persistNotificationForwardRuntimeState(guildId, {
           lastDeliveredNotificationSignature: signature
@@ -2164,12 +2178,12 @@ async function createClanTicketFromAnswers({ guild, guildId, userId, userTag, me
         activeReviewRoleId: clan.reviewRoleId
       }
     ),
-    flags: MessageFlags.IsComponentsV2
+    flags: buildInteractionFlags({ componentsV2: true })
   });
 
   await ticketChannel.send({
     components: buildRequiredScreenshotsNotice(clan.reviewRoleId),
-    flags: MessageFlags.IsComponentsV2
+    flags: buildInteractionFlags({ componentsV2: true })
   });
 
   await updateClanState(guildId, (nextState) => {
@@ -2238,7 +2252,7 @@ async function refreshPingRolePanelForGuild(guild, guildId) {
   try {
     await message.edit({
       components: buildPingRoleSelectComponents(guild, state, null),
-      flags: MessageFlags.IsComponentsV2
+      flags: buildInteractionFlags({ componentsV2: true })
     });
   } catch (error) {
     console.warn(`Failed to refresh ping roles panel message ${panelConfig.messageId}:`, error);
@@ -2295,7 +2309,7 @@ async function refreshPingRolePanelsOnStartup(readyClient) {
     try {
       await message.edit({
         components: buildPingRoleSelectComponents(guild, state, null),
-        flags: MessageFlags.IsComponentsV2
+        flags: buildInteractionFlags({ componentsV2: true })
       });
     } catch (error) {
       console.warn(`Failed to refresh ping roles panel message ${panelConfig.messageId}:`, error);
@@ -2351,7 +2365,7 @@ async function refreshClanPanelForGuild(guild, guildId) {
   try {
     await message.edit({
       components: buildClanPanelComponents(guild, clanMap, panelDescription),
-      flags: MessageFlags.IsComponentsV2
+      flags: buildInteractionFlags({ componentsV2: true })
     });
   } catch (error) {
     console.warn(`Failed to refresh clan panel message ${panelConfig.messageId}:`, error);
@@ -2404,7 +2418,7 @@ async function refreshClanPanelsOnStartup(readyClient) {
     try {
       await message.edit({
         components: buildClanPanelComponents(guild, clanMap, panelDescription),
-        flags: MessageFlags.IsComponentsV2
+        flags: buildInteractionFlags({ componentsV2: true })
       });
     } catch (error) {
       console.warn(`Failed to refresh clan panel message ${config.messageId}:`, error);
@@ -2566,7 +2580,7 @@ async function sendWelcomeMessage(member, settings) {
   const welcomeComponents = buildWelcomeComponents(member, welcomeMessage);
   await settings.channel.send({
     components: welcomeComponents,
-    flags: MessageFlags.IsComponentsV2
+    flags: buildInteractionFlags({ componentsV2: true })
   });
 }
 
@@ -2593,7 +2607,7 @@ client.on(Events.MessageCreate, async (message) => {
     if (!trimmedContent) {
       await message.reply({
         components: buildClanPendingWorkflowComponents(pendingWorkflow),
-        flags: MessageFlags.IsComponentsV2
+        flags: buildInteractionFlags({ componentsV2: true })
       });
       return;
     }
@@ -2614,7 +2628,7 @@ client.on(Events.MessageCreate, async (message) => {
       await refreshClanPanelForGuild(message.guild, message.guild.id);
       await message.reply({
         components: buildTextComponents('Clan panel description saved.'),
-        flags: MessageFlags.IsComponentsV2
+        flags: buildInteractionFlags({ componentsV2: true })
       });
       return;
     }
@@ -2637,7 +2651,7 @@ client.on(Events.MessageCreate, async (message) => {
         });
         await message.reply({
           components: buildClanPendingWorkflowComponents(updatedWorkflow),
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
         return;
       }
@@ -2651,7 +2665,7 @@ client.on(Events.MessageCreate, async (message) => {
         });
         await message.reply({
           components: buildClanPendingWorkflowComponents(updatedWorkflow),
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
         return;
       }
@@ -2665,7 +2679,7 @@ client.on(Events.MessageCreate, async (message) => {
         });
         await message.reply({
           components: buildClanPendingWorkflowComponents(updatedWorkflow),
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
         return;
       }
@@ -2689,14 +2703,14 @@ client.on(Events.MessageCreate, async (message) => {
           });
           await message.reply({
             components: buildTextComponents(result.error),
-            flags: MessageFlags.IsComponentsV2
+            flags: buildInteractionFlags({ componentsV2: true })
           });
           return;
         }
 
         await message.reply({
           components: buildTextComponents(result.successMessage),
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
         return;
       }
@@ -2766,7 +2780,7 @@ client.on(Events.MessageDelete, async (message) => {
   try {
     await logChannel.send({
       components,
-      flags: MessageFlags.IsComponentsV2
+      flags: buildInteractionFlags({ componentsV2: true })
     });
   } catch (error) {
     console.warn('Failed to send message delete log:', error);
@@ -2804,7 +2818,7 @@ client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
   try {
     await logChannel.send({
       components,
-      flags: MessageFlags.IsComponentsV2,
+      flags: buildInteractionFlags({ componentsV2: true }),
       allowedMentions: {
         parse: [],
         users: [],
@@ -2824,8 +2838,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
           await interaction.reply({
             components: buildTextComponents('This selection can only be used in a server.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -2834,8 +2847,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!targetChannelId || targetChannelId !== interaction.channelId) {
           await interaction.reply({
             components: buildTextComponents('This move selector is no longer valid for this channel.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -2844,8 +2856,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!selectedClanName || selectedClanName === 'no_clans_available') {
           await interaction.reply({
             components: buildTextComponents('No valid clan was selected.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -2855,8 +2866,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!ticketEntry) {
           await interaction.reply({
             components: buildTextComponents('Ticket was not found or is no longer active.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -2868,8 +2878,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const remaining = formatCooldownRemaining(TICKET_MOVE_COOLDOWN_MS - elapsedSinceLastMoveMs);
             await interaction.reply({
               components: buildTextComponents(`Move is on cooldown. Time remaining: ${remaining}.`),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
           }
@@ -2878,8 +2887,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (ticketEntry.status && ticketEntry.status !== CLAN_TICKET_DECISION_ACCEPT) {
           await interaction.reply({
             components: buildTextComponents('This ticket has already been decided and can no longer be moved.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -2888,8 +2896,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!clan) {
           await interaction.reply({
             components: buildTextComponents('Clan for this ticket was not found.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -2902,8 +2909,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             components: buildTextComponents(
               `You do not have permission to change the ticket review role. Required active review role: ${formatEffectiveReviewRoleText(effectiveReviewRoleId)}.`
             ),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -2912,8 +2918,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!targetClan) {
           await interaction.reply({
             components: buildTextComponents('Selected clan no longer exists.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -2934,8 +2939,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!nextChannelName) {
           await interaction.reply({
             components: buildTextComponents('Unable to rename ticket channel for the selected clan.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -2973,8 +2977,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 console.warn('Failed to move ticket channel for clan reassignment:', error);
                 await interaction.reply({
                   components: buildTextComponents('Move failed because the channel could not be moved to the target category. Please check bot permissions (Manage Channels / Manage Roles) and try again.'),
-                  flags: MessageFlags.IsComponentsV2,
-                  ephemeral: true
+                  flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
                 });
                 return;
               }
@@ -2986,16 +2989,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
             console.warn('Failed to update ticket channel permissions for new clan review role:', error);
             await interaction.reply({
               components: buildTextComponents('Move failed because channel update (including rename) could not be completed.'),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
           }
         } else {
           await interaction.reply({
             components: buildTextComponents('Move failed because this channel type cannot be renamed.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3020,7 +3021,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
             await message.edit({
               components: buildTicketSummary(refreshedEntry.answers ?? {}, refreshedEntry),
-              flags: MessageFlags.IsComponentsV2
+              flags: buildInteractionFlags({ componentsV2: true })
             });
           } catch (error) {
             console.warn('Failed to update ticket summary message after review-role change:', error);
@@ -3058,14 +3059,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
             components: buildTextComponents(
               `<@${refreshedEntry.applicantId}> Your accepted ticket was moved to **${selectedClanName}**.`
             ),
-            flags: MessageFlags.IsComponentsV2
+            flags: buildInteractionFlags({ componentsV2: true })
           });
         }
 
         await interaction.reply({
           components: buildTextComponents(`Ticket clan updated to **${selectedClanName}**. Channel renamed to **${nextChannelName}**. Review role changed from ${formatEffectiveReviewRoleText(effectiveReviewRoleId)} to ${formatEffectiveReviewRoleText(nextReviewRoleId)}.${moveSuffix}${applicantRoleChangeSuffix}${applicantAccessSuffix}`),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3074,8 +3074,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
           await interaction.reply({
             components: buildTextComponents('This selection can only be used in a server.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3111,8 +3110,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           console.error('Failed to update ping roles for member:', error);
           await interaction.reply({
             components: buildTextComponents('Failed to update roles.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3126,8 +3124,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents(responseLines.join('\n')),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3136,8 +3133,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This selection can only be used in a server.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3146,8 +3142,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!selectedClan || selectedClan === 'no_clans_available') {
         await interaction.reply({
           components: buildTextComponents('No clans are available to select.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3157,8 +3152,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!clan) {
         await interaction.reply({
           components: buildTextComponents('The selected clan was not found.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3181,8 +3175,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           clanName: selectedClan,
           step: CLAN_PENDING_STEP_ROBLOX_NICK
         }),
-        flags: MessageFlags.IsComponentsV2,
-        ephemeral: true
+        flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
       });
       return;
     }
@@ -3192,8 +3185,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!interaction.inGuild()) {
           await interaction.reply({
             components: buildTextComponents('This action can only be used in a server.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3205,8 +3197,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents('Workflow cancelled.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3215,8 +3206,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!interaction.inGuild()) {
           await interaction.reply({
             components: buildTextComponents('This action can only be used in a server.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3226,8 +3216,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!workflow) {
           await interaction.reply({
             components: buildTextComponents('No active workflow found.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3245,8 +3234,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
           await interaction.reply({
             components: buildClanPendingWorkflowComponents(restarted),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3262,8 +3250,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
         await interaction.reply({
           components: buildClanPendingWorkflowComponents(restarted),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3272,8 +3259,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
           await interaction.reply({
             components: buildTextComponents('This action can only be used in a server.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3282,8 +3268,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!messageId) {
           await interaction.reply({
             components: buildTextComponents('Invalid private message identifier.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3293,8 +3278,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!entry) {
           await interaction.reply({
             components: buildTextComponents('This private message was not found.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3305,16 +3289,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!canRead) {
           await interaction.reply({
             components: buildTextComponents('You are not allowed to read this private message.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
 
         await interaction.reply({
           components: buildPrivateMessageContentComponents(entry),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3323,8 +3305,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
           await interaction.reply({
             components: buildTextComponents('This action can only be used in a server.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3335,8 +3316,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!gameId || !RPS_MOVES.includes(move)) {
           await interaction.reply({
             components: buildTextComponents('Invalid RPS choice.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3347,8 +3327,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!game) {
           await interaction.reply({
             components: buildTextComponents('This game is no longer active.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3357,8 +3336,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!allowedPlayers.includes(interaction.user.id)) {
           await interaction.reply({
             components: buildTextComponents('You are not part of this game.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3366,8 +3344,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (game.status === 'complete') {
           await interaction.reply({
             components: buildTextComponents('This game has already finished.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3375,8 +3352,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (game.moves?.[interaction.user.id]) {
           await interaction.reply({
             components: buildTextComponents('You have already submitted your choice.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3448,15 +3424,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!updatedGame) {
           await interaction.reply({
             components: buildTextComponents('This game is no longer available.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
 
         await interaction.update({
           components: buildRpsMessageComponents(updatedGame, updatedState),
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
         return;
       }
@@ -3468,8 +3443,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This action can only be used in a server.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3487,8 +3461,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ].includes(action) === false && !isPublicMenuOpenAction) {
         await interaction.reply({
           components: buildTextComponents('Invalid ticket action.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3498,8 +3471,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!ticketEntry) {
         await interaction.reply({
           components: buildTextComponents('Ticket was not found or is no longer active.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3508,8 +3480,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!clan) {
         await interaction.reply({
           components: buildTextComponents('Clan for this ticket was not found.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3522,8 +3493,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           components: buildTextComponents(
             `You do not have permission to decide on this ticket. Required active review role: ${formatEffectiveReviewRoleText(effectiveReviewRoleId)}.`
           ),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3534,8 +3504,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             ...ticketEntry,
             openedBy: interaction.user.id
           }),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3544,8 +3513,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (ticketEntry.status && ticketEntry.status !== CLAN_TICKET_DECISION_ACCEPT) {
           await interaction.reply({
             components: buildTextComponents('This ticket has already been decided and can no longer be moved.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3553,8 +3521,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const options = buildReassignClanOptions(state.clan_clans, ticketEntry.clanName);
         await interaction.reply({
           components: buildReviewRoleSelectComponents(interaction.channelId, ticketEntry.clanName, options),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3562,8 +3529,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (ticketEntry.status && action !== CLAN_TICKET_DECISION_REMOVE) {
         await interaction.reply({
           components: buildTextComponents('This ticket has already been decided.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3595,7 +3561,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
             await message.edit({
               components: buildTicketSummary(refreshedEntry.answers ?? {}, refreshedEntry),
-              flags: MessageFlags.IsComponentsV2
+              flags: buildInteractionFlags({ componentsV2: true })
             });
           } catch (error) {
             console.warn('Failed to update ticket summary message:', error);
@@ -3612,8 +3578,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents('Ticket was removed.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3664,7 +3629,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
           await message.edit({
             components: buildTicketSummary(refreshedEntry.answers ?? {}, refreshedEntry),
-            flags: MessageFlags.IsComponentsV2
+            flags: buildInteractionFlags({ componentsV2: true })
           });
         } catch (error) {
           console.warn('Failed to update ticket summary message:', error);
@@ -3676,7 +3641,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           components: buildTextComponents(
             `<@${refreshedEntry.applicantId}> Your ticket was accepted.`
           ),
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
       }
 
@@ -3694,8 +3659,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             ? `Decision saved.\n\n${reviewerWarnings.join('\n')}`
             : 'Decision saved.'
         ),
-        flags: MessageFlags.IsComponentsV2,
-        ephemeral: true
+        flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
       });
       return;
     }
@@ -3706,8 +3670,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This command can only be used in a server.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3718,8 +3681,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (opponent && opponent.id === interaction.user.id) {
           await interaction.reply({
             components: buildTextComponents('You cannot play against yourself.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3727,8 +3689,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (opponent?.bot && opponent.id !== client.user?.id) {
           await interaction.reply({
             components: buildTextComponents('You cannot play against other bots.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3753,7 +3714,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const response = await interaction.reply({
           components: buildRpsMessageComponents(game, getRpsState(interaction.guildId)),
-          flags: MessageFlags.IsComponentsV2,
+          flags: buildInteractionFlags({ componentsV2: true }),
           fetchReply: true
         });
 
@@ -3793,7 +3754,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents(['🏆 **RPS Stats**', '', ...lines].join('\n')),
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
         return;
       }
@@ -3811,8 +3772,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents('RPS stats have been reset.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
       }
       return;
@@ -3822,8 +3782,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This command can only be used in a server.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3831,8 +3790,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!hasAdminPermission(interaction.member)) {
         await interaction.reply({
           components: buildTextComponents('You do not have permission to use this command.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3846,8 +3804,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           : 'Permission role was cleared.';
         await interaction.reply({
           components: buildTextComponents(response),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3856,8 +3813,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (channel && channel.type !== ChannelType.GuildText) {
           await interaction.reply({
             components: buildTextComponents('Please select a text channel.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -3870,8 +3826,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           : 'Log channel was cleared.';
         await interaction.reply({
           components: buildTextComponents(response),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -3879,7 +3834,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const version = await getBotVersion();
         await interaction.reply({
           components: buildTextComponents(`Bot version: ${version}`),
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
         return;
       }
@@ -3898,8 +3853,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               ]
             }
           ],
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
 
         try {
@@ -3914,8 +3868,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               components: buildTextComponents(
                 'Update failed or restart did not complete. Check the logs.'
               ),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
           } catch (followUpError) {
             console.error('Failed to send update failure notice:', followUpError);
@@ -4141,8 +4094,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents(summary),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4155,8 +4107,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (!channel || channel.type !== ChannelType.GuildText) {
             await interaction.reply({
               components: buildTextComponents('Please select a text channel.'),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
           }
@@ -4166,8 +4117,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (!/^\d{17,20}$/.test(channelIdRaw)) {
             await interaction.reply({
               components: buildTextComponents('Please provide a valid Discord channel ID.'),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
           }
@@ -4182,8 +4132,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (!channel || channel.type !== ChannelType.GuildText) {
             await interaction.reply({
               components: buildTextComponents('Channel not found or is not a text channel in this server.'),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
           }
@@ -4200,8 +4149,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents(`Welcome settings saved for <#${channelId}>.`),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
       }
       return;
@@ -4213,8 +4161,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This command can only be used in a server.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4222,8 +4169,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!hasAdminPermission(interaction.member)) {
         await interaction.reply({
           components: buildTextComponents('You do not have permission to use this command.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4244,7 +4190,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents(formatOfficerStatsDisplay(officer.id, stats)),
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
         return;
       }
@@ -4254,8 +4200,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This command can only be used in a server.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4268,8 +4213,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!hasSettingsOverviewPermission(interaction.member, state)) {
           await interaction.reply({
             components: buildTextComponents('You do not have permission to view ticket overview.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4301,8 +4245,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             statusFilter,
             clanFilter
           }),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4313,8 +4256,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!ticketEntry) {
         await interaction.reply({
           components: buildTextComponents('This channel is not an active clan ticket.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4323,8 +4265,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!clan) {
         await interaction.reply({
           components: buildTextComponents('Clan for this ticket was not found.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4337,8 +4278,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           components: buildTextComponents(
             `You do not have permission to open ticket settings. Required active review role: ${formatEffectiveReviewRoleText(effectiveReviewRoleId)}.`
           ),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4348,8 +4288,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ...ticketEntry,
           openedBy: interaction.user.id
         }),
-        flags: MessageFlags.IsComponentsV2,
-        ephemeral: true
+        flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
       });
       return;
     }
@@ -4358,8 +4297,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This command can only be used in a server.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4367,8 +4305,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!hasPingRolesPermission(interaction.member)) {
         await interaction.reply({
           components: buildTextComponents('You do not have permission to use this command.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4378,8 +4315,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!hasAdminPermission(interaction.member)) {
           await interaction.reply({
             components: buildTextComponents('You do not have permission to use this command.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4388,8 +4324,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!channel || channel.type !== ChannelType.GuildText) {
           await interaction.reply({
             components: buildTextComponents('Please select a text channel.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4410,12 +4345,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (panelMessage) {
           await panelMessage.edit({
             components: buildPingRoleSelectComponents(interaction.guild, state, null),
-            flags: MessageFlags.IsComponentsV2
+            flags: buildInteractionFlags({ componentsV2: true })
           });
         } else {
           panelMessage = await channel.send({
             components: buildPingRoleSelectComponents(interaction.guild, state, null),
-            flags: MessageFlags.IsComponentsV2
+            flags: buildInteractionFlags({ componentsV2: true })
           });
         }
 
@@ -4426,8 +4361,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents('Ping role panel saved.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4441,8 +4375,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             state,
             interaction.member.id
           ),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4450,8 +4383,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!hasAdminPermission(interaction.member)) {
         await interaction.reply({
           components: buildTextComponents('You do not have permission to use this command.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4491,8 +4423,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 ? `Available roles set (${roleIds.length}).`
                 : 'Role list was cleared.'
             ),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4501,8 +4432,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (!roleIds.length) {
             await interaction.reply({
               components: buildTextComponents('Select at least one role to add.'),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
           }
@@ -4520,8 +4450,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           await interaction.reply({
             components: buildTextComponents(`Roles added (${roleIds.length}).`),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4530,8 +4459,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (!roleIds.length) {
             await interaction.reply({
               components: buildTextComponents('Select at least one role to remove.'),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
           }
@@ -4560,8 +4488,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           await interaction.reply({
             components: buildTextComponents(`Roles removed (${roleIds.length}).`),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4571,8 +4498,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ensurePingRoleState(state);
           await interaction.reply({
             components: buildTextComponents(formatRoleList(state.available_roles)),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4585,8 +4511,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (!channel || channel.type !== ChannelType.GuildText) {
             await interaction.reply({
               components: buildTextComponents('Please select a text channel.'),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
           }
@@ -4596,8 +4521,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (!state.available_roles.includes(role.id)) {
             await interaction.reply({
               components: buildTextComponents('That role is not in the list of available roles.'),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
           }
@@ -4609,8 +4533,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           await interaction.reply({
             components: buildTextComponents(`Route set: <#${channel.id}> → <@&${role.id}>.`),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4620,8 +4543,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (!channel || channel.type !== ChannelType.GuildText) {
             await interaction.reply({
               components: buildTextComponents('Please select a text channel.'),
-              flags: MessageFlags.IsComponentsV2,
-              ephemeral: true
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
           }
@@ -4641,8 +4563,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 ? `Route for <#${channel.id}> was removed.`
                 : 'There is no route for this channel.'
             ),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4652,8 +4573,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ensurePingRoleState(state);
           await interaction.reply({
             components: buildTextComponents(formatRouteList(state.channel_routes)),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
         }
       }
@@ -4664,8 +4584,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This command can only be used in a server.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4673,8 +4592,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!hasAdminPermission(interaction.member)) {
         await interaction.reply({
           components: buildTextComponents('You do not have permission to use this command.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4685,8 +4603,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!channel || channel.type !== ChannelType.GuildText) {
           await interaction.reply({
             components: buildTextComponents('Please select a text channel.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4706,8 +4623,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           components: buildTextComponents(
             `Automatic notification forwarding was enabled for <#${channel.id}>. Startup mode: ${getNotificationStartupModeLabel(startupMode)}.`
           ),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4726,8 +4642,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents('Automatic notification forwarding was disabled.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4762,8 +4677,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await interaction.reply({
           components: buildTextComponents(statusParts.join('\n')),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4783,8 +4697,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           await interaction.reply({
             components: buildTextComponents(message),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4792,16 +4705,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!result.notifications.length) {
           await interaction.reply({
             components: buildTextComponents('No notifications were found in Windows Action Center.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
 
         await interaction.reply({
           components: buildTextComponents(buildNotificationReadResponse(result.notifications)),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
       }
       return;
@@ -4811,8 +4722,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This command can only be used in a server.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4826,8 +4736,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!content) {
           await interaction.reply({
             components: buildTextComponents('Message content cannot be empty.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4835,8 +4744,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (targetUser.id === interaction.user.id) {
           await interaction.reply({
             components: buildTextComponents('You cannot send a private message to yourself.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4844,8 +4752,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (targetUser.bot) {
           await interaction.reply({
             components: buildTextComponents('You cannot send a private message to bots.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4870,7 +4777,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }),
             ...buildPrivateMessageReadButton(privateMessageId)
           ],
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
       }
       return;
@@ -4879,7 +4786,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === 'ping') {
       await interaction.reply({
         components: buildTextComponents('Pong!'),
-        flags: MessageFlags.IsComponentsV2
+        flags: buildInteractionFlags({ componentsV2: true })
       });
     }
 
@@ -4889,8 +4796,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!interaction.inGuild()) {
           await interaction.reply({
             components: buildTextComponents('This command can only be used in a server.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4900,8 +4806,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (!settings) {
           await interaction.reply({
             components: buildTextComponents('No welcome channel is configured.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -4910,15 +4815,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await sendWelcomeMessage(member, settings);
           await interaction.reply({
             components: buildTextComponents('Welcome message was sent.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
         } catch (e) {
           console.error('Failed to send manual welcome message:', e);
           await interaction.reply({
             components: buildTextComponents('Failed to send welcome message.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
         }
       }
@@ -4928,8 +4831,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This command can only be used in a server.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4937,8 +4839,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!hasClanPanelPermission(interaction.member)) {
         await interaction.reply({
           components: buildTextComponents('You do not have permission to use the clan panel.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -4995,8 +4896,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             components: buildTextComponents(
               existed ? `Clan "${name}" already exists.` : `Clan "${name}" was added.`
             ),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -5074,8 +4974,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 ? `Clan "${name}" was updated.${syncSummary}`
                 : `Clan "${name}" was not found.`
             ),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -5100,8 +4999,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             components: buildTextComponents(
               removed ? `Clan "${name}" was deleted.` : `Clan "${name}" was not found.`
             ),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -5119,8 +5017,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           await interaction.reply({
             components: buildTextComponents(listText),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -5144,8 +5041,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           await interaction.reply({
             components: buildTextComponents('Clan panel description saved.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -5178,8 +5074,7 @@ Send the new clan panel description as a normal message. Send \`-\` to clear des
             },
             instructions
           ),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -5189,8 +5084,7 @@ Send the new clan panel description as a normal message. Send \`-\` to clear des
         if (!channel || channel.type !== ChannelType.GuildText) {
           await interaction.reply({
             components: buildTextComponents('Please select a text channel.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
@@ -5200,7 +5094,7 @@ Send the new clan panel description as a normal message. Send \`-\` to clear des
         const panelDescription = state.clan_panel_configs?.description ?? null;
         const panelMessage = await channel.send({
           components: buildClanPanelComponents(interaction.guild, clanMap, panelDescription),
-          flags: MessageFlags.IsComponentsV2
+          flags: buildInteractionFlags({ componentsV2: true })
         });
 
         await updateClanState(guildId, (nextState) => {
@@ -5215,8 +5109,7 @@ Send the new clan panel description as a normal message. Send \`-\` to clear des
 
         await interaction.reply({
           components: buildTextComponents('Clan panel was posted and saved.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
       }
@@ -5235,8 +5128,7 @@ Send the new clan panel description as a normal message. Send \`-\` to clear des
           components: buildTextComponents(
             enabled ? 'Ticket reminders were enabled.' : 'Ticket reminders were disabled.'
           ),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
       }
     }
@@ -5247,14 +5139,12 @@ Send the new clan panel description as a normal message. Send \`-\` to clear des
         if (interaction.deferred || interaction.replied) {
           await interaction.followUp({
             components: buildTextComponents('An error occurred while processing.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
         } else {
           await interaction.reply({
             components: buildTextComponents('An error occurred while processing.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
         }
       }
