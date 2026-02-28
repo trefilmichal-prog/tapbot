@@ -3262,7 +3262,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           try {
             channel = await interaction.guild.channels.fetch(channelId);
           } catch (error) {
-            if (error?.name === 'DiscordAPIError' && error?.code === 10003) {
+            const isUnknownChannelError = Number(error?.code) === 10003;
+            if (isUnknownChannelError) {
               console.warn('Removing stale ticket visibility sync entry because channel no longer exists.', {
                 channelId
               });
