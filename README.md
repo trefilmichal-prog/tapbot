@@ -63,8 +63,11 @@ What it does:
 
 - validates `config.json`
 - starts `src/bot.js` in PM2 as `tapbot`
+- starts/restarts a second PM2 process `tapbot-winrt-daemon` that runs:
+  - `python bridge/windows_notifications_daemon.py --host 127.0.0.1 --port 8765`
+- if Python or `winrt` is missing, logs a clear warning into `logs/winrt-daemon-check.log` and keeps bot process running
 - writes logs to `logs/`
-- saves PM2 process state
+- saves PM2 process state (`pm2 save`)
 
 ### Windows restart script
 
@@ -75,9 +78,11 @@ Use:
 What it does:
 
 - checks whether PM2 process `tapbot` exists
-- starts a new process if missing
-- otherwise stops and starts the existing process
-- saves PM2 process state
+- starts a new bot process if missing
+- otherwise restarts the existing bot process
+- checks/restarts PM2 process `tapbot-winrt-daemon` (Python WinRT daemon)
+- if Python or `winrt` is missing, writes warning to `logs/winrt-daemon-check.log` and continues with bot-only restart
+- saves PM2 process state (`pm2 save`)
 
 ## Update workflow
 
@@ -146,11 +151,42 @@ On the Windows host where the bot runs:
 python bridge/windows_notifications_daemon.py --host 127.0.0.1 --port 8765
 ```
 
-Recommended: run it as a service (Task Scheduler / NSSM / PM2 ecosystem wrapper) so it starts automatically after reboot.
+The provided `run.bat` and `restart.bat` now manage this daemon automatically via PM2 as `tapbot-winrt-daemon` and persist it using `pm2 save`, so both bot and daemon restore after reboot (when PM2 startup integration is installed on the host).
+
+
+#### PM2 verification (both processes)
+
+After `run.bat` or `restart.bat`:
+
+```powershell
+pm2 status
+```
+
+You should see both entries:
+
+- `tapbot`
+- `tapbot-winrt-daemon`
+
+To verify what will be restored after reboot:
+
+```powershell
+pm2 save
+pm2 resurrect
+pm2 status
+```
+
+If only `tapbot` is present, review daemon preflight logs:
+
+- `logs/winrt-daemon-check.log`
+- `logs/pm2-winrt-daemon-error.log`
 
 #### Troubleshooting daemon mode
 
-- `API_UNAVAILABLE`: daemon is down, wrong `WINRT_NOTIFICATIONS_DAEMON_HOST/PORT`, or WinRT Python bindings are missing.
+- `API_UNAVAILABLE`: daemon is down, wrong `WINRT_NOTIFICATIONS_DAEMON_HOST/PORT`, Python is missing, or WinRT Python bindings are missing.
+  - Check `pm2 status` for `tapbot-winrt-daemon` state.
+  - Check `logs/winrt-daemon-check.log` for preflight failures (missing `python`/`py` or missing `winrt`).
+  - Check `logs/pm2-winrt-daemon-error.log` for runtime daemon errors.
+  - Confirm daemon endpoint matches `WINRT_NOTIFICATIONS_DAEMON_HOST/PORT` (default `127.0.0.1:8765`).
 - `ACCESS_DENIED`: Windows notification permission was not granted for the daemon process user session.
 - Frequent reconnect logs: daemon is restarting or local firewall blocks localhost TCP policy.
 - Empty reads with daemon running: check if Windows Action Center has notifications and that app notifications are enabled.
