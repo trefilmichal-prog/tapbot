@@ -149,7 +149,14 @@ export async function readWindowsToastNotifications() {
     }
 
     const combined = `${errorStderr}\n${errorStdout}`.toLowerCase();
-    if (combined.includes('usenotificationlistener') || combined.includes('windows.ui.notifications')) {
+    const winRtUnavailableMarkers = [
+      'usernotificationlistener',
+      'windows.ui.notifications',
+      'system.runtime.windowsruntime',
+      'winrt'
+    ];
+
+    if (winRtUnavailableMarkers.some((marker) => combined.includes(marker))) {
       return {
         ok: false,
         errorCode: 'API_UNAVAILABLE',
