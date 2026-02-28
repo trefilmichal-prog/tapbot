@@ -3353,6 +3353,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
               deny: overwrite.deny.bitfield
             }));
 
+          const reviewRoleId = normalizeDiscordSnowflake(clan.reviewRoleId);
+          const reviewRoleTarget = reviewRoleId
+            ? interaction.guild.roles.resolve(reviewRoleId)
+              ?? await interaction.guild.roles.fetch(reviewRoleId).catch(() => null)
+            : null;
+
           const applicantOverwriteTarget =
             interaction.guild.members.resolve(applicantId)
             ?? interaction.guild.roles.resolve(applicantId)
@@ -3377,6 +3383,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
               SendMessages: true,
               ReadMessageHistory: true
             });
+
+            if (reviewRoleTarget) {
+              await channel.permissionOverwrites.edit(reviewRoleTarget, {
+                ViewChannel: true,
+                SendMessages: true,
+                ReadMessageHistory: true
+              });
+            } else if (reviewRoleId) {
+              console.warn('Ticket visibility sync could not resolve clan review role while syncing ticket channel.', {
+                channelId,
+                reviewRoleId,
+                clanName: entry.clanName
+              });
+            }
           } catch (error) {
             if (error?.name === 'DiscordAPIError' && (error?.code === 10009 || error?.code === 10011 || error?.code === 50035)) {
               console.warn('Skipping ticket visibility sync entry due to inconsistent data while applying category overwrites.', {
