@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
+import enum
 import importlib
 import json
 import logging
@@ -133,11 +134,50 @@ class NotificationCollector:
             "UserNotificationKinds",
             "UserNotificationKind",
             "NotificationKinds",
+            "NotificationKind",
+            "notification_kinds",
+            "notification_kinds.NotificationKinds",
+            "notification_kinds.NotificationKind",
             "notification_kinds.UserNotificationKinds",
             "notification_kinds.UserNotificationKind",
+            "models.notification_kinds",
+            "models.NotificationKinds",
+            "models.NotificationKind",
             "models.UserNotificationKinds",
             "models.UserNotificationKind",
+            "user_notification_kinds",
+            "user_notification_kinds.UserNotificationKinds",
+            "user_notification_kinds.UserNotificationKind",
+            "user_notification_kinds.NotificationKinds",
+            "user_notification_kinds.NotificationKind",
+            "models.user_notification_kinds",
+            "models.user_notification_kinds.UserNotificationKinds",
+            "models.user_notification_kinds.UserNotificationKind",
+            "models.user_notification_kinds.NotificationKinds",
+            "models.user_notification_kinds.NotificationKind",
         )
+
+        def has_toast_member(enum_candidate) -> bool:
+            for member_name in ("TOAST", "Toast"):
+                try:
+                    if hasattr(enum_candidate, member_name):
+                        return True
+                except Exception:
+                    continue
+            return False
+
+        def as_enum_holder(candidate):
+            if isinstance(candidate, enum.EnumMeta):
+                return candidate
+
+            if has_toast_member(candidate):
+                return candidate
+
+            if hasattr(candidate, "__dict__"):
+                for value in vars(candidate).values():
+                    if isinstance(value, enum.EnumMeta) and has_toast_member(value):
+                        return value
+            return None
 
         try:
             management_module = importlib.import_module(module_name)
@@ -151,18 +191,58 @@ class NotificationCollector:
             try:
                 for attribute in candidate_path.split("."):
                     current_value = getattr(current_value, attribute)
+                resolved = as_enum_holder(current_value)
+                if resolved is None:
+                    attempted_symbols.append(
+                        f"{candidate_path} found non-enum/non-toast object ({type(current_value).__name__})"
+                    )
+                    continue
+
                 LOGGER.info(
-                    "Resolved notification kinds enum via %s.%s",
+                    "Resolved notification kinds enum via explicit path %s.%s",
                     module_name,
                     candidate_path,
                 )
-                return current_value, attempted_symbols
+                return resolved, attempted_symbols
             except AttributeError:
                 continue
             except Exception as error:
                 attempted_symbols.append(
                     f"{candidate_path} raised {error.__class__.__name__}: {error}"
                 )
+
+        fallback_roots = ["<management module>"]
+        fallback_candidates = [management_module]
+        for branch_name in ("models", "notification_kinds", "user_notification_kinds"):
+            branch = getattr(management_module, branch_name, None)
+            if branch is not None:
+                fallback_roots.append(branch_name)
+                fallback_candidates.append(branch)
+
+        for root_name, root_value in zip(fallback_roots, fallback_candidates):
+            attempted_symbols.append(f"fallback:{root_name}")
+            try:
+                attributes = vars(root_value).items()
+            except Exception as error:
+                attempted_symbols.append(
+                    f"fallback:{root_name} vars() failed: {error.__class__.__name__}: {error}"
+                )
+                continue
+
+            for attribute_name, attribute_value in attributes:
+                if attribute_name.startswith("_"):
+                    continue
+
+                resolved = as_enum_holder(attribute_value)
+                if resolved is None:
+                    continue
+
+                LOGGER.info(
+                    "Resolved notification kinds enum via fallback scan %s.%s",
+                    root_name,
+                    attribute_name,
+                )
+                return resolved, attempted_symbols
 
         return None, attempted_symbols
 
@@ -193,7 +273,8 @@ class NotificationCollector:
                 self._last_error = (
                     "Unable to resolve WINRT notification kind enum type. "
                     "Tried symbols in winrt.windows.ui.notifications.management: "
-                    f"{', '.join(attempted_symbols)}"
+                    f"{', '.join(attempted_symbols)}. "
+                    "Fallback introspection scan was also attempted."
                 )
                 LOGGER.error(self._last_error)
                 return
