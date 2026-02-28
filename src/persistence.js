@@ -18,6 +18,7 @@ const cachedPingRoleState = new Map();
 const pingRoleStateWriteQueues = new Map();
 const cachedPingRolePanelConfig = new Map();
 const cachedNotificationForwardConfig = new Map();
+const notificationForwardWriteQueues = new Map();
 const cachedPrivateMessageState = new Map();
 const privateMessageStateWriteQueues = new Map();
 let legacyMigrationDone = false;
@@ -73,6 +74,14 @@ async function atomicWriteJson(targetPath, data) {
   await fs.promises.rename(tempPath, targetPath);
 }
 
+function atomicWriteJsonSync(targetPath, data) {
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  const tempName = `${path.basename(targetPath)}.${process.pid}.${Date.now()}.tmp`;
+  const tempPath = path.join(path.dirname(targetPath), tempName);
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
+  fs.renameSync(tempPath, targetPath);
+}
+
 function getGuildDir(guildId) {
   return path.join(guildsDir, String(guildId));
 }
@@ -106,7 +115,24 @@ function getGuildPingRolePanelConfigPath(guildId) {
 }
 
 function getGuildNotificationForwardConfigPath(guildId) {
-  return path.join(getGuildDir(guildId), 'notification-forward.json');
+  const guildKey = normalizeGuildIdForScopedData(guildId);
+  const guildDir = getGuildDir(guildKey);
+  const configPath = path.join(guildDir, 'notification-forward.json');
+  const normalizedGuildDir = path.resolve(guildDir);
+  const normalizedPath = path.resolve(configPath);
+  const scopedPrefix = `${normalizedGuildDir}${path.sep}`;
+  if (normalizedPath !== normalizedGuildDir && !normalizedPath.startsWith(scopedPrefix)) {
+    throw new Error(`Notification forward path escaped guild scope for guild ${guildKey}.`);
+  }
+  return configPath;
+}
+
+function normalizeGuildIdForScopedData(guildId) {
+  const key = String(guildId ?? '').trim();
+  if (!/^\d{5,30}$/.test(key)) {
+    throw new Error(`Invalid guild id for notification forward data: ${guildId}`);
+  }
+  return key;
 }
 
 function getGuildPrivateMessageStatePath(guildId) {
@@ -143,6 +169,48 @@ function enqueuePrivateMessageStateWrite(guildId, task) {
   const nextQueue = queue.then(task, task);
   privateMessageStateWriteQueues.set(key, nextQueue);
   return nextQueue;
+}
+
+function enqueueNotificationForwardWrite(guildId, task) {
+  const key = String(guildId);
+  const queue = notificationForwardWriteQueues.get(key) ?? Promise.resolve();
+  const nextQueue = queue.then(task, task);
+  notificationForwardWriteQueues.set(key, nextQueue);
+  return nextQueue;
+}
+
+function getDefaultNotificationForwardConfig() {
+  return {
+    enabled: false,
+    channelId: null,
+    mode: 'poll',
+    lastBridgeStatus: null,
+    lastDeliveredNotificationSignature: null
+  };
+}
+
+function normalizeNotificationForwardMode(mode) {
+  return mode === 'daemon_push' || mode === 'poll' ? mode : 'poll';
+}
+
+function normalizeNotificationForwardConfig(config) {
+  const fallback = getDefaultNotificationForwardConfig();
+  const parsed = config && typeof config === 'object' ? config : {};
+  return {
+    enabled: Boolean(parsed.enabled),
+    channelId: parsed.channelId ?? null,
+    mode: normalizeNotificationForwardMode(parsed.mode),
+    lastBridgeStatus: parsed.lastBridgeStatus && typeof parsed.lastBridgeStatus === 'object'
+      ? {
+          connected: Boolean(parsed.lastBridgeStatus.connected),
+          updatedAt: typeof parsed.lastBridgeStatus.updatedAt === 'string' ? parsed.lastBridgeStatus.updatedAt : null,
+          reason: typeof parsed.lastBridgeStatus.reason === 'string' ? parsed.lastBridgeStatus.reason : null
+        }
+      : fallback.lastBridgeStatus,
+    lastDeliveredNotificationSignature: typeof parsed.lastDeliveredNotificationSignature === 'string'
+      ? parsed.lastDeliveredNotificationSignature
+      : fallback.lastDeliveredNotificationSignature
+  };
 }
 
 function migrateLegacyWelcomeConfig() {
@@ -612,10 +680,7 @@ function loadNotificationForwardConfig(guildId) {
 
   const configPath = getGuildNotificationForwardConfigPath(key);
   if (!fs.existsSync(configPath)) {
-    const fallback = {
-      enabled: false,
-      channelId: null
-    };
+    const fallback = getDefaultNotificationForwardConfig();
     cachedNotificationForwardConfig.set(key, fallback);
     return fallback;
   }
@@ -626,23 +691,25 @@ function loadNotificationForwardConfig(guildId) {
     parsed = JSON.parse(raw);
   } catch (e) {
     console.warn(`Invalid notification-forward.json for guild ${key}, resetting:`, e);
-    const fallback = {
-      enabled: false,
-      channelId: null
-    };
+    const fallback = getDefaultNotificationForwardConfig();
     cachedNotificationForwardConfig.set(key, fallback);
     return fallback;
   }
 
-  const entry = parsed && typeof parsed === 'object'
-    ? {
-        enabled: Boolean(parsed.enabled),
-        channelId: parsed.channelId ?? null
-      }
-    : {
-        enabled: false,
-        channelId: null
-      };
+  const entry = normalizeNotificationForwardConfig(parsed);
+  const migrationNeeded = !parsed || typeof parsed !== 'object'
+    || !Object.prototype.hasOwnProperty.call(parsed, 'mode')
+    || !Object.prototype.hasOwnProperty.call(parsed, 'lastBridgeStatus')
+    || !Object.prototype.hasOwnProperty.call(parsed, 'lastDeliveredNotificationSignature');
+
+  if (migrationNeeded) {
+    try {
+      atomicWriteJsonSync(configPath, entry);
+    } catch (e) {
+      console.warn(`Failed to migrate notification-forward.json for guild ${key}:`, e);
+    }
+  }
+
   cachedNotificationForwardConfig.set(key, entry);
   return entry;
 }
@@ -684,9 +751,11 @@ function loadPrivateMessageState(guildId) {
 }
 
 function persistNotificationForwardConfig(guildId, config) {
-  const configPath = getGuildNotificationForwardConfigPath(guildId);
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+  const key = normalizeGuildIdForScopedData(guildId);
+  const configPath = getGuildNotificationForwardConfigPath(key);
+  return enqueueNotificationForwardWrite(key, async () => {
+    await atomicWriteJson(configPath, normalizeNotificationForwardConfig(config));
+  });
 }
 
 function persistPrivateMessageState(guildId) {
@@ -767,10 +836,7 @@ export function setPingRolePanelConfig(guildId, config) {
 
 export function getNotificationForwardConfig(guildId) {
   const entry = loadNotificationForwardConfig(guildId);
-  return {
-    enabled: Boolean(entry.enabled),
-    channelId: entry.channelId ?? null
-  };
+  return normalizeNotificationForwardConfig(entry);
 }
 
 export function getPrivateMessageState(guildId) {
@@ -793,14 +859,10 @@ export function updatePrivateMessageState(guildId, mutator) {
 }
 
 export function setNotificationForwardConfig(guildId, config) {
-  const key = String(guildId);
-  const entry = {
-    enabled: Boolean(config?.enabled),
-    channelId: config?.channelId ?? null
-  };
+  const key = normalizeGuildIdForScopedData(guildId);
+  const entry = normalizeNotificationForwardConfig(config);
   cachedNotificationForwardConfig.set(key, entry);
-  persistNotificationForwardConfig(key, entry);
-  return entry;
+  return persistNotificationForwardConfig(key, entry).then(() => entry);
 }
 
 export function getWelcomeConfig(guildId) {
