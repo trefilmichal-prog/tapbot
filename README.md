@@ -95,8 +95,18 @@ The `/notifications read` command reads recent toast notifications from the Wind
 ### Windows runtime requirements
 
 - The bot must run on **Windows** (`win32`).
-- PowerShell (`powershell.exe`) must be available in `PATH`.
+- A WinRT notification helper binary must be configured (no PowerShell dependency).
 - Windows notification access must be allowed for the running user session (otherwise access is denied).
+
+### Helper configuration
+
+Configure helper path via environment variables (per environment / host):
+
+- `WINRT_NOTIFICATIONS_HELPER_PATH` (generic override)
+- `WINRT_NOTIFICATIONS_HELPER_PATH_WIN32` (Windows-specific)
+
+At startup, the bot performs a runtime check and logs whether the helper is available.
+If the helper is missing, `/notifications read` and forwarding return `API_UNAVAILABLE` consistently instead of crashing.
 
 ### Example usage
 
