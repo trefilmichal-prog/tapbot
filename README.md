@@ -111,6 +111,7 @@ If the daemon is not reachable, `/notifications read` and forwarding return `API
 ### Python daemon mode
 
 `bridge/windows_notifications_daemon.py` runs as a long-lived process, subscribes to WinRT notification-change events, and serves JSON-over-newline frames over localhost TCP for the Node bot.
+Daemon načítá pouze Toast notifikace a používá WINRT enum `UserNotificationKinds` pro jejich filtrování.
 
 Supported request frames (client -> daemon):
 
