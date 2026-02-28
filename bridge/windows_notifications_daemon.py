@@ -48,6 +48,72 @@ class NotificationCollector:
         self._access_denied = False
         self._last_error = None
 
+    def _resolve_listener(self, UserNotificationListener):
+        """Resolve listener instance across WINRT binding API variants."""
+        attempts = []
+
+        if hasattr(UserNotificationListener, "get_current"):
+            try:
+                listener = UserNotificationListener.get_current()
+                if listener is not None:
+                    LOGGER.info(
+                        "Resolved UserNotificationListener via get_current()."
+                    )
+                    return listener
+            except Exception as error:
+                attempts.append(f"get_current() failed: {error}")
+        else:
+            attempts.append("get_current() missing")
+
+        if hasattr(UserNotificationListener, "current"):
+            try:
+                listener = UserNotificationListener.current
+                if callable(listener):
+                    listener = listener()
+                if listener is not None:
+                    LOGGER.info(
+                        "Resolved UserNotificationListener via current accessor."
+                    )
+                    return listener
+            except Exception as error:
+                attempts.append(f"current failed: {error}")
+        else:
+            attempts.append("current missing")
+
+        can_construct = False
+        try:
+            doc_text = (UserNotificationListener.__doc__ or "").lower()
+            can_construct = (
+                "constructor" in doc_text
+                or "create an instance" in doc_text
+                or "usernotificationlistener()" in doc_text
+            )
+        except Exception:
+            can_construct = False
+
+        if can_construct:
+            try:
+                listener = UserNotificationListener()
+                if listener is not None:
+                    LOGGER.info(
+                        "Resolved UserNotificationListener via constructor()."
+                    )
+                    return listener
+            except Exception as error:
+                attempts.append(f"constructor() failed: {error}")
+        else:
+            attempts.append("constructor unavailable per binding docs")
+
+        self._available = False
+        self._last_error = (
+            "Unable to resolve UserNotificationListener. "
+            "The installed WINRT binding appears incompatible "
+            "(missing get_current/current/constructor APIs). "
+            f"Details: {'; '.join(attempts)}"
+        )
+        LOGGER.error(self._last_error)
+        return None
+
     async def start(self) -> None:
         if self._started:
             return
@@ -63,7 +129,10 @@ class NotificationCollector:
             return
 
         try:
-            listener = UserNotificationListener.get_current()
+            listener = self._resolve_listener(UserNotificationListener)
+            if listener is None:
+                return
+
             access = await listener.request_access_async()
             status_name = getattr(access, "name", str(access))
             if status_name != "ALLOWED":
