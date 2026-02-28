@@ -39,6 +39,8 @@ class WinRtDaemonClient {
     this.reconnectAttempt = 0;
     this.requestCounter = 0;
     this.pendingRequests = new Map();
+    this.eventListeners = new Set();
+    this.connectionStateListeners = new Set();
   }
 
   async checkAvailability() {
@@ -77,6 +79,43 @@ class WinRtDaemonClient {
         notifications: []
       };
     }
+  }
+
+  async startNotificationPush() {
+    try {
+      const response = await this.sendRequest({ type: 'subscribe_notifications' });
+      return {
+        ok: Boolean(response?.ok),
+        message: response?.message ?? null
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message
+      };
+    }
+  }
+
+  onEvent(listener) {
+    if (typeof listener !== 'function') {
+      return () => {};
+    }
+
+    this.eventListeners.add(listener);
+    return () => {
+      this.eventListeners.delete(listener);
+    };
+  }
+
+  onConnectionState(listener) {
+    if (typeof listener !== 'function') {
+      return () => {};
+    }
+
+    this.connectionStateListeners.add(listener);
+    return () => {
+      this.connectionStateListeners.delete(listener);
+    };
   }
 
   async sendRequest(payload) {
@@ -158,6 +197,7 @@ class WinRtDaemonClient {
         this.buffer = '';
         this.connected = true;
         this.reconnectAttempt = 0;
+        this.emitConnectionState({ connected: true });
 
         socket.on('data', (chunk) => this.handleData(chunk));
         socket.on('error', (error) => this.handleDisconnect(error));
@@ -183,11 +223,15 @@ class WinRtDaemonClient {
       try {
         const payload = JSON.parse(line);
         const requestId = payload?.id;
-        if (!requestId) continue;
-        const pending = this.pendingRequests.get(requestId);
-        if (!pending) continue;
-        this.pendingRequests.delete(requestId);
-        pending.resolve(payload);
+        if (requestId) {
+          const pending = this.pendingRequests.get(requestId);
+          if (!pending) continue;
+          this.pendingRequests.delete(requestId);
+          pending.resolve(payload);
+          continue;
+        }
+
+        this.emitEvent(payload);
       } catch {
         // Ignore malformed daemon line and continue parsing next payload.
       }
@@ -200,6 +244,7 @@ class WinRtDaemonClient {
     }
 
     this.connected = false;
+    this.emitConnectionState({ connected: false, error });
 
     if (this.socket && !this.socket.destroyed) {
       this.socket.destroy();
@@ -212,6 +257,26 @@ class WinRtDaemonClient {
       pending.reject(error ?? new Error('Daemon connection closed.'));
     }
   }
+
+  emitEvent(payload) {
+    for (const listener of this.eventListeners) {
+      try {
+        listener(payload);
+      } catch {
+        // Ignore listener errors to keep bridge event flow alive.
+      }
+    }
+  }
+
+  emitConnectionState(payload) {
+    for (const listener of this.connectionStateListeners) {
+      try {
+        listener(payload);
+      } catch {
+        // Ignore listener errors to keep bridge connection flow alive.
+      }
+    }
+  }
 }
 
 const daemonClient = new WinRtDaemonClient();
@@ -222,4 +287,16 @@ export async function checkWinRtBridgeAvailability() {
 
 export async function readWinRtNotificationsFromBridge() {
   return await daemonClient.readNotifications();
+}
+
+export async function startWinRtNotificationPush() {
+  return await daemonClient.startNotificationPush();
+}
+
+export function onWinRtBridgeEvent(listener) {
+  return daemonClient.onEvent(listener);
+}
+
+export function onWinRtBridgeConnectionState(listener) {
+  return daemonClient.onConnectionState(listener);
 }

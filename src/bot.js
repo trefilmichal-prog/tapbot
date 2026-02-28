@@ -43,7 +43,12 @@ import {
 import { runUpdate } from './update.js';
 import { syncApplicationCommands } from './deploy-commands.js';
 import { readWindowsToastNotifications } from './windows-notifications.js';
-import { checkWinRtBridgeAvailability } from './winrt-notifications-bridge.js';
+import {
+  checkWinRtBridgeAvailability,
+  onWinRtBridgeConnectionState,
+  onWinRtBridgeEvent,
+  startWinRtNotificationPush
+} from './winrt-notifications-bridge.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason);
@@ -479,9 +484,75 @@ const NOTIFICATION_FORWARD_POLL_INTERVAL_MS = 2000;
 const NOTIFICATION_SIGNATURE_HISTORY_LIMIT = 500;
 const NOTIFICATION_FORWARD_ERROR_LOG_INTERVAL_MS = 60 * 1000;
 let notificationForwardPollTimer = null;
+let notificationForwardPollingFallbackActive = false;
 const notificationForwardSeenByGuild = new Map();
 const lastNotificationForwardErrorByGuild = new Map();
 const notificationForwardSystemAlertSentByGuild = new Map();
+
+function normalizeNotificationForForward(rawItem) {
+  if (!rawItem || typeof rawItem !== 'object') {
+    return null;
+  }
+
+  const title = typeof rawItem.title === 'string' && rawItem.title.trim() ? rawItem.title.trim() : null;
+  const app = typeof rawItem.app === 'string' && rawItem.app.trim() ? rawItem.app.trim() : 'Unknown app';
+  const timestamp = typeof rawItem.timestamp === 'string' ? rawItem.timestamp : null;
+  const hasBody = typeof rawItem.body === 'string';
+  const body = hasBody
+    ? (rawItem.body.trim() ? rawItem.body.trim() : null)
+    : null;
+
+  return {
+    title,
+    app,
+    timestamp,
+    body
+  };
+}
+
+function extractNotificationsFromBridgeEvent(eventPayload) {
+  if (!eventPayload || typeof eventPayload !== 'object') {
+    return [];
+  }
+
+  const eventType = typeof eventPayload.type === 'string'
+    ? eventPayload.type
+    : (typeof eventPayload.event === 'string' ? eventPayload.event : '');
+
+  if (eventType === 'notification' && eventPayload.notification && typeof eventPayload.notification === 'object') {
+    return [eventPayload.notification];
+  }
+
+  if ((eventType === 'notifications' || eventType === 'notification_batch') && Array.isArray(eventPayload.notifications)) {
+    return eventPayload.notifications;
+  }
+
+  if (Array.isArray(eventPayload.notifications)) {
+    return eventPayload.notifications;
+  }
+
+  if (eventPayload.notification && typeof eventPayload.notification === 'object') {
+    return [eventPayload.notification];
+  }
+
+  return [];
+}
+
+function buildSortedUniqueForwardNotifications(rawItems) {
+  const uniqueBySignature = new Map();
+  for (const rawItem of rawItems) {
+    const normalizedItem = normalizeNotificationForForward(rawItem);
+    if (!normalizedItem) {
+      continue;
+    }
+
+    const signature = buildNotificationSignature(normalizedItem);
+    uniqueBySignature.set(signature, normalizedItem);
+  }
+
+  return [...uniqueBySignature.values()]
+    .sort((a, b) => (new Date(a.timestamp ?? 0).getTime() || 0) - (new Date(b.timestamp ?? 0).getTime() || 0));
+}
 
 function shouldLogNotificationForwardError(guildId, errorCode, message) {
   const safeErrorCode = errorCode ?? 'UNKNOWN';
@@ -557,12 +628,60 @@ async function initializeNotificationForwardCache(readyClient) {
     return;
   }
 
+  const sortedUniqueNotifications = buildSortedUniqueForwardNotifications(result.notifications);
+
   for (const [guildId] of readyClient.guilds.cache) {
     const config = getNotificationForwardConfig(guildId);
     if (!config.enabled || !config.channelId) continue;
-    const signatureSet = new Set(result.notifications.map(buildNotificationSignature));
+    const signatureSet = new Set(sortedUniqueNotifications.map(buildNotificationSignature));
     pruneNotificationSignatureSet(signatureSet);
     notificationForwardSeenByGuild.set(guildId, signatureSet);
+  }
+}
+
+async function dispatchForwardNotificationsToGuilds(readyClient, notifications) {
+  if (!notifications.length) {
+    return;
+  }
+
+  for (const [guildId, guild] of readyClient.guilds.cache) {
+    const config = getNotificationForwardConfig(guildId);
+    if (!config.enabled || !config.channelId) continue;
+
+    clearNotificationForwardSystemAlertsForGuild(guildId);
+
+    const signatureSet = notificationForwardSeenByGuild.get(guildId) ?? new Set();
+    notificationForwardSeenByGuild.set(guildId, signatureSet);
+
+    let channel;
+    try {
+      channel = await guild.channels.fetch(config.channelId);
+    } catch (error) {
+      console.warn(`Failed to fetch notification forward channel ${config.channelId}:`, error);
+      continue;
+    }
+
+    if (!channel || !channel.isTextBased()) {
+      continue;
+    }
+
+    for (const notification of notifications) {
+      const signature = buildNotificationSignature(notification);
+      if (signatureSet.has(signature)) {
+        continue;
+      }
+
+      signatureSet.add(signature);
+      pruneNotificationSignatureSet(signatureSet);
+      try {
+        await channel.send({
+          components: buildTextComponents(buildForwardNotificationMessage(notification)),
+          flags: MessageFlags.IsComponentsV2
+        });
+      } catch (error) {
+        console.warn(`Failed to forward notification to guild ${guildId}:`, error);
+      }
+    }
   }
 }
 
@@ -591,61 +710,65 @@ async function runNotificationForwardTick(readyClient) {
     return;
   }
 
-  const sortedNotifications = result.notifications
-    .slice()
-    .sort((a, b) => (new Date(a.timestamp ?? 0).getTime() || 0) - (new Date(b.timestamp ?? 0).getTime() || 0));
-
-  for (const [guildId, guild] of readyClient.guilds.cache) {
-    const config = getNotificationForwardConfig(guildId);
-    if (!config.enabled || !config.channelId) continue;
-
-    clearNotificationForwardSystemAlertsForGuild(guildId);
-
-    const signatureSet = notificationForwardSeenByGuild.get(guildId) ?? new Set();
-    notificationForwardSeenByGuild.set(guildId, signatureSet);
-
-    let channel;
-    try {
-      channel = await guild.channels.fetch(config.channelId);
-    } catch (error) {
-      console.warn(`Failed to fetch notification forward channel ${config.channelId}:`, error);
-      continue;
-    }
-
-    if (!channel || !channel.isTextBased()) {
-      continue;
-    }
-
-    for (const notification of sortedNotifications) {
-      const signature = buildNotificationSignature(notification);
-      if (signatureSet.has(signature)) {
-        continue;
-      }
-      signatureSet.add(signature);
-      pruneNotificationSignatureSet(signatureSet);
-      try {
-        await channel.send({
-          components: buildTextComponents(buildForwardNotificationMessage(notification)),
-          flags: MessageFlags.IsComponentsV2
-        });
-      } catch (error) {
-        console.warn(`Failed to forward notification to guild ${guildId}:`, error);
-      }
-    }
-  }
+  const sortedNotifications = buildSortedUniqueForwardNotifications(result.notifications);
+  await dispatchForwardNotificationsToGuilds(readyClient, sortedNotifications);
 }
 
-async function startNotificationForwardPolling(readyClient) {
+async function beginNotificationForwardPollingFallback(readyClient) {
   if (notificationForwardPollTimer) {
     clearInterval(notificationForwardPollTimer);
+    notificationForwardPollTimer = null;
   }
 
-  await initializeNotificationForwardCache(readyClient);
+  notificationForwardPollingFallbackActive = true;
   notificationForwardPollTimer = setInterval(() => {
     runNotificationForwardTick(readyClient).catch((error) => {
       console.warn('Notification forward poll failed:', error);
     });
   }, NOTIFICATION_FORWARD_POLL_INTERVAL_MS);
+}
+
+function stopNotificationForwardPollingFallback() {
+  if (notificationForwardPollTimer) {
+    clearInterval(notificationForwardPollTimer);
+    notificationForwardPollTimer = null;
+  }
+
+  notificationForwardPollingFallbackActive = false;
+}
+
+async function startNotificationForwardPolling(readyClient) {
+  onWinRtBridgeConnectionState((state) => {
+    if (state?.connected) {
+      stopNotificationForwardPollingFallback();
+      return;
+    }
+
+    if (!notificationForwardPollingFallbackActive) {
+      void beginNotificationForwardPollingFallback(readyClient);
+    }
+  });
+
+  onWinRtBridgeEvent((payload) => {
+    const eventNotifications = buildSortedUniqueForwardNotifications(extractNotificationsFromBridgeEvent(payload));
+    if (!eventNotifications.length) {
+      return;
+    }
+
+    stopNotificationForwardPollingFallback();
+    void dispatchForwardNotificationsToGuilds(readyClient, eventNotifications);
+  });
+
+  await initializeNotificationForwardCache(readyClient);
+
+  const subscribeResult = await startWinRtNotificationPush();
+  if (!subscribeResult.ok) {
+    await beginNotificationForwardPollingFallback(readyClient);
+    console.warn(`Failed to start daemon notification push mode. Falling back to polling. ${subscribeResult.message ?? ''}`.trim());
+    return;
+  }
+
+  stopNotificationForwardPollingFallback();
 }
 
 
