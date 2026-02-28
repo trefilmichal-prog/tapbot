@@ -571,6 +571,10 @@ function formatCooldownRemaining(remainingMs) {
   return `${minutes} min ${seconds} s`;
 }
 
+function isValidDiscordSnowflake(value) {
+  return typeof value === 'string' && /^\d{17,20}$/.test(value.trim());
+}
+
 async function ensureTicketApplicantAccess(channel, applicantId) {
   if (!channel?.permissionOverwrites || typeof channel.permissionOverwrites.edit !== 'function') {
     console.warn('Unable to ensure applicant access: channel does not support permission overwrites.');
@@ -580,16 +584,19 @@ async function ensureTicketApplicantAccess(channel, applicantId) {
     };
   }
 
-  if (!applicantId) {
-    console.warn('Unable to ensure applicant access: applicantId is missing.');
+  if (!isValidDiscordSnowflake(applicantId)) {
+    console.warn('Unable to ensure applicant access: applicantId is invalid.', {
+      channelId: channel?.id ?? null,
+      applicantId
+    });
     return {
       ok: false,
-      warning: 'Applicant ID is missing, so applicant access could not be restored automatically.'
+      warning: 'Applicant ID is invalid, so applicant access could not be restored automatically.'
     };
   }
 
   try {
-    await channel.permissionOverwrites.edit(applicantId, {
+    await channel.permissionOverwrites.edit(applicantId.trim(), {
       ViewChannel: true,
       SendMessages: true,
       ReadMessageHistory: true
@@ -3146,12 +3153,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
             continue;
           }
 
+          const applicantId = typeof entry.applicantId === 'string' ? entry.applicantId.trim() : entry.applicantId;
+          if (!isValidDiscordSnowflake(applicantId)) {
+            console.warn('Skipping ticket visibility sync entry due to invalid applicantId.', {
+              channelId,
+              applicantId: entry.applicantId
+            });
+            skipped += 1;
+            continue;
+          }
+
           const oldReviewRoleId = entry.activeReviewRoleId ?? null;
           try {
             await channel.permissionOverwrites.edit(interaction.guild.roles.everyone.id, {
               ViewChannel: false
             });
-            await channel.permissionOverwrites.edit(entry.applicantId, {
+            await channel.permissionOverwrites.edit(applicantId, {
               ViewChannel: true,
               SendMessages: true,
               ReadMessageHistory: true
@@ -3173,6 +3190,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
               });
             }
           } catch (error) {
+            if (error?.name === 'DiscordAPIError' && (error?.code === 10009 || error?.code === 10011 || error?.code === 50035)) {
+              console.warn('Skipping ticket visibility sync entry due to inconsistent stored data.', {
+                channelId,
+                applicantId,
+                targetReviewRoleId,
+                oldReviewRoleId,
+                errorCode: error.code
+              });
+              skipped += 1;
+              continue;
+            }
             console.warn(`Failed to update permission overwrites for channel ${channelId}:`, error);
             failed += 1;
             continue;
