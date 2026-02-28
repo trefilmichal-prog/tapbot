@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
+import importlib
 import json
 import logging
 import signal
@@ -124,6 +125,47 @@ class NotificationCollector:
         LOGGER.error(self._last_error)
         return None
 
+    def _resolve_notification_kinds_enum(self):
+        """Resolve enum class used to filter toast notifications across binding variants."""
+        module_name = "winrt.windows.ui.notifications.management"
+        attempted_symbols: List[str] = []
+        candidate_paths = (
+            "UserNotificationKinds",
+            "UserNotificationKind",
+            "NotificationKinds",
+            "notification_kinds.UserNotificationKinds",
+            "notification_kinds.UserNotificationKind",
+            "models.UserNotificationKinds",
+            "models.UserNotificationKind",
+        )
+
+        try:
+            management_module = importlib.import_module(module_name)
+        except Exception as error:
+            attempted_symbols.append(f"{module_name} import failed: {error}")
+            return None, attempted_symbols
+
+        for candidate_path in candidate_paths:
+            attempted_symbols.append(candidate_path)
+            current_value = management_module
+            try:
+                for attribute in candidate_path.split("."):
+                    current_value = getattr(current_value, attribute)
+                LOGGER.info(
+                    "Resolved notification kinds enum via %s.%s",
+                    module_name,
+                    candidate_path,
+                )
+                return current_value, attempted_symbols
+            except AttributeError:
+                continue
+            except Exception as error:
+                attempted_symbols.append(
+                    f"{candidate_path} raised {error.__class__.__name__}: {error}"
+                )
+
+        return None, attempted_symbols
+
     async def start(self) -> None:
         if self._started:
             return
@@ -131,10 +173,7 @@ class NotificationCollector:
         self._started = True
         try:
             from winrt.windows.foundation import TypedEventHandler
-            from winrt.windows.ui.notifications.management import (
-                UserNotificationKinds,
-                UserNotificationListener,
-            )
+            from winrt.windows.ui.notifications.management import UserNotificationListener
         except Exception as error:  # pragma: no cover - runtime dependency
             self._available = False
             self._last_error = f"WINRT imports failed: {error}"
@@ -146,13 +185,27 @@ class NotificationCollector:
             if listener is None:
                 return
 
+            notification_kinds_enum, attempted_symbols = (
+                self._resolve_notification_kinds_enum()
+            )
+            if notification_kinds_enum is None:
+                self._available = False
+                self._last_error = (
+                    "Unable to resolve WINRT notification kind enum type. "
+                    "Tried symbols in winrt.windows.ui.notifications.management: "
+                    f"{', '.join(attempted_symbols)}"
+                )
+                LOGGER.error(self._last_error)
+                return
+
             self._notification_kind_toast = self._resolve_toast_notification_kind(
-                UserNotificationKinds
+                notification_kinds_enum
             )
             if self._notification_kind_toast is None:
                 self._available = False
                 self._last_error = (
-                    "Unable to resolve WINRT toast notification kind enum value."
+                    "Unable to resolve WINRT toast notification kind enum value. "
+                    f"Enum type: {notification_kinds_enum}."
                 )
                 return
 
@@ -177,14 +230,14 @@ class NotificationCollector:
             self._last_error = str(error)
             LOGGER.exception("Failed to initialize notification collector")
 
-    def _resolve_toast_notification_kind(self, UserNotificationKinds):
+    def _resolve_toast_notification_kind(self, notification_kinds_enum):
         """Resolve enum member name differences across WINRT binding variants."""
         candidate_names = ("TOAST", "Toast")
         for member_name in candidate_names:
             try:
-                kind = getattr(UserNotificationKinds, member_name)
+                kind = getattr(notification_kinds_enum, member_name)
                 LOGGER.info(
-                    "Resolved UserNotificationKinds member for toast notifications via %s.",
+                    "Resolved notification kind enum member for toast notifications via %s.",
                     member_name,
                 )
                 return kind
@@ -192,8 +245,9 @@ class NotificationCollector:
                 continue
 
         LOGGER.error(
-            "Failed to resolve toast notification enum member on UserNotificationKinds. "
+            "Failed to resolve toast notification enum member on %s. "
             "Tried members: %s",
+            notification_kinds_enum,
             ", ".join(candidate_names),
         )
         return None
