@@ -3262,7 +3262,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           try {
             channel = await interaction.guild.channels.fetch(channelId);
           } catch (error) {
-            if (error?.name === 'DiscordAPIError' && error?.code === 10003) {
+            const isUnknownChannelError = Number(error?.code) === 10003;
+            if (isUnknownChannelError) {
               console.warn('Removing stale ticket visibility sync entry because channel no longer exists.', {
                 channelId
               });
@@ -3352,9 +3353,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
               deny: overwrite.deny.bitfield
             }));
 
+          const applicantOverwriteTarget =
+            interaction.guild.members.resolve(applicantId)
+            ?? interaction.guild.roles.resolve(applicantId)
+            ?? await interaction.guild.members.fetch(applicantId).catch(() => null)
+            ?? await interaction.guild.roles.fetch(applicantId).catch(() => null)
+            ?? await client.users.fetch(applicantId).catch(() => null);
+
+          if (!applicantOverwriteTarget) {
+            console.warn('Skipping ticket visibility sync entry because applicant is not resolvable as a guild member/user/role.', {
+              channelId,
+              applicantId,
+              ticketCategoryId
+            });
+            skipped += 1;
+            continue;
+          }
+
           try {
             await channel.permissionOverwrites.set(categoryOverwrites);
-            await channel.permissionOverwrites.edit(applicantId, {
+            await channel.permissionOverwrites.edit(applicantOverwriteTarget, {
               ViewChannel: true,
               SendMessages: true,
               ReadMessageHistory: true
