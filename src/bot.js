@@ -482,8 +482,13 @@ function buildNotificationSignature(item) {
 const NOTIFICATION_FORWARD_POLL_INTERVAL_MS = 2000;
 const NOTIFICATION_SIGNATURE_HISTORY_LIMIT = 500;
 const NOTIFICATION_FORWARD_ERROR_LOG_INTERVAL_MS = 60 * 1000;
+const NOTIFICATION_FORWARD_PUSH_WATCHDOG_INTERVAL_MS = 45 * 1000;
+const NOTIFICATION_FORWARD_PUSH_TIMEOUT_MS = 3 * 60 * 1000;
 let notificationForwardPollTimer = null;
+let notificationForwardPushWatchdogTimer = null;
 let notificationForwardPollingFallbackActive = false;
+let notificationForwardLastPushEventAt = 0;
+let notificationForwardPushTimedOut = false;
 const notificationForwardSeenByGuild = new Map();
 
 function getNotificationStartupModeLabel(startupMode) {
@@ -790,6 +795,62 @@ async function persistNotificationForwardRuntimeStateForAllGuilds(readyClient, p
   }
 }
 
+function hasDaemonPushForwardingEnabled(readyClient) {
+  for (const [guildId] of readyClient.guilds.cache) {
+    const config = getNotificationForwardConfig(guildId);
+    if (config.enabled && config.channelId && config.mode === 'daemon_push') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function markNotificationForwardPushActivity() {
+  notificationForwardLastPushEventAt = Date.now();
+  notificationForwardPushTimedOut = false;
+}
+
+async function startNotificationForwardPushWatchdog(readyClient) {
+  if (notificationForwardPushWatchdogTimer) {
+    clearInterval(notificationForwardPushWatchdogTimer);
+    notificationForwardPushWatchdogTimer = null;
+  }
+
+  notificationForwardPushWatchdogTimer = setInterval(() => {
+    if (!hasDaemonPushForwardingEnabled(readyClient)) {
+      return;
+    }
+
+    if (!notificationForwardLastPushEventAt) {
+      markNotificationForwardPushActivity();
+      return;
+    }
+
+    const elapsedMs = Date.now() - notificationForwardLastPushEventAt;
+    if (elapsedMs < NOTIFICATION_FORWARD_PUSH_TIMEOUT_MS || notificationForwardPushTimedOut) {
+      return;
+    }
+
+    notificationForwardPushTimedOut = true;
+    console.warn(
+      `Notification push heartbeat timeout (${Math.floor(elapsedMs / 1000)}s without bridge event). Switching to polling fallback.`
+    );
+
+    void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
+      lastBridgeStatus: {
+        connected: false,
+        updatedAt: new Date().toISOString(),
+        reason: 'push timeout'
+      }
+    });
+
+    if (!notificationForwardPollingFallbackActive) {
+      void beginNotificationForwardPollingFallback(readyClient);
+    }
+  }, NOTIFICATION_FORWARD_PUSH_WATCHDOG_INTERVAL_MS);
+}
+
 async function initializeNotificationForwardCache(readyClient) {
   const activeGuildConfigs = [];
   for (const [guildId] of readyClient.guilds.cache) {
@@ -967,6 +1028,8 @@ function stopNotificationForwardPollingFallback() {
 }
 
 async function startNotificationForwardPolling(readyClient) {
+  await startNotificationForwardPushWatchdog(readyClient);
+
   onWinRtBridgeConnectionState((state) => {
     void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
       lastBridgeStatus: {
@@ -977,6 +1040,10 @@ async function startNotificationForwardPolling(readyClient) {
     });
 
     if (state?.connected) {
+      markNotificationForwardPushActivity();
+      void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
+        mode: 'daemon_push'
+      });
       stopNotificationForwardPollingFallback();
       return;
     }
@@ -987,8 +1054,14 @@ async function startNotificationForwardPolling(readyClient) {
   });
 
   onWinRtBridgeEvent((payload) => {
+    markNotificationForwardPushActivity();
+    void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
+      mode: 'daemon_push'
+    });
+
     const eventNotifications = buildSortedUniqueForwardNotifications(extractNotificationsFromBridgeEvent(payload));
     if (!eventNotifications.length) {
+      stopNotificationForwardPollingFallback();
       return;
     }
 
@@ -1008,6 +1081,7 @@ async function startNotificationForwardPolling(readyClient) {
   await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
     mode: 'daemon_push'
   });
+  markNotificationForwardPushActivity();
   stopNotificationForwardPollingFallback();
 }
 
