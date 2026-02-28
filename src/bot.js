@@ -279,6 +279,125 @@ function formatNotificationTimestamp(isoTimestamp) {
   return `<t:${Math.floor(parsed.getTime() / 1000)}:R>`;
 }
 
+function normalizeTicketDecisionStatus(status) {
+  if (!status || status === 'awaiting') return 'awaiting';
+  if (status === CLAN_TICKET_DECISION_ACCEPT) return CLAN_TICKET_DECISION_ACCEPT;
+  if (status === CLAN_TICKET_DECISION_REJECT) return CLAN_TICKET_DECISION_REJECT;
+  if (status === CLAN_TICKET_DECISION_REMOVE) return CLAN_TICKET_DECISION_REMOVE;
+  return 'awaiting';
+}
+
+function formatTicketDecisionStatusLabel(status) {
+  const normalizedStatus = normalizeTicketDecisionStatus(status);
+  if (normalizedStatus === CLAN_TICKET_DECISION_ACCEPT) return 'Accepted ✅';
+  if (normalizedStatus === CLAN_TICKET_DECISION_REJECT) return 'Rejected ❌';
+  if (normalizedStatus === CLAN_TICKET_DECISION_REMOVE) return 'Removed 🗑️';
+  return 'Awaiting 🟡';
+}
+
+function formatTicketDecisionTimestamp(isoTimestamp) {
+  if (!isoTimestamp) return 'Unknown';
+  const parsed = new Date(isoTimestamp);
+  if (Number.isNaN(parsed.getTime())) return 'Unknown';
+  const seconds = Math.floor(parsed.getTime() / 1000);
+  return `<t:${seconds}:F> (<t:${seconds}:R>)`;
+}
+
+function hasSettingsOverviewPermission(member, state) {
+  if (hasAdminPermission(member)) {
+    return true;
+  }
+
+  const candidateRoleIds = new Set();
+  for (const entry of Object.values(state?.clan_ticket_decisions ?? {})) {
+    if (entry?.activeReviewRoleId) {
+      candidateRoleIds.add(entry.activeReviewRoleId);
+    }
+  }
+  for (const clan of Object.values(state?.clan_clans ?? {})) {
+    if (clan?.reviewRoleId) {
+      candidateRoleIds.add(clan.reviewRoleId);
+    }
+  }
+
+  for (const roleId of candidateRoleIds) {
+    if (member.roles.cache.has(roleId)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function buildTicketOverviewComponents(ticketEntries, filters = {}) {
+  const headerLines = [
+    '📋 **Ticket overview**',
+    `Total entries: **${ticketEntries.length}**`
+  ];
+
+  const filterLines = [];
+  if (filters.statusFilter) {
+    filterLines.push(`Status filter: **${formatTicketDecisionStatusLabel(filters.statusFilter)}**`);
+  }
+  if (filters.clanFilter) {
+    filterLines.push(`Clan filter: **${filters.clanFilter}**`);
+  }
+
+  const bodyLines = ticketEntries.map(([channelId, entry], index) => {
+    const status = normalizeTicketDecisionStatus(entry?.status);
+    const reviewerId = entry?.decidedBy ? `<@${entry.decidedBy}>` : '—';
+    const decisionTime = formatTicketDecisionTimestamp(entry?.updatedAt ?? entry?.createdAt ?? null);
+    return [
+      `**${index + 1}.** <#${channelId}>`,
+      `Clan: **${entry?.clanName ?? 'Unknown'}**`,
+      `Status: ${formatTicketDecisionStatusLabel(status)}`,
+      `Decided by: ${reviewerId}`,
+      `Time: ${decisionTime}`,
+      ''
+    ].join('\n');
+  });
+
+  const chunks = [];
+  let currentChunk = '';
+  const maxChunkLength = 3500;
+  for (const lineBlock of bodyLines) {
+    const nextChunk = currentChunk ? `${currentChunk}\n${lineBlock}` : lineBlock;
+    if (nextChunk.length > maxChunkLength && currentChunk) {
+      chunks.push(currentChunk);
+      currentChunk = lineBlock;
+    } else {
+      currentChunk = nextChunk;
+    }
+  }
+  if (currentChunk) {
+    chunks.push(currentChunk);
+  }
+
+  if (!chunks.length) {
+    chunks.push('No tickets matched the selected filters.');
+  }
+
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: [...headerLines, ...filterLines].join('\n')
+        },
+        {
+          type: ComponentType.Separator,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small
+        },
+        ...chunks.map((chunk) => ({
+          type: ComponentType.TextDisplay,
+          content: chunk
+        }))
+      ]
+    }
+  ];
+}
+
 function buildNotificationReadResponse(notifications) {
   const header = ['📣 **Windows Notifications**', ''];
   const lines = notifications.slice(0, 8).flatMap((item, index) => ([
@@ -3087,9 +3206,53 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const subcommand = interaction.options.getSubcommand(true);
+      const state = getClanState(interaction.guildId);
+      ensureGuildClanState(state);
+
+      if (subcommand === 'all') {
+        if (!hasSettingsOverviewPermission(interaction.member, state)) {
+          await interaction.reply({
+            components: buildTextComponents('You do not have permission to view ticket overview.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const statusFilter = interaction.options.getString('status');
+        const clanFilterRaw = interaction.options.getString('clan');
+        const clanFilter = clanFilterRaw && clanFilterRaw.trim() ? clanFilterRaw.trim() : null;
+
+        const ticketEntries = Object.entries(state.clan_ticket_decisions ?? {})
+          .filter(([, entry]) => Boolean(entry))
+          .filter(([, entry]) => {
+            if (statusFilter && normalizeTicketDecisionStatus(entry.status) !== statusFilter) {
+              return false;
+            }
+            if (clanFilter && (entry.clanName ?? '').toLowerCase() !== clanFilter.toLowerCase()) {
+              return false;
+            }
+            return true;
+          })
+          .sort((a, b) => {
+            const aTs = new Date(a[1]?.updatedAt ?? a[1]?.createdAt ?? 0).getTime() || 0;
+            const bTs = new Date(b[1]?.updatedAt ?? b[1]?.createdAt ?? 0).getTime() || 0;
+            return bTs - aTs;
+          });
+
+        await interaction.reply({
+          components: buildTicketOverviewComponents(ticketEntries, {
+            statusFilter,
+            clanFilter
+          }),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
       if (subcommand !== 'menu') return;
 
-      const state = getClanState(interaction.guildId);
       const ticketEntry = state.clan_ticket_decisions?.[interaction.channelId];
       if (!ticketEntry) {
         await interaction.reply({
