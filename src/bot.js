@@ -43,6 +43,7 @@ import {
 import { runUpdate } from './update.js';
 import { syncApplicationCommands } from './deploy-commands.js';
 import { readWindowsToastNotifications } from './windows-notifications.js';
+import { checkWinRtBridgeAvailability } from './winrt-notifications-bridge.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason);
@@ -153,6 +154,7 @@ client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
   (async () => {
     try {
+      await logWinRtBridgeStatus();
       await refreshClanPanelsOnStartup(readyClient);
       await refreshPingRolePanelsOnStartup(readyClient);
       await startNotificationForwardPolling(readyClient);
@@ -169,6 +171,20 @@ client.on(Events.ClientReady, (readyClient) => {
     }
   })();
 });
+
+async function logWinRtBridgeStatus() {
+  if (process.platform !== 'win32') {
+    return;
+  }
+
+  const status = await checkWinRtBridgeAvailability();
+  if (status.available) {
+    console.log(`WINRT notification helper ready: ${status.helperPath}`);
+    return;
+  }
+
+  console.warn(`WINRT notification helper unavailable: ${status.reason}`);
+}
 
 async function resolveWelcomeSettings(member) {
   const guildConfig = getWelcomeConfig(member.guild.id);
