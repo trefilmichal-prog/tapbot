@@ -328,6 +328,23 @@ function hasSettingsOverviewPermission(member, state) {
   return false;
 }
 
+function resolveTicketReviewRoleId(state, entry) {
+  if (!entry) return null;
+  if (entry.activeReviewRoleId) {
+    return entry.activeReviewRoleId;
+  }
+  const clan = state?.clan_clans?.[entry.clanName];
+  return clan?.reviewRoleId ?? null;
+}
+
+function canMemberViewTicketInOverview(member, state, entry) {
+  if (hasAdminPermission(member)) {
+    return true;
+  }
+  const reviewRoleId = resolveTicketReviewRoleId(state, entry);
+  return Boolean(reviewRoleId && member.roles.cache.has(reviewRoleId));
+}
+
 function buildTicketOverviewComponents(ticketEntries, filters = {}) {
   const headerLines = [
     '📋 **Ticket overview**',
@@ -3323,6 +3340,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const ticketEntries = Object.entries(state.clan_ticket_decisions ?? {})
           .filter(([, entry]) => Boolean(entry))
+          .filter(([, entry]) => canMemberViewTicketInOverview(interaction.member, state, entry))
           .filter(([, entry]) => {
             if (statusFilter && normalizeTicketDecisionStatus(entry.status) !== statusFilter) {
               return false;
