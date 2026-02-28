@@ -108,6 +108,10 @@ Expected behavior:
 - returns clear errors for unsupported platform, access denied, or unavailable notification API,
 - returns a clear message when no notifications are available.
 
+## Internal command notes
+
+- `/config ticket_visibility_sync` resynchronizes ticket channel permissions for stored clan tickets (per guild), reapplies applicant/review-role access, and updates saved `activeReviewRoleId`/`updatedAt` values.
+
 ## Data persistence and restart behavior
 
 Bot state needed after restart is persisted in the project data layer (JSON-backed storage used by `src/persistence.js`). This allows guild-specific configuration and panels to be restored during startup.

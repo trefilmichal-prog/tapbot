@@ -3092,6 +3092,104 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (subcommand === 'ticket_visibility_sync') {
+        const state = getClanState(interaction.guildId);
+        ensureGuildClanState(state);
+
+        let processed = 0;
+        let updated = 0;
+        let failed = 0;
+        let skipped = 0;
+
+        for (const [channelId, entry] of Object.entries(state.clan_ticket_decisions ?? {})) {
+          processed += 1;
+          if (!entry || typeof entry !== 'object') {
+            skipped += 1;
+            continue;
+          }
+
+          const clan = state.clan_clans?.[entry.clanName];
+          if (!clan) {
+            skipped += 1;
+            continue;
+          }
+
+          const targetReviewRoleId = entry.activeReviewRoleId ?? clan.reviewRoleId ?? null;
+          let channel;
+          try {
+            channel = await interaction.guild.channels.fetch(channelId);
+          } catch (error) {
+            console.warn(`Failed to fetch channel ${channelId} during ticket visibility sync:`, error);
+            failed += 1;
+            continue;
+          }
+
+          if (!channel?.permissionOverwrites) {
+            skipped += 1;
+            continue;
+          }
+
+          const oldReviewRoleId = entry.activeReviewRoleId ?? null;
+          try {
+            await channel.permissionOverwrites.edit(interaction.guild.roles.everyone.id, {
+              ViewChannel: false
+            });
+            await channel.permissionOverwrites.edit(entry.applicantId, {
+              ViewChannel: true,
+              SendMessages: true,
+              ReadMessageHistory: true
+            });
+
+            if (targetReviewRoleId) {
+              await channel.permissionOverwrites.edit(targetReviewRoleId, {
+                ViewChannel: true,
+                SendMessages: true,
+                ReadMessageHistory: true
+              });
+            }
+
+            if (oldReviewRoleId && oldReviewRoleId !== targetReviewRoleId) {
+              await channel.permissionOverwrites.edit(oldReviewRoleId, {
+                ViewChannel: false,
+                SendMessages: false,
+                ReadMessageHistory: false
+              });
+            }
+          } catch (error) {
+            console.warn(`Failed to update permission overwrites for channel ${channelId}:`, error);
+            failed += 1;
+            continue;
+          }
+
+          const nowIso = new Date().toISOString();
+          await updateClanState(interaction.guildId, (nextState) => {
+            ensureGuildClanState(nextState);
+            const targetEntry = nextState.clan_ticket_decisions?.[channelId];
+            if (!targetEntry || typeof targetEntry !== 'object') {
+              return;
+            }
+            targetEntry.activeReviewRoleId = targetReviewRoleId;
+            targetEntry.updatedAt = nowIso;
+          });
+          updated += 1;
+        }
+
+        const summary = [
+          '🔄 **Ticket visibility sync finished**',
+          `Processed: **${processed}**`,
+          `Updated: **${updated}**`,
+          `Failed: **${failed}**`,
+          `Skipped: **${skipped}**`
+        ].join('\n');
+
+        await interaction.reply({
+          components: buildTextComponents(summary),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
       if (subcommand === 'welcome' || subcommand === 'welcome_room') {
         let channelId;
 
