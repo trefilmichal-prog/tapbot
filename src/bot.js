@@ -461,8 +461,71 @@ function buildNotificationSignature(item) {
 
 const NOTIFICATION_FORWARD_POLL_INTERVAL_MS = 2000;
 const NOTIFICATION_SIGNATURE_HISTORY_LIMIT = 500;
+const NOTIFICATION_FORWARD_ERROR_LOG_INTERVAL_MS = 60 * 1000;
 let notificationForwardPollTimer = null;
 const notificationForwardSeenByGuild = new Map();
+const lastNotificationForwardErrorByGuild = new Map();
+const notificationForwardSystemAlertSentByGuild = new Map();
+
+function shouldLogNotificationForwardError(guildId, errorCode, message) {
+  const safeErrorCode = errorCode ?? 'UNKNOWN';
+  const safeMessage = message ?? 'Unknown error';
+  const errorKey = `${guildId}:${safeErrorCode}:${safeMessage}`;
+  const now = Date.now();
+  const lastLoggedAt = lastNotificationForwardErrorByGuild.get(errorKey) ?? 0;
+  if (now - lastLoggedAt < NOTIFICATION_FORWARD_ERROR_LOG_INTERVAL_MS) {
+    return false;
+  }
+  lastNotificationForwardErrorByGuild.set(errorKey, now);
+  return true;
+}
+
+function shouldSendNotificationForwardSystemAlert(errorCode) {
+  return errorCode === 'ACCESS_DENIED' || errorCode === 'API_UNAVAILABLE';
+}
+
+async function sendNotificationForwardSystemAlert(guildId, guild, config, result) {
+  if (!config.channelId || !shouldSendNotificationForwardSystemAlert(result.errorCode)) {
+    return;
+  }
+
+  const alertKey = `${guildId}:${result.errorCode}:${config.channelId}`;
+  if (notificationForwardSystemAlertSentByGuild.has(alertKey)) {
+    return;
+  }
+
+  let channel;
+  try {
+    channel = await guild.channels.fetch(config.channelId);
+  } catch (error) {
+    console.warn(`Failed to fetch notification forward channel ${config.channelId}:`, error);
+    return;
+  }
+
+  if (!channel || !channel.isTextBased()) {
+    return;
+  }
+
+  try {
+    await channel.send({
+      components: buildTextComponents(
+        `⚠️ Notification forwarding is enabled, but host notifications cannot be read (${result.errorCode}). ${result.message ?? ''}`.trim()
+      ),
+      flags: MessageFlags.IsComponentsV2
+    });
+    notificationForwardSystemAlertSentByGuild.set(alertKey, Date.now());
+  } catch (error) {
+    console.warn(`Failed to send notification forwarding system alert to guild ${guildId}:`, error);
+  }
+}
+
+function clearNotificationForwardSystemAlertsForGuild(guildId) {
+  for (const key of notificationForwardSystemAlertSentByGuild.keys()) {
+    if (key.startsWith(`${guildId}:`)) {
+      notificationForwardSystemAlertSentByGuild.delete(key);
+    }
+  }
+}
 
 function pruneNotificationSignatureSet(signatureSet) {
   while (signatureSet.size > NOTIFICATION_SIGNATURE_HISTORY_LIMIT) {
@@ -489,7 +552,26 @@ async function initializeNotificationForwardCache(readyClient) {
 
 async function runNotificationForwardTick(readyClient) {
   const result = await readWindowsToastNotifications();
-  if (!result.ok || !result.notifications.length) {
+  if (!result.ok) {
+    for (const [guildId, guild] of readyClient.guilds.cache) {
+      const config = getNotificationForwardConfig(guildId);
+      if (!config.enabled || !config.channelId) continue;
+
+      if (shouldLogNotificationForwardError(guildId, result.errorCode, result.message)) {
+        console.warn('Notification forwarding read failed.', {
+          guildId,
+          channelId: config.channelId,
+          errorCode: result.errorCode ?? 'UNKNOWN',
+          message: result.message ?? 'Unknown error'
+        });
+      }
+
+      await sendNotificationForwardSystemAlert(guildId, guild, config, result);
+    }
+    return;
+  }
+
+  if (result.notifications.length === 0) {
     return;
   }
 
@@ -500,6 +582,8 @@ async function runNotificationForwardTick(readyClient) {
   for (const [guildId, guild] of readyClient.guilds.cache) {
     const config = getNotificationForwardConfig(guildId);
     if (!config.enabled || !config.channelId) continue;
+
+    clearNotificationForwardSystemAlertsForGuild(guildId);
 
     const signatureSet = notificationForwardSeenByGuild.get(guildId) ?? new Set();
     notificationForwardSeenByGuild.set(guildId, signatureSet);
@@ -3996,6 +4080,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           channelId: channel.id
         });
         notificationForwardSeenByGuild.delete(interaction.guildId);
+        clearNotificationForwardSystemAlertsForGuild(interaction.guildId);
 
         await interaction.reply({
           components: buildTextComponents(`Automatic notification forwarding was enabled for <#${channel.id}>.`),
@@ -4011,6 +4096,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           channelId: null
         });
         notificationForwardSeenByGuild.delete(interaction.guildId);
+        clearNotificationForwardSystemAlertsForGuild(interaction.guildId);
 
         await interaction.reply({
           components: buildTextComponents('Automatic notification forwarding was disabled.'),
