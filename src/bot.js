@@ -4,11 +4,7 @@ import {
   GatewayIntentBits,
   GuildMember,
   Partials,
-  PermissionsBitField,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  ActionRowBuilder
+  PermissionsBitField
 } from 'discord.js';
 import {
   ButtonStyle,
@@ -71,14 +67,17 @@ const client = new Client({
   ],
   partials: [Partials.Message, Partials.Channel]
 });
-const CLAN_PANEL_EDIT_MODAL_ID = 'clan_panel_edit_modal';
-const CLAN_PANEL_DESCRIPTION_INPUT_ID = 'clan_panel_description_input';
 const CLAN_PANEL_SELECT_ID = 'clan_panel_select';
-const CLAN_TICKET_MODAL_PREFIX = 'clan_ticket_modal:';
-const CLAN_TICKET_REBIRTHS_INPUT_ID = 'clan_ticket_rebirths_input';
-const CLAN_TICKET_GAMEPASSES_INPUT_ID = 'clan_ticket_gamepasses_input';
-const CLAN_TICKET_HOURS_INPUT_ID = 'clan_ticket_hours_input';
-const CLAN_TICKET_ROBLOX_NICK_INPUT_ID = 'clan_ticket_roblox_nick_input';
+const CLAN_WORKFLOW_CANCEL_PREFIX = 'clan_workflow_cancel:';
+const CLAN_WORKFLOW_RESTART_PREFIX = 'clan_workflow_restart:';
+const CLAN_PENDING_TYPE_TICKET_APPLICATION = 'ticket_application';
+const CLAN_PENDING_TYPE_PANEL_EDIT = 'panel_edit';
+const CLAN_PENDING_STEP_ROBLOX_NICK = 'roblox_nick';
+const CLAN_PENDING_STEP_REBIRTHS = 'rebirths';
+const CLAN_PENDING_STEP_GAMEPASSES = 'gamepasses';
+const CLAN_PENDING_STEP_HOURS = 'hours';
+const CLAN_PENDING_STEP_PANEL_DESCRIPTION = 'panel_description';
+const CLAN_PENDING_WORKFLOW_TTL_MS = 30 * 60 * 1000;
 const CLAN_TICKET_DECISION_PREFIX = 'clan_ticket_decision:';
 const CLAN_TICKET_PRIVATE_DECISION_PREFIX = 'clan_ticket_private_decision:';
 const CLAN_TICKET_PUBLIC_MENU_ID = 'clan_ticket_public_menu_open';
@@ -1707,41 +1706,238 @@ function formatRouteList(routes) {
     .join('\n');
 }
 
-function buildTicketModal(clanName) {
-  const robloxNickInput = new TextInputBuilder()
-    .setCustomId(CLAN_TICKET_ROBLOX_NICK_INPUT_ID)
-    .setLabel('What is your Roblox nickname?')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMaxLength(32);
 
-  const rebirthsInput = new TextInputBuilder()
-    .setCustomId(CLAN_TICKET_REBIRTHS_INPUT_ID)
-    .setLabel('How many rebirths do you have?')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true);
+function getClanPendingWorkflow(state, userId) {
+  ensureGuildClanState(state);
+  if (!userId) return null;
+  const workflow = state.clan_pending_workflows?.[userId];
+  if (!workflow || typeof workflow !== 'object') return null;
+  const createdAtMs = Date.parse(workflow.createdAt ?? '');
+  if (!Number.isFinite(createdAtMs) || Date.now() - createdAtMs > CLAN_PENDING_WORKFLOW_TTL_MS) {
+    delete state.clan_pending_workflows[userId];
+    return null;
+  }
+  return workflow;
+}
 
-  const gamepassesInput = new TextInputBuilder()
-    .setCustomId(CLAN_TICKET_GAMEPASSES_INPUT_ID)
-    .setLabel('What gamepasses do you have?')
-    .setStyle(TextInputStyle.Paragraph)
-    .setRequired(true);
+function getClanPendingStepPrompt(workflow) {
+  if (workflow.type === CLAN_PENDING_TYPE_TICKET_APPLICATION) {
+    if (workflow.step === CLAN_PENDING_STEP_ROBLOX_NICK) {
+      return 'Step 1/4: Send your Roblox nickname as a normal message.';
+    }
+    if (workflow.step === CLAN_PENDING_STEP_REBIRTHS) {
+      return 'Step 2/4: How many rebirths do you have?';
+    }
+    if (workflow.step === CLAN_PENDING_STEP_GAMEPASSES) {
+      return 'Step 3/4: What gamepasses do you have?';
+    }
+    if (workflow.step === CLAN_PENDING_STEP_HOURS) {
+      return 'Step 4/4: How many hours a day do you play?';
+    }
+  }
 
-  const hoursInput = new TextInputBuilder()
-    .setCustomId(CLAN_TICKET_HOURS_INPUT_ID)
-    .setLabel('How many hours a day do you play?')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true);
+  if (workflow.type === CLAN_PENDING_TYPE_PANEL_EDIT) {
+    return 'Send the new clan panel description as a normal message. Send `-` to clear description.';
+  }
 
-  return new ModalBuilder()
-    .setCustomId(`${CLAN_TICKET_MODAL_PREFIX}${encodeURIComponent(clanName)}`)
-    .setTitle(`Join ${clanName}`)
-    .addComponents(
-      new ActionRowBuilder().addComponents(robloxNickInput),
-      new ActionRowBuilder().addComponents(rebirthsInput),
-      new ActionRowBuilder().addComponents(gamepassesInput),
-      new ActionRowBuilder().addComponents(hoursInput)
-    );
+  return 'Send your response as a normal message.';
+}
+
+function buildClanPendingWorkflowComponents(workflow, instructionOverride = null) {
+  const title = workflow.type === CLAN_PENDING_TYPE_TICKET_APPLICATION
+    ? `📝 **Clan ticket application: ${workflow.clanName}**`
+    : '🛠️ **Clan panel edit**';
+  const instruction = instructionOverride ?? getClanPendingStepPrompt(workflow);
+
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: title
+        },
+        {
+          type: ComponentType.TextDisplay,
+          content: instruction
+        },
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_WORKFLOW_CANCEL_PREFIX}${workflow.type}`,
+              label: 'Cancel',
+              style: ButtonStyle.Secondary
+            },
+            {
+              type: ComponentType.Button,
+              custom_id: `${CLAN_WORKFLOW_RESTART_PREFIX}${workflow.type}`,
+              label: 'Restart',
+              style: ButtonStyle.Primary
+            }
+          ]
+        }
+      ]
+    }
+  ];
+}
+
+async function createClanTicketFromAnswers({ guild, guildId, userId, userTag, member, clanName, answers }) {
+  const state = getClanState(guildId);
+  const clan = state.clan_clans?.[clanName];
+  if (!clan) {
+    return { error: 'The selected clan was not found.' };
+  }
+
+  if (!clan.ticketCategoryId) {
+    return { error: 'No ticket category is set for this clan.' };
+  }
+
+  if (!clan.reviewRoleId) {
+    return { error: 'No review role is set for this clan.' };
+  }
+
+  let ticketCategory;
+  try {
+    ticketCategory = await guild.channels.fetch(clan.ticketCategoryId);
+  } catch (error) {
+    console.warn(`Failed to fetch ticket category ${clan.ticketCategoryId}:`, error);
+  }
+
+  if (!ticketCategory || ticketCategory.type !== ChannelType.GuildCategory) {
+    return { error: 'Ticket category was not found.' };
+  }
+
+  const robloxNick = (answers.robloxNick ?? '').trim();
+  const robloxNickForNickname = robloxNick ? robloxNick.slice(0, 32) : '';
+
+  let resolvedMember = member instanceof GuildMember ? member : null;
+  if (!resolvedMember) {
+    try {
+      resolvedMember = await guild.members.fetch(userId);
+    } catch (error) {
+      console.warn(`Failed to fetch member ${userId} for clan ticket:`, error);
+    }
+  }
+
+  if (!resolvedMember) {
+    return { error: 'Unable to resolve your server member profile.' };
+  }
+
+  let nicknameUpdateFailed = false;
+  if (robloxNickForNickname) {
+    try {
+      await resolvedMember.setNickname(robloxNickForNickname, 'Roblox nick from clan ticket');
+    } catch (error) {
+      nicknameUpdateFailed = true;
+      console.warn(`Failed to update nickname for ${userId} in guild ${guildId}:`, error);
+    }
+  }
+
+  const adminRoles = guild.roles.cache
+    .filter((role) => role.permissions.has(PermissionsBitField.Flags.Administrator))
+    .map((role) => ({
+      id: role.id,
+      allow: [
+        PermissionsBitField.Flags.ViewChannel,
+        PermissionsBitField.Flags.SendMessages,
+        PermissionsBitField.Flags.ReadMessageHistory
+      ]
+    }));
+
+  const fallbackPlayerName = resolvedMember.displayName || userTag;
+  const ticketPlayerName = robloxNickForNickname || fallbackPlayerName;
+  const rawChannelName = `${clanName} - ${ticketPlayerName}`;
+  const channelBaseName = sanitizeTicketChannelBase(rawChannelName) || userId;
+  const channelName = formatTicketChannelName(TICKET_STATUS_EMOJI.awaiting, channelBaseName);
+
+  let ticketChannel;
+  try {
+    ticketChannel = await guild.channels.create({
+      name: channelName,
+      type: ChannelType.GuildText,
+      parent: ticketCategory.id,
+      permissionOverwrites: [
+        {
+          id: guild.roles.everyone.id,
+          deny: [PermissionsBitField.Flags.ViewChannel]
+        },
+        {
+          id: userId,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.ReadMessageHistory
+          ]
+        },
+        {
+          id: clan.reviewRoleId,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.ReadMessageHistory
+          ]
+        },
+        ...adminRoles
+      ]
+    });
+  } catch (error) {
+    console.error('Failed to create ticket channel:', error);
+    return { error: 'Failed to create ticket.' };
+  }
+
+  const summaryMessage = await ticketChannel.send({
+    components: buildTicketSummary(
+      {
+        robloxNick,
+        rebirths: answers.rebirths,
+        gamepasses: answers.gamepasses,
+        hours: answers.hours
+      },
+      {
+        activeReviewRoleId: clan.reviewRoleId
+      }
+    ),
+    flags: MessageFlags.IsComponentsV2
+  });
+
+  await ticketChannel.send({
+    components: buildRequiredScreenshotsNotice(clan.reviewRoleId),
+    flags: MessageFlags.IsComponentsV2
+  });
+
+  await updateClanState(guildId, (nextState) => {
+    ensureGuildClanState(nextState);
+    delete nextState.clan_pending_workflows[userId];
+    nextState.clan_ticket_decisions[ticketChannel.id] = {
+      clanName,
+      applicantId: userId,
+      messageId: summaryMessage.id,
+      answers: {
+        robloxNick: robloxNickForNickname,
+        rebirths: answers.rebirths,
+        gamepasses: answers.gamepasses,
+        hours: answers.hours
+      },
+      status: null,
+      decidedBy: null,
+      updatedAt: null,
+      activeReviewRoleId: clan.reviewRoleId,
+      lastMoveAt: null,
+      createdAt: new Date().toISOString()
+    };
+  });
+
+  const ticketCreatedMessage = nicknameUpdateFailed
+    ? `Ticket was created: <#${ticketChannel.id}>
+⚠️ Ticket was created, but your nickname could not be updated.`
+    : robloxNickForNickname
+      ? `Ticket was created: <#${ticketChannel.id}>
+✅ Your nickname was updated to **${robloxNickForNickname}**.`
+      : `Ticket was created: <#${ticketChannel.id}>`;
+
+  return { successMessage: ticketCreatedMessage };
 }
 
 async function refreshPingRolePanelForGuild(guild, guildId) {
@@ -1977,6 +2173,9 @@ function ensureGuildClanState(state) {
   if (!state.officer_stats) {
     state.officer_stats = {};
   }
+  if (!state.clan_pending_workflows) {
+    state.clan_pending_workflows = {};
+  }
   return state;
 }
 
@@ -2122,6 +2321,123 @@ client.on(Events.MessageCreate, async (message) => {
   if (message.author?.bot) return;
   if (message.channel?.type !== ChannelType.GuildText) return;
 
+  const clanState = getClanState(message.guild.id);
+  const pendingWorkflow = getClanPendingWorkflow(clanState, message.author.id);
+  if (pendingWorkflow) {
+    const trimmedContent = (message.content ?? '').trim();
+    if (!trimmedContent) {
+      await message.reply({
+        components: buildClanPendingWorkflowComponents(pendingWorkflow),
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (pendingWorkflow.type === CLAN_PENDING_TYPE_PANEL_EDIT
+      && pendingWorkflow.step === CLAN_PENDING_STEP_PANEL_DESCRIPTION) {
+      const description = trimmedContent === '-' ? null : trimmedContent.slice(0, 1000);
+      await updateClanState(message.guild.id, (nextState) => {
+        ensureGuildClanState(nextState);
+        delete nextState.clan_pending_workflows[message.author.id];
+        nextState.clan_panel_configs = {
+          ...nextState.clan_panel_configs,
+          description,
+          updatedAt: new Date().toISOString()
+        };
+      });
+
+      await refreshClanPanelForGuild(message.guild, message.guild.id);
+      await message.reply({
+        components: buildTextComponents('Clan panel description saved.'),
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (pendingWorkflow.type === CLAN_PENDING_TYPE_TICKET_APPLICATION) {
+      const updatedWorkflow = {
+        ...pendingWorkflow,
+        answers: {
+          ...(pendingWorkflow.answers ?? {})
+        },
+        updatedAt: new Date().toISOString()
+      };
+
+      if (updatedWorkflow.step === CLAN_PENDING_STEP_ROBLOX_NICK) {
+        updatedWorkflow.answers.robloxNick = trimmedContent.slice(0, 32);
+        updatedWorkflow.step = CLAN_PENDING_STEP_REBIRTHS;
+        await updateClanState(message.guild.id, (nextState) => {
+          ensureGuildClanState(nextState);
+          nextState.clan_pending_workflows[message.author.id] = updatedWorkflow;
+        });
+        await message.reply({
+          components: buildClanPendingWorkflowComponents(updatedWorkflow),
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+
+      if (updatedWorkflow.step === CLAN_PENDING_STEP_REBIRTHS) {
+        updatedWorkflow.answers.rebirths = trimmedContent;
+        updatedWorkflow.step = CLAN_PENDING_STEP_GAMEPASSES;
+        await updateClanState(message.guild.id, (nextState) => {
+          ensureGuildClanState(nextState);
+          nextState.clan_pending_workflows[message.author.id] = updatedWorkflow;
+        });
+        await message.reply({
+          components: buildClanPendingWorkflowComponents(updatedWorkflow),
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+
+      if (updatedWorkflow.step === CLAN_PENDING_STEP_GAMEPASSES) {
+        updatedWorkflow.answers.gamepasses = trimmedContent;
+        updatedWorkflow.step = CLAN_PENDING_STEP_HOURS;
+        await updateClanState(message.guild.id, (nextState) => {
+          ensureGuildClanState(nextState);
+          nextState.clan_pending_workflows[message.author.id] = updatedWorkflow;
+        });
+        await message.reply({
+          components: buildClanPendingWorkflowComponents(updatedWorkflow),
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+
+      if (updatedWorkflow.step === CLAN_PENDING_STEP_HOURS) {
+        updatedWorkflow.answers.hours = trimmedContent;
+        const result = await createClanTicketFromAnswers({
+          guild: message.guild,
+          guildId: message.guild.id,
+          userId: message.author.id,
+          userTag: message.author.username,
+          member: message.member,
+          clanName: updatedWorkflow.clanName,
+          answers: updatedWorkflow.answers
+        });
+
+        if (result.error) {
+          await updateClanState(message.guild.id, (nextState) => {
+            ensureGuildClanState(nextState);
+            delete nextState.clan_pending_workflows[message.author.id];
+          });
+          await message.reply({
+            components: buildTextComponents(result.error),
+            flags: MessageFlags.IsComponentsV2
+          });
+          return;
+        }
+
+        await message.reply({
+          components: buildTextComponents(result.successMessage),
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+    }
+  }
+
   const state = getPingRoleState(message.guild.id);
   ensurePingRoleState(state);
   const roleId = state.channel_routes?.[message.channel.id];
@@ -2238,259 +2554,6 @@ client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    if (interaction.isModalSubmit()) {
-      if (interaction.customId.startsWith(CLAN_TICKET_MODAL_PREFIX)) {
-        if (!interaction.inGuild()) {
-          await interaction.reply({
-            components: buildTextComponents('This dialog can only be used in a server.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-          return;
-        }
-
-        const clanName = decodeURIComponent(
-          interaction.customId.slice(CLAN_TICKET_MODAL_PREFIX.length)
-        );
-        const state = getClanState(interaction.guildId);
-        const clan = state.clan_clans?.[clanName];
-        if (!clan) {
-          await interaction.reply({
-            components: buildTextComponents('The selected clan was not found.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-          return;
-        }
-
-        if (!clan.ticketCategoryId) {
-          await interaction.reply({
-            components: buildTextComponents('No ticket category is set for this clan.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-          return;
-        }
-
-        if (!clan.reviewRoleId) {
-          await interaction.reply({
-            components: buildTextComponents('No review role is set for this clan.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-          return;
-        }
-
-        let ticketCategory;
-        try {
-          ticketCategory = await interaction.guild.channels.fetch(clan.ticketCategoryId);
-        } catch (error) {
-          console.warn(`Failed to fetch ticket category ${clan.ticketCategoryId}:`, error);
-        }
-
-        if (!ticketCategory || ticketCategory.type !== ChannelType.GuildCategory) {
-          await interaction.reply({
-            components: buildTextComponents('Ticket category was not found.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-          return;
-        }
-
-        const rebirths = interaction.fields.getTextInputValue(CLAN_TICKET_REBIRTHS_INPUT_ID);
-        const gamepasses = interaction.fields.getTextInputValue(CLAN_TICKET_GAMEPASSES_INPUT_ID);
-        const hours = interaction.fields.getTextInputValue(CLAN_TICKET_HOURS_INPUT_ID);
-        const robloxNick = interaction.fields
-          .getTextInputValue(CLAN_TICKET_ROBLOX_NICK_INPUT_ID)
-          .trim();
-        const robloxNickForNickname = robloxNick ? robloxNick.slice(0, 32) : '';
-
-        let member = interaction.member instanceof GuildMember ? interaction.member : null;
-        if (!member) {
-          try {
-            member = await interaction.guild.members.fetch(interaction.user.id);
-          } catch (error) {
-            console.warn(`Failed to fetch member ${interaction.user.id} for clan ticket:`, error);
-          }
-        }
-
-        if (!member) {
-          await interaction.reply({
-            components: buildTextComponents('Unable to resolve your server member profile.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-          return;
-        }
-
-        let nicknameUpdateFailed = false;
-        if (robloxNickForNickname) {
-          try {
-            await member.setNickname(robloxNickForNickname, 'Roblox nick from clan ticket');
-          } catch (error) {
-            nicknameUpdateFailed = true;
-            console.warn(
-              `Failed to update nickname for ${interaction.user.id} in guild ${interaction.guildId}:`,
-              error
-            );
-          }
-        }
-
-        const adminRoles = interaction.guild.roles.cache
-          .filter((role) => role.permissions.has(PermissionsBitField.Flags.Administrator))
-          .map((role) => ({
-            id: role.id,
-            allow: [
-              PermissionsBitField.Flags.ViewChannel,
-              PermissionsBitField.Flags.SendMessages,
-              PermissionsBitField.Flags.ReadMessageHistory
-            ]
-          }));
-
-        let ticketChannel;
-        try {
-          const fallbackPlayerName = member.displayName || interaction.user.username;
-          const ticketPlayerName = robloxNickForNickname || fallbackPlayerName;
-          const rawChannelName = `${clanName} - ${ticketPlayerName}`;
-          const channelBaseName = sanitizeTicketChannelBase(rawChannelName) || interaction.user.id;
-          const channelName = formatTicketChannelName(TICKET_STATUS_EMOJI.awaiting, channelBaseName);
-
-          ticketChannel = await interaction.guild.channels.create({
-            name: channelName,
-            type: ChannelType.GuildText,
-            parent: ticketCategory.id,
-            permissionOverwrites: [
-              {
-                id: interaction.guild.roles.everyone.id,
-                deny: [PermissionsBitField.Flags.ViewChannel]
-              },
-              {
-                id: interaction.user.id,
-                allow: [
-                  PermissionsBitField.Flags.ViewChannel,
-                  PermissionsBitField.Flags.SendMessages,
-                  PermissionsBitField.Flags.ReadMessageHistory
-                ]
-              },
-              {
-                id: clan.reviewRoleId,
-                allow: [
-                  PermissionsBitField.Flags.ViewChannel,
-                  PermissionsBitField.Flags.SendMessages,
-                  PermissionsBitField.Flags.ReadMessageHistory
-                ]
-              },
-              ...adminRoles
-            ]
-          });
-        } catch (error) {
-          console.error('Failed to create ticket channel:', error);
-          await interaction.reply({
-            components: buildTextComponents('Failed to create ticket.'),
-            flags: MessageFlags.IsComponentsV2,
-            ephemeral: true
-          });
-          return;
-        }
-
-        const summaryMessage = await ticketChannel.send({
-          components: buildTicketSummary(
-            {
-              robloxNick,
-              rebirths,
-              gamepasses,
-              hours
-            },
-            {
-              activeReviewRoleId: clan.reviewRoleId
-            }
-          ),
-          flags: MessageFlags.IsComponentsV2
-        });
-
-        await ticketChannel.send({
-          components: buildRequiredScreenshotsNotice(clan.reviewRoleId),
-          flags: MessageFlags.IsComponentsV2
-        });
-
-        await updateClanState(interaction.guildId, (state) => {
-          ensureGuildClanState(state);
-          state.clan_ticket_decisions[ticketChannel.id] = {
-            clanName,
-            applicantId: interaction.user.id,
-            messageId: summaryMessage.id,
-            answers: {
-              robloxNick: robloxNickForNickname,
-              rebirths,
-              gamepasses,
-              hours
-            },
-            status: null,
-            decidedBy: null,
-            updatedAt: null,
-            activeReviewRoleId: clan.reviewRoleId,
-            lastMoveAt: null,
-            createdAt: new Date().toISOString()
-          };
-        });
-
-        const ticketCreatedMessage = nicknameUpdateFailed
-          ? `Ticket was created: <#${ticketChannel.id}>\n⚠️ Ticket was created, but your nickname could not be updated.`
-          : robloxNickForNickname
-            ? `Ticket was created: <#${ticketChannel.id}>\n✅ Your nickname was updated to **${robloxNickForNickname}**.`
-            : `Ticket was created: <#${ticketChannel.id}>`;
-
-        await interaction.reply({
-          components: buildTextComponents(ticketCreatedMessage),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (interaction.customId !== CLAN_PANEL_EDIT_MODAL_ID) return;
-      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
-        await interaction.reply({
-          components: buildTextComponents('This dialog can only be used in a server.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (!hasClanPanelPermission(interaction.member)) {
-        await interaction.reply({
-          components: buildTextComponents('You do not have permission to edit the clan panel.'),
-          flags: MessageFlags.IsComponentsV2,
-          ephemeral: true
-        });
-        return;
-      }
-
-      const rawDescription = interaction.fields.getTextInputValue(CLAN_PANEL_DESCRIPTION_INPUT_ID);
-      const description = rawDescription && rawDescription.trim()
-        ? rawDescription.trim()
-        : null;
-
-      await updateClanState(interaction.guildId, (state) => {
-        ensureGuildClanState(state);
-        state.clan_panel_configs = {
-          ...state.clan_panel_configs,
-          description,
-          updatedAt: new Date().toISOString()
-        };
-      });
-
-      await refreshClanPanelForGuild(interaction.guild, interaction.guildId);
-
-      await interaction.reply({
-        components: buildTextComponents('Clan panel description saved.'),
-        flags: MessageFlags.IsComponentsV2,
-        ephemeral: true
-      });
-      return;
-    }
-
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId.startsWith(CLAN_TICKET_REASSIGN_PREFIX)) {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
@@ -2835,12 +2898,111 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const modal = buildTicketModal(selectedClan);
-      await interaction.showModal(modal);
+      await updateClanState(interaction.guildId, (nextState) => {
+        ensureGuildClanState(nextState);
+        nextState.clan_pending_workflows[interaction.user.id] = {
+          type: CLAN_PENDING_TYPE_TICKET_APPLICATION,
+          clanName: selectedClan,
+          step: CLAN_PENDING_STEP_ROBLOX_NICK,
+          answers: {},
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+      });
+
+      await interaction.reply({
+        components: buildClanPendingWorkflowComponents({
+          type: CLAN_PENDING_TYPE_TICKET_APPLICATION,
+          clanName: selectedClan,
+          step: CLAN_PENDING_STEP_ROBLOX_NICK
+        }),
+        flags: MessageFlags.IsComponentsV2,
+        ephemeral: true
+      });
       return;
     }
 
     if (interaction.isButton()) {
+      if (interaction.customId.startsWith(CLAN_WORKFLOW_CANCEL_PREFIX)) {
+        if (!interaction.inGuild()) {
+          await interaction.reply({
+            components: buildTextComponents('This action can only be used in a server.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        await updateClanState(interaction.guildId, (state) => {
+          ensureGuildClanState(state);
+          delete state.clan_pending_workflows[interaction.user.id];
+        });
+
+        await interaction.reply({
+          components: buildTextComponents('Workflow cancelled.'),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (interaction.customId.startsWith(CLAN_WORKFLOW_RESTART_PREFIX)) {
+        if (!interaction.inGuild()) {
+          await interaction.reply({
+            components: buildTextComponents('This action can only be used in a server.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const state = getClanState(interaction.guildId);
+        const workflow = getClanPendingWorkflow(state, interaction.user.id);
+        if (!workflow) {
+          await interaction.reply({
+            components: buildTextComponents('No active workflow found.'),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (workflow.type === CLAN_PENDING_TYPE_TICKET_APPLICATION) {
+          const restarted = {
+            ...workflow,
+            step: CLAN_PENDING_STEP_ROBLOX_NICK,
+            answers: {},
+            updatedAt: new Date().toISOString()
+          };
+          await updateClanState(interaction.guildId, (nextState) => {
+            ensureGuildClanState(nextState);
+            nextState.clan_pending_workflows[interaction.user.id] = restarted;
+          });
+          await interaction.reply({
+            components: buildClanPendingWorkflowComponents(restarted),
+            flags: MessageFlags.IsComponentsV2,
+            ephemeral: true
+          });
+          return;
+        }
+
+        const restarted = {
+          ...workflow,
+          step: CLAN_PENDING_STEP_PANEL_DESCRIPTION,
+          updatedAt: new Date().toISOString()
+        };
+        await updateClanState(interaction.guildId, (nextState) => {
+          ensureGuildClanState(nextState);
+          nextState.clan_pending_workflows[interaction.user.id] = restarted;
+        });
+        await interaction.reply({
+          components: buildClanPendingWorkflowComponents(restarted),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
+        return;
+      }
+
       if (interaction.customId.startsWith(PRIVATE_MESSAGE_READ_PREFIX)) {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
           await interaction.reply({
@@ -4704,24 +4866,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const state = getClanState(guildId);
-        const panelDescription = state.clan_panel_configs?.description ?? '';
-        const input = new TextInputBuilder()
-          .setCustomId(CLAN_PANEL_DESCRIPTION_INPUT_ID)
-          .setLabel('Clan panel description')
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(false)
-          .setMaxLength(1000);
+        const panelDescription = state.clan_panel_configs?.description ?? null;
 
-        if (panelDescription && panelDescription.trim()) {
-          input.setValue(panelDescription.trim());
-        }
+        await updateClanState(guildId, (nextState) => {
+          ensureGuildClanState(nextState);
+          nextState.clan_pending_workflows[interaction.user.id] = {
+            type: CLAN_PENDING_TYPE_PANEL_EDIT,
+            step: CLAN_PENDING_STEP_PANEL_DESCRIPTION,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+        });
 
-        const modal = new ModalBuilder()
-          .setCustomId(CLAN_PANEL_EDIT_MODAL_ID)
-          .setTitle('Edit clan panel')
-          .addComponents(new ActionRowBuilder().addComponents(input));
+        const instructions = panelDescription && panelDescription.trim()
+          ? `Current description:
+${panelDescription.trim()}
 
-        await interaction.showModal(modal);
+Send the new clan panel description as a normal message. Send \`-\` to clear description.`
+          : 'No current description is set. Send the new clan panel description as a normal message. Send `-` to clear description.';
+
+        await interaction.reply({
+          components: buildClanPendingWorkflowComponents(
+            {
+              type: CLAN_PENDING_TYPE_PANEL_EDIT,
+              step: CLAN_PENDING_STEP_PANEL_DESCRIPTION
+            },
+            instructions
+          ),
+          flags: MessageFlags.IsComponentsV2,
+          ephemeral: true
+        });
         return;
       }
 
