@@ -43,6 +43,7 @@ class NotificationCollector:
         self._cache: List[NotificationRecord] = []
         self._lock = threading.Lock()
         self._listener = None
+        self._notification_kind_toast = None
         self._started = False
         self._available = False
         self._access_denied = False
@@ -130,7 +131,10 @@ class NotificationCollector:
         self._started = True
         try:
             from winrt.windows.foundation import TypedEventHandler
-            from winrt.windows.ui.notifications.management import UserNotificationListener
+            from winrt.windows.ui.notifications.management import (
+                UserNotificationKinds,
+                UserNotificationListener,
+            )
         except Exception as error:  # pragma: no cover - runtime dependency
             self._available = False
             self._last_error = f"WINRT imports failed: {error}"
@@ -140,6 +144,16 @@ class NotificationCollector:
         try:
             listener = self._resolve_listener(UserNotificationListener)
             if listener is None:
+                return
+
+            self._notification_kind_toast = self._resolve_toast_notification_kind(
+                UserNotificationKinds
+            )
+            if self._notification_kind_toast is None:
+                self._available = False
+                self._last_error = (
+                    "Unable to resolve WINRT toast notification kind enum value."
+                )
                 return
 
             access = await listener.request_access_async()
@@ -163,11 +177,39 @@ class NotificationCollector:
             self._last_error = str(error)
             LOGGER.exception("Failed to initialize notification collector")
 
+    def _resolve_toast_notification_kind(self, UserNotificationKinds):
+        """Resolve enum member name differences across WINRT binding variants."""
+        candidate_names = ("TOAST", "Toast")
+        for member_name in candidate_names:
+            try:
+                kind = getattr(UserNotificationKinds, member_name)
+                LOGGER.info(
+                    "Resolved UserNotificationKinds member for toast notifications via %s.",
+                    member_name,
+                )
+                return kind
+            except AttributeError:
+                continue
+
+        LOGGER.error(
+            "Failed to resolve toast notification enum member on UserNotificationKinds. "
+            "Tried members: %s",
+            ", ".join(candidate_names),
+        )
+        return None
+
     async def refresh_snapshot(self) -> None:
         if not self._listener:
             return
+        if self._notification_kind_toast is None:
+            LOGGER.error(
+                "Cannot refresh notifications because toast notification kind enum is unresolved."
+            )
+            return
         try:
-            raw_notifications = await self._listener.get_notifications_async(2)
+            raw_notifications = await self._listener.get_notifications_async(
+                self._notification_kind_toast
+            )
             mapped = [self._map_notification(item) for item in raw_notifications]
             cleaned = [item for item in mapped if item is not None]
             cleaned.sort(key=lambda item: item.timestamp or "", reverse=True)
