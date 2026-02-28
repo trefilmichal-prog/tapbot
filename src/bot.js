@@ -266,6 +266,12 @@ function sanitizeMentionLikeTokens(content) {
     .replace(/@here/g, '@\u200bhere');
 }
 
+function formatLogAuthorLabel(author) {
+  if (!author) return 'Unknown';
+  const username = author.tag ?? author.username ?? 'Unknown';
+  return `${username} (ID: ${author.id})`;
+}
+
 function formatMessageTimestamp(timestampMs) {
   if (!Number.isFinite(timestampMs)) return 'Unknown';
   const seconds = Math.floor(timestampMs / 1000);
@@ -716,9 +722,7 @@ async function recoverTicketApplicantId(channel, entry) {
 }
 
 function buildMessageLogComponents({ title, messageId, channelId, author, createdTimestamp, content }) {
-  const authorLabel = author
-    ? `<@${author.id}> (${author.tag ?? author.username ?? 'Unknown'})`
-    : 'Unknown';
+  const authorLabel = formatLogAuthorLabel(author);
   const headerLines = [
     title,
     `Author: ${authorLabel}`,
@@ -1902,7 +1906,7 @@ client.on(Events.MessageDelete, async (message) => {
     channelId: resolvedMessage.channelId ?? message.channelId,
     author,
     createdTimestamp: resolvedMessage.createdTimestamp ?? null,
-    content: `**Content:** ${formatLogContent(resolvedMessage.content)}`
+    content: `**Content:** ${formatLogContent(sanitizeMentionLikeTokens(resolvedMessage.content))}`
   });
 
   try {
