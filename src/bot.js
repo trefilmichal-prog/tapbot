@@ -575,6 +575,14 @@ function isValidDiscordSnowflake(value) {
   return typeof value === 'string' && /^\d{17,20}$/.test(value.trim());
 }
 
+function normalizeDiscordSnowflake(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmedValue = value.trim();
+  return isValidDiscordSnowflake(trimmedValue) ? trimmedValue : null;
+}
+
 async function ensureTicketApplicantAccess(channel, applicantId) {
   if (!channel?.permissionOverwrites || typeof channel.permissionOverwrites.edit !== 'function') {
     console.warn('Unable to ensure applicant access: channel does not support permission overwrites.');
@@ -3138,11 +3146,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
             continue;
           }
 
-          const targetReviewRoleId = entry.activeReviewRoleId ?? clan.reviewRoleId ?? null;
+          const targetReviewRoleId = normalizeDiscordSnowflake(entry.activeReviewRoleId)
+            ?? normalizeDiscordSnowflake(clan.reviewRoleId);
           let channel;
           try {
             channel = await interaction.guild.channels.fetch(channelId);
           } catch (error) {
+            if (error?.name === 'DiscordAPIError' && error?.code === 10003) {
+              console.warn('Removing stale ticket visibility sync entry because channel no longer exists.', {
+                channelId
+              });
+              await updateClanState(interaction.guildId, (nextState) => {
+                ensureGuildClanState(nextState);
+                if (nextState.clan_ticket_decisions && Object.prototype.hasOwnProperty.call(nextState.clan_ticket_decisions, channelId)) {
+                  delete nextState.clan_ticket_decisions[channelId];
+                }
+              });
+              skipped += 1;
+              continue;
+            }
             console.warn(`Failed to fetch channel ${channelId} during ticket visibility sync:`, error);
             failed += 1;
             continue;
@@ -3153,8 +3175,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             continue;
           }
 
-          const applicantId = typeof entry.applicantId === 'string' ? entry.applicantId.trim() : entry.applicantId;
-          if (!isValidDiscordSnowflake(applicantId)) {
+          const applicantId = normalizeDiscordSnowflake(entry.applicantId);
+          if (!applicantId) {
             console.warn('Skipping ticket visibility sync entry due to invalid applicantId.', {
               channelId,
               applicantId: entry.applicantId
@@ -3163,7 +3185,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             continue;
           }
 
-          const oldReviewRoleId = entry.activeReviewRoleId ?? null;
+          const oldReviewRoleId = normalizeDiscordSnowflake(entry.activeReviewRoleId);
           try {
             await channel.permissionOverwrites.edit(interaction.guild.roles.everyone.id, {
               ViewChannel: false
