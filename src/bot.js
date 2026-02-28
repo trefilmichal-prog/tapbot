@@ -485,6 +485,12 @@ const NOTIFICATION_FORWARD_ERROR_LOG_INTERVAL_MS = 60 * 1000;
 let notificationForwardPollTimer = null;
 let notificationForwardPollingFallbackActive = false;
 const notificationForwardSeenByGuild = new Map();
+
+function getNotificationStartupModeLabel(startupMode) {
+  return startupMode === 'send_unseen'
+    ? 'send unseen since last delivered'
+    : 'only new notifications after startup';
+}
 const lastNotificationForwardErrorByGuild = new Map();
 const notificationForwardSystemAlertSentByGuild = new Map();
 const notificationForwardDeliveryAlertSentByGuild = new Map();
@@ -785,9 +791,13 @@ async function persistNotificationForwardRuntimeStateForAllGuilds(readyClient, p
 }
 
 async function initializeNotificationForwardCache(readyClient) {
+  const activeGuildConfigs = [];
   for (const [guildId] of readyClient.guilds.cache) {
     const config = getNotificationForwardConfig(guildId);
-    if (!config.enabled || !config.channelId) continue;
+    if (!config.enabled || !config.channelId) {
+      continue;
+    }
+    activeGuildConfigs.push([guildId, config]);
 
     if (config.lastDeliveredNotificationSignature) {
       const signatureSet = notificationForwardSeenByGuild.get(guildId) ?? new Set();
@@ -803,11 +813,37 @@ async function initializeNotificationForwardCache(readyClient) {
   }
 
   const sortedUniqueNotifications = buildSortedUniqueForwardNotifications(result.notifications);
+  const allCurrentSignatures = sortedUniqueNotifications.map(buildNotificationSignature);
 
-  for (const [guildId] of readyClient.guilds.cache) {
-    const config = getNotificationForwardConfig(guildId);
-    if (!config.enabled || !config.channelId) continue;
-    const signatureSet = new Set(sortedUniqueNotifications.map(buildNotificationSignature));
+  for (const [guildId, config] of activeGuildConfigs) {
+    const startupMode = config.startupMode === 'send_unseen' ? 'send_unseen' : 'only_new';
+    const signatureSet = notificationForwardSeenByGuild.get(guildId) ?? new Set();
+
+    if (startupMode === 'only_new') {
+      for (const signature of allCurrentSignatures) {
+        signatureSet.add(signature);
+      }
+      pruneNotificationSignatureSet(signatureSet);
+      notificationForwardSeenByGuild.set(guildId, signatureSet);
+      continue;
+    }
+
+    if (!config.lastDeliveredNotificationSignature) {
+      pruneNotificationSignatureSet(signatureSet);
+      notificationForwardSeenByGuild.set(guildId, signatureSet);
+      continue;
+    }
+
+    const lastDeliveredIndex = allCurrentSignatures.lastIndexOf(config.lastDeliveredNotificationSignature);
+    if (lastDeliveredIndex < 0) {
+      pruneNotificationSignatureSet(signatureSet);
+      notificationForwardSeenByGuild.set(guildId, signatureSet);
+      continue;
+    }
+
+    for (let index = 0; index <= lastDeliveredIndex; index += 1) {
+      signatureSet.add(allCurrentSignatures[index]);
+    }
     pruneNotificationSignatureSet(signatureSet);
     notificationForwardSeenByGuild.set(guildId, signatureSet);
   }
@@ -4581,9 +4617,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
+        const startupMode = 'send_unseen';
         await setNotificationForwardConfig(interaction.guildId, {
           enabled: true,
           channelId: channel.id,
+          startupMode,
           mode: 'poll',
           lastDeliveryError: null
         });
@@ -4591,7 +4629,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         clearNotificationForwardSystemAlertsForGuild(interaction.guildId);
 
         await interaction.reply({
-          components: buildTextComponents(`Automatic notification forwarding was enabled for <#${channel.id}>.`),
+          components: buildTextComponents(
+            `Automatic notification forwarding was enabled for <#${channel.id}>. Startup mode: ${getNotificationStartupModeLabel(startupMode)}.`
+          ),
           flags: MessageFlags.IsComponentsV2,
           ephemeral: true
         });
@@ -4602,6 +4642,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await setNotificationForwardConfig(interaction.guildId, {
           enabled: false,
           channelId: null,
+          startupMode: 'only_new',
           mode: 'poll',
           lastBridgeStatus: null,
           lastDeliveryError: null
@@ -4628,6 +4669,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           statusParts.push('Forwarding is currently disabled.');
         }
         statusParts.push(`Mode: ${config.mode === 'daemon_push' ? 'daemon push' : 'polling fallback'}.`);
+        statusParts.push(`Startup mode: ${getNotificationStartupModeLabel(config.startupMode)}.`);
         if (config.lastBridgeStatus?.updatedAt) {
           statusParts.push(`Bridge connected: ${config.lastBridgeStatus.connected ? 'yes' : 'no'} (${config.lastBridgeStatus.updatedAt}).`);
         }
