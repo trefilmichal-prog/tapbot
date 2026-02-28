@@ -47,11 +47,27 @@ foreach ($notification in $notifications) {
     if ($bindings) {
       foreach ($binding in $bindings) {
         $textElements = $binding.GetTextElements()
-        if ($textElements.Count -ge 1 -and [string]::IsNullOrWhiteSpace($title)) {
-          $title = $textElements[0].Text
-        }
-        if ($textElements.Count -ge 2 -and [string]::IsNullOrWhiteSpace($body)) {
-          $body = $textElements[1].Text
+        if ($textElements) {
+          $nonEmptyTexts = @()
+          foreach ($textElement in $textElements) {
+            if ($textElement -and -not [string]::IsNullOrWhiteSpace($textElement.Text)) {
+              $nonEmptyTexts += $textElement.Text
+            }
+          }
+
+          if ($nonEmptyTexts.Count -ge 1) {
+            if ([string]::IsNullOrWhiteSpace($title)) {
+              $title = $nonEmptyTexts[0]
+            }
+
+            if ([string]::IsNullOrWhiteSpace($body)) {
+              if ($nonEmptyTexts.Count -ge 2) {
+                $body = ($nonEmptyTexts | Select-Object -Skip 1) -join [Environment]::NewLine
+              } elseif ([string]::IsNullOrWhiteSpace($title)) {
+                $body = $nonEmptyTexts[0]
+              }
+            }
+          }
         }
       }
     }
@@ -82,9 +98,10 @@ function mapNotification(rawItem) {
   }
 
   const timestamp = typeof rawItem.timestamp === 'string' ? rawItem.timestamp : null;
+  const rawBody = typeof rawItem.body === 'string' ? rawItem.body : null;
   return {
     title: normalizeText(rawItem.title),
-    body: normalizeText(rawItem.body),
+    body: rawBody === null ? null : normalizeText(rawBody),
     app: normalizeText(rawItem.app) ?? 'Unknown app',
     timestamp
   };
