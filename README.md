@@ -190,6 +190,7 @@ If only `tapbot` is present, review daemon preflight logs:
 - `ACCESS_DENIED`: Windows notification permission was not granted for the daemon process user session.
 - Frequent reconnect logs: daemon is restarting or local firewall blocks localhost TCP policy.
 - Empty reads with daemon running: check if Windows Action Center has notifications and that app notifications are enabled.
+- Enum symbol mismatch across PyWinRT variants: daemon now falls back to numeric toast kind bit (`1`) when enum introspection or enum-valued calls fail, so daemon mode can still operate with alternate bindings.
 
 ### Example usage
 
