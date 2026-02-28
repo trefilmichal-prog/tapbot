@@ -487,6 +487,148 @@ let notificationForwardPollingFallbackActive = false;
 const notificationForwardSeenByGuild = new Map();
 const lastNotificationForwardErrorByGuild = new Map();
 const notificationForwardSystemAlertSentByGuild = new Map();
+const notificationForwardDeliveryAlertSentByGuild = new Map();
+
+function getDiscordApiErrorCode(error) {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+
+  if (error.code !== undefined && error.code !== null) {
+    return String(error.code);
+  }
+
+  if (error.rawError && typeof error.rawError === 'object' && error.rawError.code !== undefined && error.rawError.code !== null) {
+    return String(error.rawError.code);
+  }
+
+  return null;
+}
+
+function classifyNotificationDeliveryError(error) {
+  const code = getDiscordApiErrorCode(error);
+  if (code === '10003') {
+    return { category: 'channel_unavailable', code, message: 'Configured channel no longer exists or cannot be fetched.' };
+  }
+
+  if (code === '50001' || code === '50013') {
+    return { category: 'missing_permissions', code, message: 'Bot lacks permissions for the configured channel.' };
+  }
+
+  return {
+    category: 'api_error',
+    code,
+    message: error?.message ?? 'Unknown Discord API error.'
+  };
+}
+
+function shouldSendNotificationDeliveryAlert(guildId, channelId, deliveryError) {
+  const errorCode = deliveryError?.code ?? 'UNKNOWN';
+  const category = deliveryError?.category ?? 'unknown';
+  const key = `${guildId}:${channelId}:${category}:${errorCode}`;
+  const now = Date.now();
+  const lastAlertAt = notificationForwardDeliveryAlertSentByGuild.get(key) ?? 0;
+  if (now - lastAlertAt < NOTIFICATION_FORWARD_ERROR_LOG_INTERVAL_MS) {
+    return false;
+  }
+
+  notificationForwardDeliveryAlertSentByGuild.set(key, now);
+  return true;
+}
+
+async function getNotificationForwardFallbackChannel(guildId, guild) {
+  const logConfig = getLogConfig(guildId);
+  if (!logConfig?.channelId) {
+    return null;
+  }
+
+  try {
+    const channel = await guild.channels.fetch(logConfig.channelId);
+    if (!channel || !channel.isTextBased()) {
+      return null;
+    }
+    return channel;
+  } catch (error) {
+    console.warn(`Failed to fetch notification-forward fallback log channel ${logConfig.channelId}:`, error);
+    return null;
+  }
+}
+
+async function persistNotificationDeliveryError(guildId, channelId, deliveryError) {
+  const current = getNotificationForwardConfig(guildId);
+  const previous = current.lastDeliveryError && typeof current.lastDeliveryError === 'object'
+    ? current.lastDeliveryError
+    : null;
+  const nextRepeatCount = previous
+    && previous.channelId === channelId
+    && previous.category === deliveryError.category
+    && String(previous.code ?? '') === String(deliveryError.code ?? '')
+      ? (Number(previous.repeatCount) || 1) + 1
+      : 1;
+  const firstFailedAt = nextRepeatCount > 1 && previous?.firstFailedAt
+    ? previous.firstFailedAt
+    : new Date().toISOString();
+  const lastFailedAt = new Date().toISOString();
+
+  await persistNotificationForwardRuntimeState(guildId, {
+    lastDeliveryError: {
+      category: deliveryError.category,
+      code: deliveryError.code,
+      message: deliveryError.message,
+      channelId,
+      firstFailedAt,
+      lastFailedAt,
+      repeatCount: nextRepeatCount
+    }
+  });
+
+  return {
+    category: deliveryError.category,
+    code: deliveryError.code,
+    message: deliveryError.message,
+    channelId,
+    firstFailedAt,
+    lastFailedAt,
+    repeatCount: nextRepeatCount
+  };
+}
+
+async function clearNotificationDeliveryError(guildId) {
+  const current = getNotificationForwardConfig(guildId);
+  if (!current.lastDeliveryError) {
+    return;
+  }
+
+  await persistNotificationForwardRuntimeState(guildId, {
+    lastDeliveryError: null
+  });
+}
+
+async function sendNotificationDeliveryFailureAlert(guildId, guild, channelId, storedError) {
+  if (!shouldSendNotificationDeliveryAlert(guildId, channelId, storedError)) {
+    return;
+  }
+
+  const fallbackChannel = await getNotificationForwardFallbackChannel(guildId, guild);
+  if (!fallbackChannel) {
+    return;
+  }
+
+  const errorLine = storedError.code
+    ? `${storedError.category} (${storedError.code})`
+    : storedError.category;
+
+  try {
+    await fallbackChannel.send({
+      components: buildTextComponents(
+        `⚠️ Notification forwarding delivery failed for <#${channelId}>: ${errorLine}. ${storedError.message ?? ''}`.trim()
+      ),
+      flags: MessageFlags.IsComponentsV2
+    });
+  } catch (error) {
+    console.warn(`Failed to send notification forwarding delivery alert to guild ${guildId}:`, error);
+  }
+}
 
 function normalizeNotificationForForward(rawItem) {
   if (!rawItem || typeof rawItem !== 'object') {
@@ -689,11 +831,20 @@ async function dispatchForwardNotificationsToGuilds(readyClient, notifications) 
     try {
       channel = await guild.channels.fetch(config.channelId);
     } catch (error) {
+      const classifiedError = classifyNotificationDeliveryError(error);
+      const storedError = await persistNotificationDeliveryError(guildId, config.channelId, classifiedError);
+      await sendNotificationDeliveryFailureAlert(guildId, guild, config.channelId, storedError);
       console.warn(`Failed to fetch notification forward channel ${config.channelId}:`, error);
       continue;
     }
 
     if (!channel || !channel.isTextBased()) {
+      const storedError = await persistNotificationDeliveryError(guildId, config.channelId, {
+        category: 'channel_unavailable',
+        code: 'CHANNEL_NOT_TEXT_BASED',
+        message: 'Configured channel is unavailable or is not text-based.'
+      });
+      await sendNotificationDeliveryFailureAlert(guildId, guild, config.channelId, storedError);
       continue;
     }
 
@@ -713,7 +864,11 @@ async function dispatchForwardNotificationsToGuilds(readyClient, notifications) 
         await persistNotificationForwardRuntimeState(guildId, {
           lastDeliveredNotificationSignature: signature
         });
+        await clearNotificationDeliveryError(guildId);
       } catch (error) {
+        const classifiedError = classifyNotificationDeliveryError(error);
+        const storedError = await persistNotificationDeliveryError(guildId, config.channelId, classifiedError);
+        await sendNotificationDeliveryFailureAlert(guildId, guild, config.channelId, storedError);
         console.warn(`Failed to forward notification to guild ${guildId}:`, error);
       }
     }
@@ -4429,7 +4584,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await setNotificationForwardConfig(interaction.guildId, {
           enabled: true,
           channelId: channel.id,
-          mode: 'poll'
+          mode: 'poll',
+          lastDeliveryError: null
         });
         notificationForwardSeenByGuild.delete(interaction.guildId);
         clearNotificationForwardSystemAlertsForGuild(interaction.guildId);
@@ -4447,7 +4603,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           enabled: false,
           channelId: null,
           mode: 'poll',
-          lastBridgeStatus: null
+          lastBridgeStatus: null,
+          lastDeliveryError: null
         });
         notificationForwardSeenByGuild.delete(interaction.guildId);
         clearNotificationForwardSystemAlertsForGuild(interaction.guildId);
@@ -4473,6 +4630,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
         statusParts.push(`Mode: ${config.mode === 'daemon_push' ? 'daemon push' : 'polling fallback'}.`);
         if (config.lastBridgeStatus?.updatedAt) {
           statusParts.push(`Bridge connected: ${config.lastBridgeStatus.connected ? 'yes' : 'no'} (${config.lastBridgeStatus.updatedAt}).`);
+        }
+        if (config.lastDeliveryError) {
+          const deliveryError = config.lastDeliveryError;
+          const errorCodePart = deliveryError.code ? ` (${deliveryError.code})` : '';
+          statusParts.push(
+            `Last delivery error: ${deliveryError.category}${errorCodePart} at ${deliveryError.lastFailedAt ?? 'unknown time'}${deliveryError.repeatCount ? ` (repeated ${deliveryError.repeatCount}×)` : ''}.`
+          );
+          if (deliveryError.message) {
+            statusParts.push(`Detail: ${deliveryError.message}`);
+          }
+        } else {
+          statusParts.push('Last delivery error: none.');
         }
 
         await interaction.reply({
