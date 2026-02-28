@@ -46,6 +46,7 @@ class NotificationCollector:
         self._lock = threading.Lock()
         self._listener = None
         self._notification_kind_toast = None
+        self._notification_kind_source = None
         self._started = False
         self._available = False
         self._access_denied = False
@@ -269,26 +270,23 @@ class NotificationCollector:
                 self._resolve_notification_kinds_enum()
             )
             if notification_kinds_enum is None:
-                self._available = False
-                self._last_error = (
-                    "Unable to resolve WINRT notification kind enum type. "
-                    "Tried symbols in winrt.windows.ui.notifications.management: "
-                    f"{', '.join(attempted_symbols)}. "
-                    "Fallback introspection scan was also attempted."
+                self._notification_kind_toast = 1
+                self._notification_kind_source = "numeric-fallback"
+                LOGGER.warning(
+                    "Notification kind enum resolution failed; numeric fallback used for toast kind bit (1). "
+                    "Tried symbols in winrt.windows.ui.notifications.management: %s",
+                    ", ".join(attempted_symbols),
                 )
-                LOGGER.error(self._last_error)
-                return
+            else:
+                (
+                    self._notification_kind_toast,
+                    self._notification_kind_source,
+                ) = self._resolve_toast_notification_kind(notification_kinds_enum)
 
-            self._notification_kind_toast = self._resolve_toast_notification_kind(
-                notification_kinds_enum
-            )
-            if self._notification_kind_toast is None:
-                self._available = False
-                self._last_error = (
-                    "Unable to resolve WINRT toast notification kind enum value. "
-                    f"Enum type: {notification_kinds_enum}."
-                )
-                return
+            if self._notification_kind_source == "enum":
+                LOGGER.info("Notification kind enum resolved and used for toast filtering.")
+            else:
+                LOGGER.info("Notification kind numeric fallback used for toast filtering.")
 
             access = await listener.request_access_async()
             status_name = getattr(access, "name", str(access))
@@ -318,10 +316,10 @@ class NotificationCollector:
             try:
                 kind = getattr(notification_kinds_enum, member_name)
                 LOGGER.info(
-                    "Resolved notification kind enum member for toast notifications via %s.",
+                    "Resolved notification kind enum member for toast notifications via %s (enum resolved).",
                     member_name,
                 )
-                return kind
+                return kind, "enum"
             except AttributeError:
                 continue
 
@@ -331,7 +329,10 @@ class NotificationCollector:
             notification_kinds_enum,
             ", ".join(candidate_names),
         )
-        return None
+        LOGGER.warning(
+            "Toast enum symbol unresolved; numeric fallback used for toast kind bit (1)."
+        )
+        return 1, "numeric-fallback"
 
     async def refresh_snapshot(self) -> None:
         if not self._listener:
@@ -342,9 +343,19 @@ class NotificationCollector:
             )
             return
         try:
-            raw_notifications = await self._listener.get_notifications_async(
-                self._notification_kind_toast
-            )
+            try:
+                raw_notifications = await self._listener.get_notifications_async(
+                    self._notification_kind_toast
+                )
+            except (TypeError, ValueError):
+                if self._notification_kind_toast == 1:
+                    raise
+                LOGGER.warning(
+                    "get_notifications_async rejected enum toast kind; numeric fallback used for toast kind bit (1)."
+                )
+                self._notification_kind_toast = 1
+                self._notification_kind_source = "numeric-fallback"
+                raw_notifications = await self._listener.get_notifications_async(1)
             mapped = [self._map_notification(item) for item in raw_notifications]
             cleaned = [item for item in mapped if item is not None]
             cleaned.sort(key=lambda item: item.timestamp or "", reverse=True)

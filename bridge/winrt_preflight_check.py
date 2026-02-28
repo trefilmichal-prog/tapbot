@@ -159,6 +159,19 @@ def _resolve_notification_kinds_enum(module_name: str) -> tuple[Any | None, str 
     return None, None, details
 
 
+def _resolve_toast_kind_or_numeric_fallback(enum_type: Any | None) -> tuple[Any | None, str | None]:
+    """Resolve toast enum symbol and fallback to numeric bit (1) if needed."""
+    toast_candidates = ("TOAST", "Toast")
+    if enum_type is None:
+        return 1, "numeric-fallback"
+
+    for candidate in toast_candidates:
+        if hasattr(enum_type, candidate):
+            return getattr(enum_type, candidate), f"enum:{candidate}"
+
+    return 1, "numeric-fallback"
+
+
 def main() -> int:
     missing: list[str] = []
 
@@ -181,7 +194,6 @@ def main() -> int:
         )
 
     module_name = "winrt.windows.ui.notifications.management"
-    toast_candidates = ("TOAST", "Toast")
     enum_type, enum_source, resolution_details = _resolve_notification_kinds_enum(
         module_name
     )
@@ -190,7 +202,10 @@ def main() -> int:
         missing.append(
             f"Missing module {module_name}: {resolution_details['import_error']}"
         )
-    elif enum_type is None:
+
+    toast_kind, toast_kind_source = _resolve_toast_kind_or_numeric_fallback(enum_type)
+
+    if enum_type is None and resolution_details["import_error"] is None:
         failed_candidates = []
         failed_candidates.extend(resolution_details["explicit_missing"])
         failed_candidates.extend(resolution_details["explicit_errors"])
@@ -202,24 +217,17 @@ def main() -> int:
         relevant_no_toast.extend(resolution_details["explicit_no_toast"])
         relevant_no_toast.extend(resolution_details["fallback_no_toast"])
 
-        missing.append(
-            "Unable to resolve WINRT notification kind enum type. "
+        print(
+            "[WARN] Unable to resolve WINRT notification kind enum type. "
             f"Explicit candidates failed: {', '.join(failed_candidates) if failed_candidates else 'none'}; "
             f"fallback scan attempted: {fallback_status}; "
             "symbols found without toast member: "
-            f"{', '.join(relevant_no_toast) if relevant_no_toast else 'none'}."
+            f"{', '.join(relevant_no_toast) if relevant_no_toast else 'none'}. "
+            "Numeric toast fallback (1) will be used."
         )
-    else:
-        toast_member = next(
-            (candidate for candidate in toast_candidates if hasattr(enum_type, candidate)),
-            None,
-        )
-        if toast_member is None:
-            missing.append(
-                "Missing toast enum symbol on "
-                f"{enum_source}; "
-                f"tried: {', '.join(toast_candidates)}"
-            )
+
+    if toast_kind is None:
+        missing.append("Unable to resolve toast kind via enum or numeric fallback.")
 
     if missing:
         print("[ERROR] WINRT daemon preflight failed.")
@@ -227,11 +235,18 @@ def main() -> int:
             print(f"[ERROR] {issue}")
         return 1
 
-    print(
-        "[INFO] WINRT daemon preflight OK: TypedEventHandler, "
-        "UserNotificationListener and toast enum symbol are available. "
-        f"Resolved enum path: {enum_source}."
-    )
+    if toast_kind_source and toast_kind_source.startswith("enum:"):
+        print(
+            "[INFO] WINRT daemon preflight OK: TypedEventHandler, "
+            "UserNotificationListener and toast enum symbol are available (enum resolved). "
+            f"Resolved enum path: {enum_source}."
+        )
+    else:
+        print(
+            "[INFO] WINRT daemon preflight OK: TypedEventHandler and "
+            "UserNotificationListener are available; toast kind numeric fallback used (1). "
+            f"Resolved enum path: {enum_source or 'unresolved'}."
+        )
     return 0
 
 
