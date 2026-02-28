@@ -3142,12 +3142,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           const clan = state.clan_clans?.[entry.clanName];
           if (!clan) {
+            console.warn('Skipping ticket visibility sync entry because clan configuration is missing.', {
+              channelId,
+              clanName: entry.clanName
+            });
             skipped += 1;
             continue;
           }
 
-          const targetReviewRoleId = normalizeDiscordSnowflake(entry.activeReviewRoleId)
-            ?? normalizeDiscordSnowflake(clan.reviewRoleId);
+          const ticketCategoryId = normalizeDiscordSnowflake(clan.ticketCategoryId);
+          if (!ticketCategoryId) {
+            console.warn('Skipping ticket visibility sync entry because ticket category is missing in clan config.', {
+              channelId,
+              clanName: entry.clanName,
+              ticketCategoryId: clan.ticketCategoryId
+            });
+            skipped += 1;
+            continue;
+          }
+
           let channel;
           try {
             channel = await interaction.guild.channels.fetch(channelId);
@@ -3170,7 +3183,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
             continue;
           }
 
+          let ticketCategory;
+          try {
+            ticketCategory = await interaction.guild.channels.fetch(ticketCategoryId);
+          } catch (error) {
+            console.warn('Skipping ticket visibility sync entry because ticket category fetch failed.', {
+              channelId,
+              ticketCategoryId,
+              errorCode: error?.code ?? null
+            });
+            skipped += 1;
+            continue;
+          }
+
+          if (!ticketCategory || ticketCategory.type !== ChannelType.GuildCategory) {
+            console.warn('Skipping ticket visibility sync entry because ticket category is missing or invalid.', {
+              channelId,
+              ticketCategoryId,
+              categoryType: ticketCategory?.type ?? null
+            });
+            skipped += 1;
+            continue;
+          }
+
           if (!channel?.permissionOverwrites) {
+            console.warn('Skipping ticket visibility sync entry because target channel does not support permission overwrites.', {
+              channelId
+            });
             skipped += 1;
             continue;
           }
@@ -3185,39 +3224,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
             continue;
           }
 
-          const oldReviewRoleId = normalizeDiscordSnowflake(entry.activeReviewRoleId);
+          const categoryOverwrites = ticketCategory.permissionOverwrites.cache
+            .filter((overwrite) => overwrite.id !== applicantId)
+            .map((overwrite) => ({
+              id: overwrite.id,
+              type: overwrite.type,
+              allow: overwrite.allow.bitfield,
+              deny: overwrite.deny.bitfield
+            }));
+
           try {
-            await channel.permissionOverwrites.edit(interaction.guild.roles.everyone.id, {
-              ViewChannel: false
-            });
+            await channel.permissionOverwrites.set(categoryOverwrites);
             await channel.permissionOverwrites.edit(applicantId, {
               ViewChannel: true,
               SendMessages: true,
               ReadMessageHistory: true
             });
-
-            if (targetReviewRoleId) {
-              await channel.permissionOverwrites.edit(targetReviewRoleId, {
-                ViewChannel: true,
-                SendMessages: true,
-                ReadMessageHistory: true
-              });
-            }
-
-            if (oldReviewRoleId && oldReviewRoleId !== targetReviewRoleId) {
-              await channel.permissionOverwrites.edit(oldReviewRoleId, {
-                ViewChannel: false,
-                SendMessages: false,
-                ReadMessageHistory: false
-              });
-            }
           } catch (error) {
             if (error?.name === 'DiscordAPIError' && (error?.code === 10009 || error?.code === 10011 || error?.code === 50035)) {
-              console.warn('Skipping ticket visibility sync entry due to inconsistent stored data.', {
+              console.warn('Skipping ticket visibility sync entry due to inconsistent data while applying category overwrites.', {
                 channelId,
                 applicantId,
-                targetReviewRoleId,
-                oldReviewRoleId,
+                ticketCategoryId,
                 errorCode: error.code
               });
               skipped += 1;
@@ -3235,7 +3263,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             if (!targetEntry || typeof targetEntry !== 'object') {
               return;
             }
-            targetEntry.activeReviewRoleId = targetReviewRoleId;
+            targetEntry.activeReviewRoleId = normalizeDiscordSnowflake(clan.reviewRoleId) ?? null;
             targetEntry.updatedAt = nowIso;
           });
           updated += 1;
