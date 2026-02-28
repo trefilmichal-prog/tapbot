@@ -570,6 +570,43 @@ export const defaultCommands = [
         type: ApplicationCommandOptionType.Subcommand,
         name: 'menu',
         description: 'Open the ticket settings menu in the current ticket channel'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'all',
+        description: 'Show an overview of ticket decisions',
+        options: [
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'status',
+            description: 'Optional status filter',
+            required: false,
+            choices: [
+              {
+                name: 'Awaiting',
+                value: 'awaiting'
+              },
+              {
+                name: 'Accepted',
+                value: 'accept'
+              },
+              {
+                name: 'Rejected',
+                value: 'reject'
+              },
+              {
+                name: 'Removed',
+                value: 'remove'
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'clan',
+            description: 'Optional clan name filter',
+            required: false
+          }
+        ]
       }
     ]
   },
