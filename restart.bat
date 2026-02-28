@@ -22,6 +22,7 @@ set "DAEMON_OUT_LOG=%LOG_DIR%\\pm2-winrt-daemon-out.log"
 set "DAEMON_ERR_LOG=%LOG_DIR%\\pm2-winrt-daemon-error.log"
 set "DAEMON_PYTHON_EXE="
 set "DAEMON_PYTHON_ARGS="
+set "DAEMON_PREFLIGHT_SCRIPT=%~dp0bridge\winrt_preflight_check.py"
 
 pm2 describe %PM2_NAME% 1>>"%DEBUG_LOG%" 2>>&1
 if errorlevel 1 (
@@ -60,9 +61,10 @@ if not errorlevel 1 (
 )
 
 if defined DAEMON_PYTHON_EXE (
-  %DAEMON_PYTHON_EXE% %DAEMON_PYTHON_ARGS% -c "import winrt" 1>>"%DAEMON_CHECK_LOG%" 2>>&1
+  %DAEMON_PYTHON_EXE% %DAEMON_PYTHON_ARGS% "%DAEMON_PREFLIGHT_SCRIPT%" 1>>"%DAEMON_CHECK_LOG%" 2>>&1
   if errorlevel 1 (
-    echo [WARN] WINRT daemon preflight failed (missing winrt module).>>"%DAEMON_CHECK_LOG%"
+    echo [WARN] WINRT daemon preflight failed.>>"%DAEMON_CHECK_LOG%"
+    echo [WARN] Recommendation: fix Python/winrt environment; notification forwarding will return API_UNAVAILABLE until resolved.>>"%DAEMON_CHECK_LOG%"
     echo [WARN] Skipping %DAEMON_PM2_NAME% restart. Bot %PM2_NAME% continues without Windows notifications daemon. 1>>"%DEBUG_LOG%" 2>>&1
   ) else (
     pm2 describe %DAEMON_PM2_NAME% 1>>"%DEBUG_LOG%" 2>>&1
@@ -80,6 +82,7 @@ if defined DAEMON_PYTHON_EXE (
   )
 ) else (
   echo [WARN] Python launcher not found (tried py and python).>>"%DAEMON_CHECK_LOG%"
+  echo [WARN] Recommendation: fix Python/winrt environment; notification forwarding will return API_UNAVAILABLE until resolved.>>"%DAEMON_CHECK_LOG%"
   echo [WARN] Skipping %DAEMON_PM2_NAME% restart. Bot %PM2_NAME% continues without Windows notifications daemon. 1>>"%DEBUG_LOG%" 2>>&1
 )
 
