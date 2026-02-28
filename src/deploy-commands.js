@@ -99,7 +99,7 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'ticket_visibility_sync',
-        description: 'Synchronize clan ticket channel visibility permissions'
+        description: 'Sync ticket permissions with clan category and preserve applicant access'
       }
     ]
   },
