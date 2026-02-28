@@ -95,18 +95,44 @@ The `/notifications read` command reads recent toast notifications from the Wind
 ### Windows runtime requirements
 
 - The bot must run on **Windows** (`win32`).
-- A WinRT notification helper binary must be configured (no PowerShell dependency).
+- A Python WinRT daemon must be running and reachable over localhost TCP.
 - Windows notification access must be allowed for the running user session (otherwise access is denied).
 
-### Helper configuration
+### Daemon IPC configuration
 
-Configure helper path via environment variables (per environment / host):
+Configure daemon address via environment variables (per environment / host):
 
-- `WINRT_NOTIFICATIONS_HELPER_PATH` (generic override)
-- `WINRT_NOTIFICATIONS_HELPER_PATH_WIN32` (Windows-specific)
+- `WINRT_NOTIFICATIONS_DAEMON_HOST` (default `127.0.0.1`)
+- `WINRT_NOTIFICATIONS_DAEMON_PORT` (default `8765`)
 
-At startup, the bot performs a runtime check and logs whether the helper is available.
-If the helper is missing, `/notifications read` and forwarding return `API_UNAVAILABLE` consistently instead of crashing.
+At startup, the bot performs a runtime check and logs whether the daemon endpoint is available.
+If the daemon is not reachable, `/notifications read` and forwarding return `API_UNAVAILABLE` consistently instead of crashing.
+
+### Python daemon mode
+
+`bridge/windows_notifications_daemon.py` runs as a long-lived process, subscribes to WinRT notification-change events, and serves JSON over localhost TCP for the Node bot.
+
+#### Dependencies
+
+- Python 3.10+
+- `winrt` / PyWinRT bindings available in the Python environment
+
+#### Run daemon manually
+
+On the Windows host where the bot runs:
+
+```powershell
+python bridge/windows_notifications_daemon.py --host 127.0.0.1 --port 8765
+```
+
+Recommended: run it as a service (Task Scheduler / NSSM / PM2 ecosystem wrapper) so it starts automatically after reboot.
+
+#### Troubleshooting daemon mode
+
+- `API_UNAVAILABLE`: daemon is down, wrong `WINRT_NOTIFICATIONS_DAEMON_HOST/PORT`, or WinRT Python bindings are missing.
+- `ACCESS_DENIED`: Windows notification permission was not granted for the daemon process user session.
+- Frequent reconnect logs: daemon is restarting or local firewall blocks localhost TCP policy.
+- Empty reads with daemon running: check if Windows Action Center has notifications and that app notifications are enabled.
 
 ### Example usage
 
