@@ -19,7 +19,7 @@ if (-not ([System.Management.Automation.PSTypeName]'System.WindowsRuntimeSystemE
 }
 
 $listener = [Windows.UI.Notifications.Management.UserNotificationListener]::Current
-$accessTask = [System.WindowsRuntimeSystemExtensions]::AsTask($listener.RequestAccessAsync())
+$accessTask = [System.WindowsRuntimeSystemExtensions]::AsTask[Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus]($listener.RequestAccessAsync())
 $access = $accessTask.GetAwaiter().GetResult()
 
 if ($access -ne [Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus]::Allowed) {
@@ -27,7 +27,7 @@ if ($access -ne [Windows.UI.Notifications.Management.UserNotificationListenerAcc
 }
 
 $kinds = [Windows.UI.Notifications.NotificationKinds]::Toast
-$notificationsTask = [System.WindowsRuntimeSystemExtensions]::AsTask($listener.GetNotificationsAsync($kinds))
+$notificationsTask = [System.WindowsRuntimeSystemExtensions]::AsTask[Windows.Foundation.Collections.IVectorView[Windows.UI.Notifications.UserNotification]]($listener.GetNotificationsAsync($kinds))
 $notifications = $notificationsTask.GetAwaiter().GetResult()
 $result = @()
 
