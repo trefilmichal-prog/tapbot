@@ -619,6 +619,102 @@ async function ensureTicketApplicantAccess(channel, applicantId) {
   }
 }
 
+function deriveApplicantIdFromTicketEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+
+  const directCandidateFields = [
+    entry.applicantId,
+    entry.userId,
+    entry.authorId,
+    entry.ownerId,
+    entry.createdBy
+  ];
+
+  for (const candidate of directCandidateFields) {
+    const normalizedCandidate = normalizeDiscordSnowflake(candidate);
+    if (normalizedCandidate) {
+      return normalizedCandidate;
+    }
+  }
+
+  const answerCandidateFields = [
+    entry.answers?.applicantId,
+    entry.answers?.userId,
+    entry.answers?.authorId,
+    entry.answers?.discordId,
+    entry.answers?.discordUserId,
+    entry.answers?.memberId
+  ];
+  for (const candidate of answerCandidateFields) {
+    const normalizedCandidate = normalizeDiscordSnowflake(candidate);
+    if (normalizedCandidate) {
+      return normalizedCandidate;
+    }
+  }
+
+  return null;
+}
+
+async function recoverTicketApplicantId(channel, entry) {
+  const inferredFromEntry = deriveApplicantIdFromTicketEntry(entry);
+  if (inferredFromEntry) {
+    return { applicantId: inferredFromEntry, source: 'ticket_payload' };
+  }
+
+  const summaryMessageId = normalizeDiscordSnowflake(entry?.messageId);
+  if (summaryMessageId && channel?.isTextBased()) {
+    try {
+      const summaryMessage = await channel.messages.fetch(summaryMessageId);
+      const messageMetadataCandidates = [
+        summaryMessage?.interactionMetadata?.user?.id,
+        summaryMessage?.interaction?.user?.id,
+        summaryMessage?.messageReference?.authorId,
+        summaryMessage?.mentions?.users?.first?.()?.id
+      ];
+
+      for (const candidate of messageMetadataCandidates) {
+        const normalizedCandidate = normalizeDiscordSnowflake(candidate);
+        if (normalizedCandidate) {
+          return { applicantId: normalizedCandidate, source: 'summary_message' };
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to fetch ticket summary message while recovering applicantId.', {
+        channelId: channel?.id ?? null,
+        messageId: summaryMessageId,
+        errorCode: error?.code ?? null
+      });
+    }
+  }
+
+  if (!channel?.permissionOverwrites?.cache) {
+    return { applicantId: null, source: null };
+  }
+
+  const memberOverwriteCandidates = channel.permissionOverwrites.cache
+    .filter((overwrite) => (overwrite.type === 1 || overwrite.type === 'member'))
+    .filter((overwrite) => overwrite.allow.has(PermissionsBitField.Flags.ViewChannel))
+    .filter((overwrite) => overwrite.allow.has(PermissionsBitField.Flags.SendMessages))
+    .map((overwrite) => overwrite.id)
+    .filter((id) => id !== channel?.client?.user?.id)
+    .filter((id) => isValidDiscordSnowflake(id));
+
+  for (const memberId of memberOverwriteCandidates) {
+    try {
+      const member = await channel.guild.members.fetch(memberId);
+      if (member?.user && !member.user.bot) {
+        return { applicantId: memberId, source: 'permission_overwrite' };
+      }
+    } catch {
+      // Ignore stale overwrite IDs and continue with the next candidate.
+    }
+  }
+
+  return { applicantId: null, source: null };
+}
+
 function buildMessageLogComponents({ title, messageId, channelId, author, createdTimestamp, content }) {
   const authorLabel = author
     ? `<@${author.id}> (${author.tag ?? author.username ?? 'Unknown'})`
@@ -3132,6 +3228,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         let updated = 0;
         let failed = 0;
         let skipped = 0;
+        let recoveredApplicantIds = 0;
 
         for (const [channelId, entry] of Object.entries(state.clan_ticket_decisions ?? {})) {
           processed += 1;
@@ -3214,14 +3311,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
             continue;
           }
 
-          const applicantId = normalizeDiscordSnowflake(entry.applicantId);
+          let applicantId = normalizeDiscordSnowflake(entry.applicantId);
           if (!applicantId) {
-            console.warn('Skipping ticket visibility sync entry due to invalid applicantId.', {
-              channelId,
-              applicantId: entry.applicantId
-            });
-            skipped += 1;
-            continue;
+            const recoveryResult = await recoverTicketApplicantId(channel, entry);
+            if (recoveryResult.applicantId) {
+              applicantId = recoveryResult.applicantId;
+              const nowIso = new Date().toISOString();
+              await updateClanState(interaction.guildId, (nextState) => {
+                ensureGuildClanState(nextState);
+                const targetEntry = nextState.clan_ticket_decisions?.[channelId];
+                if (!targetEntry || typeof targetEntry !== 'object') {
+                  return;
+                }
+                targetEntry.applicantId = recoveryResult.applicantId;
+                targetEntry.updatedAt = nowIso;
+              });
+              recoveredApplicantIds += 1;
+              console.warn('Recovered missing ticket applicantId during ticket visibility sync.', {
+                channelId,
+                recoveredApplicantId: recoveryResult.applicantId,
+                source: recoveryResult.source
+              });
+            } else {
+              console.warn('Skipping ticket visibility sync entry due to unrecoverable applicantId.', {
+                channelId,
+                applicantId: entry.applicantId,
+                messageId: entry?.messageId ?? null
+              });
+              skipped += 1;
+              continue;
+            }
           }
 
           const categoryOverwrites = ticketCategory.permissionOverwrites.cache
@@ -3274,7 +3393,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           `Processed: **${processed}**`,
           `Updated: **${updated}**`,
           `Failed: **${failed}**`,
-          `Skipped: **${skipped}**`
+          `Skipped: **${skipped}**`,
+          `RecoveredApplicantIds: **${recoveredApplicantIds}**`
         ].join('\n');
 
         await interaction.reply({
