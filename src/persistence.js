@@ -184,11 +184,18 @@ function getDefaultNotificationForwardConfig() {
   return {
     enabled: false,
     channelId: null,
+    startupMode: 'only_new',
     mode: 'poll',
     lastBridgeStatus: null,
     lastDeliveredNotificationSignature: null,
     lastDeliveryError: null
   };
+}
+
+function normalizeNotificationForwardStartupMode(startupMode) {
+  return startupMode === 'send_unseen' || startupMode === 'only_new'
+    ? startupMode
+    : 'only_new';
 }
 
 function normalizeNotificationForwardMode(mode) {
@@ -204,6 +211,7 @@ function normalizeNotificationForwardConfig(config) {
   return {
     enabled: Boolean(parsed.enabled),
     channelId: parsed.channelId ?? null,
+    startupMode: normalizeNotificationForwardStartupMode(parsed.startupMode),
     mode: normalizeNotificationForwardMode(parsed.mode),
     lastBridgeStatus: parsed.lastBridgeStatus && typeof parsed.lastBridgeStatus === 'object'
       ? {
@@ -727,6 +735,7 @@ function loadNotificationForwardConfig(guildId) {
 
   const entry = normalizeNotificationForwardConfig(parsed);
   const migrationNeeded = !parsed || typeof parsed !== 'object'
+    || !Object.prototype.hasOwnProperty.call(parsed, 'startupMode')
     || !Object.prototype.hasOwnProperty.call(parsed, 'mode')
     || !Object.prototype.hasOwnProperty.call(parsed, 'lastBridgeStatus')
     || !Object.prototype.hasOwnProperty.call(parsed, 'lastDeliveredNotificationSignature')
