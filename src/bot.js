@@ -3626,6 +3626,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (action === CLAN_TICKET_DECISION_REMOVE) {
         const refreshedState = getClanState(interaction.guildId);
         const refreshedEntry = refreshedState.clan_ticket_decisions?.[interaction.channelId];
+        const applicantId = refreshedEntry?.applicantId ?? null;
+        const fallbackAcceptRoleId = refreshedEntry?.clanName
+          ? refreshedState.clan_clans?.[refreshedEntry.clanName]?.acceptRoleId ?? null
+          : null;
+        const acceptRoleId = clan.acceptRoleId ?? fallbackAcceptRoleId;
+        let roleCleanupNote = null;
+
+        if (applicantId && acceptRoleId) {
+          try {
+            const applicantMember = await interaction.guild.members.fetch(applicantId);
+            await applicantMember.roles.remove(acceptRoleId);
+            roleCleanupNote = 'accept role removed';
+          } catch (error) {
+            console.warn('Failed to remove accept role from applicant on ticket removal:', error);
+            roleCleanupNote = 'accept role cleanup failed';
+          }
+        }
+
         if (refreshedEntry?.messageId && interaction.channel?.isTextBased()) {
           try {
             const message = await interaction.channel.messages.fetch(refreshedEntry.messageId);
@@ -3647,7 +3665,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         await interaction.reply({
-          components: buildTextComponents('Ticket was removed.'),
+          components: buildTextComponents(
+            roleCleanupNote ? `Ticket was removed (${roleCleanupNote}).` : 'Ticket was removed.'
+          ),
           flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
