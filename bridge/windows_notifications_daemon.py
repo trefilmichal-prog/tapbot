@@ -19,6 +19,14 @@ from typing import Awaitable, Callable, Dict, List, Optional, Set
 LOGGER = logging.getLogger("windows_notifications_daemon")
 
 
+def _truncate_for_log(value: Optional[str], max_length: int = 120) -> Optional[str]:
+    if value is None:
+        return None
+    if len(value) <= max_length:
+        return value
+    return f"{value[: max_length - 1]}…"
+
+
 @dataclass
 class NotificationRecord:
     timestamp: Optional[str]
@@ -356,7 +364,33 @@ class NotificationCollector:
                 self._notification_kind_toast = 1
                 self._notification_kind_source = "numeric-fallback"
                 raw_notifications = await self._listener.get_notifications_async(1)
+
+            LOGGER.info(
+                "Received notifications snapshot: %d items",
+                len(raw_notifications),
+            )
             mapped = [self._map_notification(item) for item in raw_notifications]
+            LOGGER.info("Mapped notifications snapshot: %d items", len(mapped))
+
+            if LOGGER.isEnabledFor(logging.DEBUG) and mapped:
+                debug_preview = []
+                for item in mapped[:3]:
+                    if item is None:
+                        continue
+                    debug_preview.append(
+                        {
+                            "title": _truncate_for_log(item.title, max_length=80),
+                            "app": _truncate_for_log(item.app, max_length=60),
+                            "timestamp": item.timestamp,
+                        }
+                    )
+                    if len(debug_preview) >= 3:
+                        break
+                if debug_preview:
+                    LOGGER.debug(
+                        "Notifications preview (up to 3 items): %s", debug_preview
+                    )
+
             cleaned = [item for item in mapped if item is not None]
             cleaned.sort(key=lambda item: item.timestamp or "", reverse=True)
             with self._lock:
@@ -517,6 +551,11 @@ class TcpBridgeServer:
     async def broadcast_notifications(
         self, notifications: List[Dict[str, Optional[str]]]
     ) -> None:
+        LOGGER.info(
+            "Broadcasting notifications snapshot: %d items to %d subscribers",
+            len(notifications),
+            len(self._subscribers),
+        )
         if not self._subscribers:
             return
 
