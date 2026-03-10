@@ -159,6 +159,85 @@ def _resolve_notification_kinds_enum(module_name: str) -> tuple[Any | None, str 
     return None, None, details
 
 
+def _describe_listener_current_shape(UserNotificationListener: Any) -> dict[str, Any]:
+    """Describe current/get_current shape to detect projection incompatibilities early."""
+    diagnostics: dict[str, Any] = {
+        "has_get_current": hasattr(UserNotificationListener, "get_current"),
+        "has_current": hasattr(UserNotificationListener, "current"),
+        "current_shape": "missing",
+        "current_module": None,
+        "current_type": None,
+        "current_invocation_policy": "n/a",
+        "current_notes": [],
+    }
+
+    if not diagnostics["has_current"]:
+        return diagnostics
+
+    try:
+        current_value = UserNotificationListener.current
+    except Exception as error:
+        diagnostics["current_shape"] = "unreadable"
+        diagnostics["current_notes"].append(
+            f"current read failed: {error.__class__.__name__}: {error}"
+        )
+        return diagnostics
+
+    current_type = type(current_value)
+    diagnostics["current_module"] = getattr(current_value, "__module__", None)
+    diagnostics["current_type"] = (
+        f"{getattr(current_type, '__module__', 'unknown')}."
+        f"{getattr(current_type, '__name__', current_type.__class__.__name__)}"
+    )
+
+    if isinstance(current_value, property):
+        diagnostics["current_shape"] = "property-descriptor"
+        diagnostics["current_invocation_policy"] = "read-property"
+        diagnostics["current_notes"].append("current is Python property descriptor")
+        return diagnostics
+
+    if callable(current_value):
+        diagnostics["current_shape"] = "callable-artifact"
+        name_bits = " ".join(
+            str(part).lower()
+            for part in (
+                getattr(current_value, "__name__", ""),
+                getattr(current_value, "__module__", ""),
+                getattr(type(current_value), "__name__", ""),
+                getattr(type(current_value), "__module__", ""),
+            )
+        )
+        doc_bits = (getattr(current_value, "__doc__", "") or "").lower()
+
+        if "typing" in name_bits or "projection" in name_bits:
+            diagnostics["current_invocation_policy"] = "do-not-invoke"
+            diagnostics["current_notes"].append(
+                "callable resembles typing/projection wrapper"
+            )
+        elif (
+            getattr(current_value, "__qualname__", "").startswith(
+                f"{UserNotificationListener.__name__}."
+            )
+            or "accessor" in doc_bits
+            or "get current" in doc_bits
+        ):
+            diagnostics["current_invocation_policy"] = "invoke-accessor"
+            diagnostics["current_notes"].append(
+                "callable appears listener-bound accessor"
+            )
+        else:
+            diagnostics["current_invocation_policy"] = "treat-as-property-value"
+            diagnostics["current_notes"].append(
+                "callable not clearly an accessor method"
+            )
+        return diagnostics
+
+    diagnostics["current_shape"] = "property-value"
+    diagnostics["current_invocation_policy"] = "read-property"
+    diagnostics["current_notes"].append("current exposes concrete value")
+    return diagnostics
+
+
 def _resolve_toast_kind_or_numeric_fallback(enum_type: Any | None) -> tuple[Any | None, str | None]:
     """Resolve toast enum symbol and fallback to numeric bit (1) if needed."""
     toast_candidates = ("TOAST", "Toast")
@@ -194,6 +273,10 @@ def main() -> int:
         )
 
     module_name = "winrt.windows.ui.notifications.management"
+    listener_shape = None
+    if "UserNotificationListener" in locals():
+        listener_shape = _describe_listener_current_shape(UserNotificationListener)
+
     enum_type, enum_source, resolution_details = _resolve_notification_kinds_enum(
         module_name
     )
@@ -234,6 +317,21 @@ def main() -> int:
         for issue in missing:
             print(f"[ERROR] {issue}")
         return 1
+
+    if listener_shape is not None:
+        print(
+            "[INFO] UserNotificationListener shape: "
+            f"get_current={'yes' if listener_shape['has_get_current'] else 'no'}, "
+            f"current={'yes' if listener_shape['has_current'] else 'no'}, "
+            f"current-shape={listener_shape['current_shape']}, "
+            f"current-type={listener_shape['current_type'] or 'unknown'}, "
+            f"policy={listener_shape['current_invocation_policy']}."
+        )
+        if listener_shape["current_notes"]:
+            print(
+                "[INFO] UserNotificationListener current notes: "
+                + "; ".join(listener_shape["current_notes"])
+            )
 
     if toast_kind_source and toast_kind_source.startswith("enum:"):
         print(
