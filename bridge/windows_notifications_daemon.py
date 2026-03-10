@@ -380,6 +380,7 @@ class NotificationCollector:
                     debug_preview.append(
                         {
                             "title": _truncate_for_log(item.title, max_length=80),
+                            "body": _truncate_for_log(item.body, max_length=80),
                             "app": _truncate_for_log(item.app, max_length=60),
                             "timestamp": item.timestamp,
                         }
@@ -411,23 +412,18 @@ class NotificationCollector:
         try:
             visual = item.notification.visual
             bindings = visual.get_bindings()
-            title = None
-            body = None
+            collected_texts: List[str] = []
 
             for binding in bindings:
                 texts = binding.get_text_elements()
-                for index, text_item in enumerate(texts):
+                for text_item in texts:
                     content = (text_item.text or "").strip()
                     if not content:
                         continue
-                    if title is None:
-                        title = content
-                        continue
-                    if body is None and index >= 1:
-                        body = content
-                        break
-                if title and body:
-                    break
+                    collected_texts.append(content)
+
+            title = collected_texts[0] if len(collected_texts) >= 1 else None
+            body = collected_texts[1] if len(collected_texts) >= 2 else None
 
             timestamp = None
             if item.creation_time:
