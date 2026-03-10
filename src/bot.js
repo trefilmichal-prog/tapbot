@@ -4859,15 +4859,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
           };
         });
 
+        const finalComponents = [
+          ...buildPrivateMessageCreatedComponents({
+            fromUserId: interaction.user.id,
+            toUserId: targetUser.id
+          }),
+          ...buildPrivateMessageReadButton(privateMessageId)
+        ];
+
         await interaction.reply({
-          components: [
-            ...buildPrivateMessageCreatedComponents({
-              fromUserId: interaction.user.id,
-              toUserId: targetUser.id
-            }),
-            ...buildPrivateMessageReadButton(privateMessageId)
-          ],
-          flags: buildInteractionFlags({ componentsV2: true })
+          components: buildTextComponents('Odesláno.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+
+        const channel = interaction.channel;
+        if (!channel || !channel.isTextBased()) {
+          console.warn(`Failed to send /sz send output for interaction ${interaction.id}: missing text channel.`);
+          return;
+        }
+
+        await channel.send({
+          components: finalComponents,
+          flags: MessageFlags.IsComponentsV2
         });
       }
       return;
