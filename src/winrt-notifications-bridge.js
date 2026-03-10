@@ -27,7 +27,7 @@ function normalizeBridgeResponse(payload) {
   };
 }
 
-class WinRtDaemonClient {
+export class WinRtDaemonClient {
   constructor() {
     this.host = resolveDaemonHost();
     this.port = resolveDaemonPort();
@@ -210,14 +210,14 @@ class WinRtDaemonClient {
   handleData(chunk) {
     this.buffer += String(chunk);
 
-    while (true) {
-      const newlineIndex = this.buffer.indexOf('\n');
-      if (newlineIndex === -1) {
-        break;
-      }
-
+    let newlineIndex = this.buffer.indexOf('\n');
+    while (newlineIndex !== -1) {
+      const remainder = this.buffer.slice(newlineIndex + 1);
       const line = this.buffer.slice(0, newlineIndex).trim();
-      this.buffer = this.buffer.slice(newlineIndex + 1);
+      this.buffer = remainder;
+
+      newlineIndex = this.buffer.indexOf('\n');
+
       if (!line) continue;
 
       try {
