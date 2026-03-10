@@ -1,0 +1,63 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { WinRtDaemonClient } from '../src/winrt-notifications-bridge.js';
+
+test('handleData parses chunked and mixed frames while preserving id routing and events', () => {
+  const client = new WinRtDaemonClient();
+  const resolved = [];
+  const events = [];
+
+  client.pendingRequests.set('req-1', {
+    resolve: (payload) => resolved.push({ id: 'req-1', payload }),
+    reject: () => assert.fail('req-1 should not reject')
+  });
+  client.pendingRequests.set('req-2', {
+    resolve: (payload) => resolved.push({ id: 'req-2', payload }),
+    reject: () => assert.fail('req-2 should not reject')
+  });
+  client.pendingRequests.set('req-3', {
+    resolve: (payload) => resolved.push({ id: 'req-3', payload }),
+    reject: () => assert.fail('req-3 should not reject')
+  });
+
+  client.onEvent((payload) => events.push(payload));
+
+  client.handleData('{"id":"req-1","ok":true,"value":"first"}\n{"type":"notifications","notifications":[{"title":"n1"}]}\n');
+
+  assert.deepEqual(
+    resolved,
+    [{ id: 'req-1', payload: { id: 'req-1', ok: true, value: 'first' } }],
+    'one chunk with two valid lines should process both frames'
+  );
+  assert.deepEqual(events, [{ type: 'notifications', notifications: [{ title: 'n1' }] }]);
+
+  client.handleData('{"id":"req-2","ok":true,"value":"second"}');
+
+  assert.equal(resolved.length, 1, 'partial line should stay buffered until newline arrives');
+  assert.equal(client.buffer, '{"id":"req-2","ok":true,"value":"second"}');
+
+  client.handleData('\n{"id":"req-3","ok":true,"value":"third"}\nthis-is-not-json\n{"type":"notifications","notifications":[{"title":"n2"}]}\n');
+
+  assert.deepEqual(
+    resolved,
+    [
+      { id: 'req-1', payload: { id: 'req-1', ok: true, value: 'first' } },
+      { id: 'req-2', payload: { id: 'req-2', ok: true, value: 'second' } },
+      { id: 'req-3', payload: { id: 'req-3', ok: true, value: 'third' } }
+    ],
+    'responses must resolve by matching id even when mixed with other frames'
+  );
+
+  assert.deepEqual(
+    events,
+    [
+      { type: 'notifications', notifications: [{ title: 'n1' }] },
+      { type: 'notifications', notifications: [{ title: 'n2' }] }
+    ],
+    'event frames should still flow through emitEvent when mixed with responses'
+  );
+
+  assert.equal(client.buffer, '', 'buffer should preserve and consume only complete framed lines');
+  assert.equal(client.pendingRequests.size, 0, 'all matched pending requests should be resolved');
+});
