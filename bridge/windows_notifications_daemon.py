@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import datetime as dt
 import enum
+import inspect
 import importlib
 import json
 import logging
@@ -72,6 +73,59 @@ class NotificationCollector:
     def _resolve_listener(self, UserNotificationListener):
         """Resolve listener instance across WINRT binding API variants."""
         attempts = []
+        get_current_failed = False
+        current_failed = False
+
+        def _is_incompatible_callable_shape(candidate) -> bool:
+            """Guard against typing/projection artifacts masquerading as accessors."""
+            candidate_name = getattr(candidate, "__name__", "") or ""
+            candidate_module = getattr(candidate, "__module__", "") or ""
+            candidate_type = type(candidate)
+            candidate_type_name = getattr(candidate_type, "__name__", "") or ""
+            candidate_type_module = getattr(candidate_type, "__module__", "") or ""
+            joined = " ".join(
+                part.lower()
+                for part in (
+                    candidate_name,
+                    candidate_module,
+                    candidate_type_name,
+                    candidate_type_module,
+                )
+            )
+            return "typing" in joined or "projection" in joined
+
+        def _has_accessor_metadata(candidate) -> bool:
+            doc = (getattr(candidate, "__doc__", "") or "").lower()
+            # WINRT projection layers sometimes expose accessor semantics only in docs.
+            return "accessor" in doc or "property" in doc or "get current" in doc
+
+        def _can_invoke_current(candidate) -> bool:
+            if _is_incompatible_callable_shape(candidate):
+                attempts.append(
+                    "current detected incompatible binding shape "
+                    "(typing/projection callable artifact); not invoking"
+                )
+                return False
+
+            if inspect.ismethod(candidate):
+                return True
+
+            if inspect.isfunction(candidate) and getattr(
+                candidate, "__qualname__", ""
+            ).startswith(f"{UserNotificationListener.__name__}."):
+                return True
+
+            if _has_accessor_metadata(candidate):
+                attempts.append(
+                    "current callable has accessor metadata; invoking as method"
+                )
+                return True
+
+            attempts.append(
+                "current present but callable shape is not listener-bound accessor; "
+                "treating as property value"
+            )
+            return False
 
         if hasattr(UserNotificationListener, "get_current"):
             try:
@@ -82,6 +136,7 @@ class NotificationCollector:
                     )
                     return listener
             except Exception as error:
+                get_current_failed = True
                 attempts.append(f"get_current() failed: {error}")
         else:
             attempts.append("get_current() missing")
@@ -89,14 +144,17 @@ class NotificationCollector:
         if hasattr(UserNotificationListener, "current"):
             try:
                 listener = UserNotificationListener.current
-                if callable(listener):
+                if callable(listener) and _can_invoke_current(listener):
                     listener = listener()
                 if listener is not None:
                     LOGGER.info(
                         "Resolved UserNotificationListener via current accessor."
                     )
                     return listener
+                current_failed = True
+                attempts.append("current returned None")
             except Exception as error:
+                current_failed = True
                 attempts.append(f"current failed: {error}")
         else:
             attempts.append("current missing")
@@ -126,10 +184,19 @@ class NotificationCollector:
             attempts.append("constructor unavailable per binding docs")
 
         self._available = False
+        if get_current_failed or current_failed:
+            failure_mode = (
+                "runtime access-denied/permission issue likely"
+                if self._access_denied
+                else "incompatible binding shape or runtime accessor failure"
+            )
+        else:
+            failure_mode = "incompatible binding shape"
         self._last_error = (
             "Unable to resolve UserNotificationListener. "
             "The installed WINRT binding appears incompatible "
             "(missing get_current/current/constructor APIs). "
+            f"Failure mode: {failure_mode}. "
             f"Details: {'; '.join(attempts)}"
         )
         LOGGER.error(self._last_error)
