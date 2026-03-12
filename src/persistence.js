@@ -37,8 +37,7 @@ function getDefaultClanState() {
     permission_role_id: null,
     cooldowns: {},
     cooldowns_user: {},
-    cooldowns_role: {},
-    clan_pending_workflows: {}
+    cooldowns_role: {}
   };
 }
 
@@ -292,8 +291,7 @@ function migrateLegacyClanState() {
     'permission_roles',
     'cooldowns',
     'cooldowns_user',
-    'cooldowns_role',
-    'clan_pending_workflows'
+    'cooldowns_role'
   ];
 
   for (const key of legacyMaps) {
@@ -320,7 +318,6 @@ function migrateLegacyClanState() {
     nextState.cooldowns = parsed.cooldowns?.[guildId] ?? {};
     nextState.cooldowns_user = parsed.cooldowns_user?.[guildId] ?? {};
     nextState.cooldowns_role = parsed.cooldowns_role?.[guildId] ?? {};
-    nextState.clan_pending_workflows = parsed.clan_pending_workflows?.[guildId] ?? {};
 
     migrateClanState(nextState);
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -528,15 +525,8 @@ function migrateClanState(state) {
     }
   }
 
-  const pendingWorkflows = state.clan_pending_workflows;
-  if (!pendingWorkflows || typeof pendingWorkflows !== 'object' || Array.isArray(pendingWorkflows)) {
-    state.clan_pending_workflows = {};
-  } else {
-    for (const [userId, workflow] of Object.entries(pendingWorkflows)) {
-      if (!workflow || typeof workflow !== 'object' || Array.isArray(workflow)) {
-        delete pendingWorkflows[userId];
-      }
-    }
+  if ('clan_pending_workflows' in state) {
+    delete state.clan_pending_workflows;
   }
 
   const ticketDecisions = state.clan_ticket_decisions;
