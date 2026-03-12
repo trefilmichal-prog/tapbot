@@ -71,6 +71,7 @@ const client = new Client({
 });
 const CLAN_PANEL_SELECT_ID = 'clan_panel_select';
 const CLAN_APPLICATION_MODAL_PREFIX = 'clan_apply_modal:';
+const CLAN_PANEL_EDIT_MODAL_PREFIX = 'clan_panel_edit_modal:';
 const CLAN_WORKFLOW_CANCEL_PREFIX = 'clan_workflow_cancel:';
 const CLAN_WORKFLOW_RESTART_PREFIX = 'clan_workflow_restart:';
 const CLAN_PENDING_TYPE_PANEL_EDIT = 'panel_edit';
@@ -2064,6 +2065,24 @@ function parseClanApplicationModalCustomId(customId) {
   return { guildId, userId, sessionId };
 }
 
+function buildClanPanelEditModalCustomId({ guildId, userId }) {
+  return `${CLAN_PANEL_EDIT_MODAL_PREFIX}${guildId}:${userId}`;
+}
+
+function parseClanPanelEditModalCustomId(customId) {
+  if (!customId || !customId.startsWith(CLAN_PANEL_EDIT_MODAL_PREFIX)) {
+    return null;
+  }
+
+  const payload = customId.slice(CLAN_PANEL_EDIT_MODAL_PREFIX.length);
+  const [guildId, userId] = payload.split(':');
+  if (!guildId || !userId) {
+    return null;
+  }
+
+  return { guildId, userId };
+}
+
 function createClanApplicationModalComponents() {
   return [
     {
@@ -3187,6 +3206,56 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isModalSubmit()) {
+      const panelEditModalContext = parseClanPanelEditModalCustomId(interaction.customId);
+      if (panelEditModalContext) {
+        if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+          await interaction.reply({
+            components: buildTextComponents('This form can only be submitted in a server.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        const { guildId: modalGuildId, userId: modalUserId } = panelEditModalContext;
+        if (interaction.guildId !== modalGuildId || interaction.user.id !== modalUserId) {
+          await interaction.reply({
+            components: buildTextComponents('This form is not valid for your account or server.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (!hasClanPanelPermission(interaction.member)) {
+          await interaction.reply({
+            components: buildTextComponents('You do not have permission to use the clan panel.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        const inputDescription = interaction.fields.getTextInputValue('description');
+        const trimmedDescription = inputDescription.trim();
+        const description = !trimmedDescription || trimmedDescription === '-'
+          ? null
+          : trimmedDescription.slice(0, 1000);
+
+        await updateClanState(interaction.guildId, (state) => {
+          ensureGuildClanState(state);
+          state.clan_panel_configs = {
+            ...state.clan_panel_configs,
+            description,
+            updatedAt: new Date().toISOString()
+          };
+        });
+
+        await refreshClanPanelForGuild(interaction.guild, interaction.guildId);
+        await interaction.reply({
+          components: buildTextComponents('Clan panel description saved.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
       const modalContext = parseClanApplicationModalCustomId(interaction.customId);
       if (!modalContext) return;
 
@@ -5151,33 +5220,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const state = getClanState(guildId);
         const panelDescription = state.clan_panel_configs?.description ?? null;
-
-        await updateClanState(guildId, (nextState) => {
-          ensureGuildClanState(nextState);
-          nextState.clan_pending_workflows[interaction.user.id] = {
-            type: CLAN_PENDING_TYPE_PANEL_EDIT,
-            step: CLAN_PENDING_STEP_PANEL_DESCRIPTION,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
+        const modalCustomId = buildClanPanelEditModalCustomId({
+          guildId,
+          userId: interaction.user.id
         });
 
-        const instructions = panelDescription && panelDescription.trim()
-          ? `Current description:
-${panelDescription.trim()}
-
-Send the new clan panel description as a normal message. Send \`-\` to clear description.`
-          : 'No current description is set. Send the new clan panel description as a normal message. Send `-` to clear description.';
-
-        await interaction.reply({
-          components: buildClanPendingWorkflowComponents(
+        await interaction.showModal({
+          custom_id: modalCustomId,
+          title: 'Upravit popis panelu',
+          components: [
             {
-              type: CLAN_PENDING_TYPE_PANEL_EDIT,
-              step: CLAN_PENDING_STEP_PANEL_DESCRIPTION
-            },
-            instructions
-          ),
-          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+              type: ComponentType.ActionRow,
+              components: [
+                {
+                  type: ComponentType.TextInput,
+                  custom_id: 'description',
+                  style: TextInputStyle.Paragraph,
+                  label: 'Popis panelu',
+                  required: false,
+                  max_length: 1000,
+                  placeholder: 'Zadej nový popis, "-" pro smazání',
+                  value: panelDescription ? panelDescription.slice(0, 1000) : undefined
+                }
+              ]
+            }
+          ]
         });
         return;
       }
