@@ -72,11 +72,6 @@ const client = new Client({
 const CLAN_PANEL_SELECT_ID = 'clan_panel_select';
 const CLAN_APPLICATION_MODAL_PREFIX = 'clan_apply_modal:';
 const CLAN_PANEL_EDIT_MODAL_PREFIX = 'clan_panel_edit_modal:';
-const CLAN_WORKFLOW_CANCEL_PREFIX = 'clan_workflow_cancel:';
-const CLAN_WORKFLOW_RESTART_PREFIX = 'clan_workflow_restart:';
-const CLAN_PENDING_TYPE_PANEL_EDIT = 'panel_edit';
-const CLAN_PENDING_STEP_PANEL_DESCRIPTION = 'panel_description';
-const CLAN_PENDING_WORKFLOW_TTL_MS = 30 * 60 * 1000;
 const CLAN_MODAL_SESSION_TTL_MS = 30 * 60 * 1000;
 const CLAN_TICKET_DECISION_PREFIX = 'clan_ticket_decision:';
 const CLAN_TICKET_PRIVATE_DECISION_PREFIX = 'clan_ticket_private_decision:';
@@ -1986,67 +1981,6 @@ function formatRouteList(routes) {
 }
 
 
-function getClanPendingWorkflow(state, userId) {
-  ensureGuildClanState(state);
-  if (!userId) return null;
-  const workflow = state.clan_pending_workflows?.[userId];
-  if (!workflow || typeof workflow !== 'object') return null;
-  const createdAtMs = Date.parse(workflow.createdAt ?? '');
-  if (!Number.isFinite(createdAtMs) || Date.now() - createdAtMs > CLAN_PENDING_WORKFLOW_TTL_MS) {
-    delete state.clan_pending_workflows[userId];
-    return null;
-  }
-  return workflow;
-}
-
-function getClanPendingStepPrompt(workflow) {
-  if (workflow.type === CLAN_PENDING_TYPE_PANEL_EDIT) {
-    return 'Send the new clan panel description as a normal message. Send `-` to clear description.';
-  }
-
-  return 'Send your response as a normal message.';
-}
-
-function buildClanPendingWorkflowComponents(workflow, instructionOverride = null) {
-  const title = '🛠️ **Clan panel edit**';
-  const instruction = instructionOverride ?? getClanPendingStepPrompt(workflow);
-
-  return [
-    {
-      type: ComponentType.Container,
-      components: [
-        {
-          type: ComponentType.TextDisplay,
-          content: title
-        },
-        {
-          type: ComponentType.TextDisplay,
-          content: instruction
-        },
-        {
-          type: ComponentType.ActionRow,
-          components: [
-            {
-              type: ComponentType.Button,
-              custom_id: `${CLAN_WORKFLOW_CANCEL_PREFIX}${workflow.type}`,
-              label: 'Cancel',
-              style: ButtonStyle.Secondary
-            },
-            {
-              type: ComponentType.Button,
-              custom_id: `${CLAN_WORKFLOW_RESTART_PREFIX}${workflow.type}`,
-              label: 'Restart',
-              style: ButtonStyle.Primary
-            }
-          ]
-        }
-      ]
-    }
-  ];
-}
-
-
-
 function buildClanApplicationModalCustomId({ guildId, userId, sessionId }) {
   return `${CLAN_APPLICATION_MODAL_PREFIX}${guildId}:${userId}:${sessionId}`;
 }
@@ -2271,7 +2205,6 @@ async function createClanTicketFromAnswers({ guild, guildId, userId, userTag, me
 
   await updateClanState(guildId, (nextState) => {
     ensureGuildClanState(nextState);
-    delete nextState.clan_pending_workflows[userId];
     nextState.clan_ticket_decisions[ticketChannel.id] = {
       clanName,
       applicantId: userId,
@@ -2535,9 +2468,6 @@ function ensureGuildClanState(state) {
   if (!state.officer_stats) {
     state.officer_stats = {};
   }
-  if (!state.clan_pending_workflows) {
-    state.clan_pending_workflows = {};
-  }
   if (!state.clan_modal_sessions) {
     state.clan_modal_sessions = {};
   }
@@ -2685,41 +2615,6 @@ client.on(Events.MessageCreate, async (message) => {
   if (!message.inGuild()) return;
   if (message.author?.bot) return;
   if (message.channel?.type !== ChannelType.GuildText) return;
-
-  const clanState = getClanState(message.guild.id);
-  const pendingWorkflow = getClanPendingWorkflow(clanState, message.author.id);
-  if (pendingWorkflow) {
-    const trimmedContent = (message.content ?? '').trim();
-    if (!trimmedContent) {
-      await message.reply({
-        components: buildClanPendingWorkflowComponents(pendingWorkflow),
-        flags: buildInteractionFlags({ componentsV2: true })
-      });
-      return;
-    }
-
-    if (pendingWorkflow.type === CLAN_PENDING_TYPE_PANEL_EDIT
-      && pendingWorkflow.step === CLAN_PENDING_STEP_PANEL_DESCRIPTION) {
-      const description = trimmedContent === '-' ? null : trimmedContent.slice(0, 1000);
-      await updateClanState(message.guild.id, (nextState) => {
-        ensureGuildClanState(nextState);
-        delete nextState.clan_pending_workflows[message.author.id];
-        nextState.clan_panel_configs = {
-          ...nextState.clan_panel_configs,
-          description,
-          updatedAt: new Date().toISOString()
-        };
-      });
-
-      await refreshClanPanelForGuild(message.guild, message.guild.id);
-      await message.reply({
-        components: buildTextComponents('Clan panel description saved.'),
-        flags: buildInteractionFlags({ componentsV2: true })
-      });
-      return;
-    }
-
-  }
 
   const state = getPingRoleState(message.guild.id);
   ensurePingRoleState(state);
@@ -3189,7 +3084,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           createdAt: createdAtIso,
           updatedAt: createdAtIso
         };
-        delete nextState.clan_pending_workflows[interaction.user.id];
       });
 
       const modalCustomId = buildClanApplicationModalCustomId({
@@ -3338,62 +3232,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton()) {
-      if (interaction.customId.startsWith(CLAN_WORKFLOW_CANCEL_PREFIX)) {
-        if (!interaction.inGuild()) {
-          await interaction.reply({
-            components: buildTextComponents('This action can only be used in a server.'),
-            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          });
-          return;
-        }
-
-        await updateClanState(interaction.guildId, (state) => {
-          ensureGuildClanState(state);
-          delete state.clan_pending_workflows[interaction.user.id];
-        });
-
-        await interaction.reply({
-          components: buildTextComponents('Workflow cancelled.'),
-          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-        });
-        return;
-      }
-
-      if (interaction.customId.startsWith(CLAN_WORKFLOW_RESTART_PREFIX)) {
-        if (!interaction.inGuild()) {
-          await interaction.reply({
-            components: buildTextComponents('This action can only be used in a server.'),
-            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          });
-          return;
-        }
-
-        const state = getClanState(interaction.guildId);
-        const workflow = getClanPendingWorkflow(state, interaction.user.id);
-        if (!workflow) {
-          await interaction.reply({
-            components: buildTextComponents('No active workflow found.'),
-            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          });
-          return;
-        }
-
-        const restarted = {
-          ...workflow,
-          step: CLAN_PENDING_STEP_PANEL_DESCRIPTION,
-          updatedAt: new Date().toISOString()
-        };
-        await updateClanState(interaction.guildId, (nextState) => {
-          ensureGuildClanState(nextState);
-          nextState.clan_pending_workflows[interaction.user.id] = restarted;
-        });
-        await interaction.reply({
-          components: buildClanPendingWorkflowComponents(restarted),
-          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-        });
-        return;
-      }
-
       if (interaction.customId.startsWith(PRIVATE_MESSAGE_READ_PREFIX)) {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
           await interaction.reply({
