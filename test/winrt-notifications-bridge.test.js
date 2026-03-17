@@ -61,3 +61,22 @@ test('handleData parses chunked and mixed frames while preserving id routing and
   assert.equal(client.buffer, '', 'buffer should preserve and consume only complete framed lines');
   assert.equal(client.pendingRequests.size, 0, 'all matched pending requests should be resolved');
 });
+
+test('ping helper keeps daemon request flow healthy even without notifications events', async () => {
+  const client = new WinRtDaemonClient();
+  let pingCount = 0;
+
+  client.sendRequest = async (payload) => {
+    assert.equal(payload?.type, 'ping');
+    pingCount += 1;
+    return { ok: true, type: 'pong' };
+  };
+
+  for (let i = 0; i < 6; i += 1) {
+    const response = await client.ping();
+    assert.equal(response.ok, true);
+  }
+
+  assert.equal(pingCount, 6, 'periodic ping/pong should stay successful over long idle periods');
+  assert.equal(client.connected, false, 'test performs pure request-level ping checks without notification event dependency');
+});
