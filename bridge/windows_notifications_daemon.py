@@ -475,10 +475,16 @@ class NotificationCollector:
 
         return None, attempted_symbols
 
-    def _build_notification_changed_handler(self, TypedEventHandler):
+    def _build_notification_changed_handler(
+        self,
+        typed_event_handler_class,
+        raw_typed_event_handler_candidate=None,
+        typed_event_handler_metadata: Optional[Dict[str, str]] = None,
+    ):
         """Build notification change delegate across projection variants."""
         callback = self._on_notification_changed
         attempts: List[str] = []
+        metadata = typed_event_handler_metadata or {}
 
         def _shape_info(candidate) -> str:
             candidate_module = getattr(candidate, "__module__", "") or ""
@@ -519,49 +525,57 @@ class NotificationCollector:
                 )
             )
 
-        if inspect.isclass(TypedEventHandler):
+        if inspect.isclass(typed_event_handler_class):
             try:
-                handler = TypedEventHandler(callback)
+                handler = typed_event_handler_class(callback)
                 LOGGER.info(
-                    "Constructed notification changed handler via TypedEventHandler(callback)."
+                    "Constructed notification changed handler via delegate class branch."
                 )
                 return handler
             except Exception as error:
                 attempts.append(
-                    "direct constructor failed "
+                    "delegate class branch failed: constructor failed "
                     f"({error.__class__.__name__}: {error})"
                 )
                 LOGGER.debug(
-                    "TypedEventHandler(callback) construction failed; trying generic-indexed form. %s: %s",
+                    "Delegate class branch failed; trying generic-indexed branch. %s: %s",
                     error.__class__.__name__,
                     error,
                     exc_info=True,
                 )
         else:
-            attempts.append("resolved runtime delegate is not a class")
+            attempts.append(
+                "delegate class branch skipped: resolved candidate is not a class "
+                f"({self._shape_info(typed_event_handler_class) if typed_event_handler_class is not None else 'None'})"
+            )
             LOGGER.debug(
                 "Resolved runtime delegate candidate is not a class: %s",
-                _shape_info(TypedEventHandler),
+                _shape_info(typed_event_handler_class),
             )
 
         runtime_delegate_class = None
         generic_index_candidate = None
-        try:
-            generic_index_candidate = TypedEventHandler[object, object]
-            LOGGER.debug(
-                "Resolved generic-indexed TypedEventHandler candidate: %s",
-                _shape_info(generic_index_candidate),
-            )
-        except Exception as error:
+        if inspect.isclass(typed_event_handler_class):
+            try:
+                generic_index_candidate = typed_event_handler_class[object, object]
+                LOGGER.debug(
+                    "Resolved generic-indexed TypedEventHandler candidate: %s",
+                    _shape_info(generic_index_candidate),
+                )
+            except Exception as error:
+                attempts.append(
+                    "generic-indexed branch failed: indexing failed "
+                    f"({error.__class__.__name__}: {error})"
+                )
+                LOGGER.debug(
+                    "TypedEventHandler generic indexing failed. %s: %s",
+                    error.__class__.__name__,
+                    error,
+                    exc_info=True,
+                )
+        else:
             attempts.append(
-                "generic indexing failed "
-                f"({error.__class__.__name__}: {error})"
-            )
-            LOGGER.debug(
-                "TypedEventHandler generic indexing failed. %s: %s",
-                error.__class__.__name__,
-                error,
-                exc_info=True,
+                "generic-indexed branch skipped: source is not a runtime class"
             )
 
         if generic_index_candidate is not None:
@@ -578,6 +592,9 @@ class NotificationCollector:
                         _shape_info(runtime_delegate_class),
                     )
                 else:
+                    attempts.append(
+                        "generic-indexed branch skipped: generic __origin__ is not runtime class"
+                    )
                     LOGGER.debug(
                         "Unable to resolve runtime delegate class from generic __origin__. origin=%s",
                         _shape_info(origin) if origin is not None else "None",
@@ -585,6 +602,9 @@ class NotificationCollector:
             elif inspect.isclass(generic_index_candidate):
                 runtime_delegate_class = generic_index_candidate
             else:
+                attempts.append(
+                    "generic-indexed branch skipped: indexed candidate is not class"
+                )
                 LOGGER.debug(
                     "Generic-indexed candidate is not a class and will be skipped: %s",
                     _shape_info(generic_index_candidate),
@@ -594,12 +614,12 @@ class NotificationCollector:
             try:
                 handler = runtime_delegate_class(callback)
                 LOGGER.info(
-                    "Constructed notification changed handler via resolved runtime delegate class."
+                    "Constructed notification changed handler via generic-indexed branch runtime delegate class."
                 )
                 return handler
             except Exception as error:
                 attempts.append(
-                    "runtime delegate constructor failed "
+                    "generic-indexed branch failed: runtime delegate constructor failed "
                     f"({error.__class__.__name__}: {error})"
                 )
                 LOGGER.debug(
@@ -609,14 +629,35 @@ class NotificationCollector:
                     exc_info=True,
                 )
 
+        try:
+            if not callable(callback):
+                raise TypeError("collector callback is not callable")
+            LOGGER.info(
+                "Constructed notification changed handler via direct callable branch."
+            )
+            return callback
+        except Exception as error:
+            attempts.append(
+                "direct callable branch failed "
+                f"({error.__class__.__name__}: {error})"
+            )
+
         raise RuntimeError(
-            "Unable to construct notification changed handler from concrete TypedEventHandler delegate forms. "
-            f"Candidate: {_shape_info(TypedEventHandler)}. Attempts: {'; '.join(attempts) or 'none'}"
+            "Unable to construct notification changed handler. "
+            f"Resolved delegate class: {_shape_info(typed_event_handler_class) if typed_event_handler_class is not None else 'None'}. "
+            f"Raw candidate: {_shape_info(raw_typed_event_handler_candidate) if raw_typed_event_handler_candidate is not None else 'None'}. "
+            f"Metadata: {metadata}. Attempts: {'; '.join(attempts) or 'none'}"
         )
 
     def _resolve_typed_event_handler_class(self):
         """Resolve concrete WINRT TypedEventHandler runtime delegate class."""
         attempts: List[str] = []
+        raw_candidate = None
+        raw_candidate_metadata = {
+            "candidate_kind": "missing",
+            "candidate_source": "none",
+            "candidate_shape": "None",
+        }
 
         try:
             foundation = importlib.import_module("winrt.windows.foundation")
@@ -626,7 +667,7 @@ class NotificationCollector:
                 "winrt.windows.foundation import failed "
                 f"({error.__class__.__name__}: {error})",
             )
-            return None, attempts
+            return None, raw_candidate, raw_candidate_metadata, attempts
 
         candidate_paths = (
             "TypedEventHandler",
@@ -647,12 +688,21 @@ class NotificationCollector:
                 )
                 continue
 
+            if raw_candidate is None:
+                raw_candidate = candidate
+                raw_candidate_metadata = {
+                    "candidate_kind": "raw",
+                    "candidate_source": f"foundation.{candidate_path}",
+                    "candidate_shape": self._shape_info(candidate),
+                }
+
             resolved, reason = self._validate_runtime_delegate_class(
                 f"foundation.{candidate_path}", candidate
             )
             self._append_attempt(attempts, reason)
             if resolved is not None:
-                return resolved, attempts
+                raw_candidate_metadata["candidate_kind"] = "runtime-class"
+                return resolved, raw_candidate, raw_candidate_metadata, attempts
 
         for root_name, root_value in (
             ("foundation", foundation),
@@ -675,11 +725,21 @@ class NotificationCollector:
                 resolved, reason = self._validate_runtime_delegate_class(
                     f"{root_name}.{attribute_name}", attribute_value
                 )
+                if raw_candidate is None:
+                    raw_candidate = attribute_value
+                    raw_candidate_metadata = {
+                        "candidate_kind": "raw",
+                        "candidate_source": f"{root_name}.{attribute_name}",
+                        "candidate_shape": self._shape_info(attribute_value),
+                    }
                 self._append_attempt(attempts, reason)
                 if resolved is not None:
-                    return resolved, attempts
+                    raw_candidate_metadata["candidate_kind"] = "runtime-class"
+                    return resolved, raw_candidate, raw_candidate_metadata, attempts
 
-        return None, attempts
+        if raw_candidate is not None:
+            raw_candidate_metadata["candidate_kind"] = "non-runtime"
+        return None, raw_candidate, raw_candidate_metadata, attempts
 
     async def start(self) -> None:
         if self._started:
@@ -694,27 +754,32 @@ class NotificationCollector:
             LOGGER.exception("Unable to import WINRT APIs")
             return
 
-        typed_event_handler_class, typed_event_attempts = (
+        (
+            typed_event_handler_class,
+            typed_event_raw_candidate,
+            typed_event_handler_metadata,
+            typed_event_attempts,
+        ) = (
             self._resolve_typed_event_handler_class()
         )
         if typed_event_handler_class is None:
-            self._available = False
-            self._last_error = (
-                "Unable to resolve WINRT TypedEventHandler runtime delegate class. "
-                f"Candidates tried: {self._format_attempt_summary(typed_event_attempts)}"
+            LOGGER.warning(
+                "TypedEventHandler runtime delegate class not resolved; fallback branches will be used. "
+                "Raw candidate metadata: %s. Attempts: %s",
+                typed_event_handler_metadata,
+                self._format_attempt_summary(typed_event_attempts),
             )
-            LOGGER.error(self._last_error)
-            return
 
-        LOGGER.info(
-            "Using WINRT TypedEventHandler runtime delegate: %s.%s",
-            typed_event_handler_class.__module__,
-            getattr(
-                typed_event_handler_class,
-                "__qualname__",
-                typed_event_handler_class.__name__,
-            ),
-        )
+        if typed_event_handler_class is not None:
+            LOGGER.info(
+                "Using WINRT TypedEventHandler runtime delegate: %s.%s",
+                typed_event_handler_class.__module__,
+                getattr(
+                    typed_event_handler_class,
+                    "__qualname__",
+                    typed_event_handler_class.__name__,
+                ),
+            )
 
         try:
             listener = self._resolve_listener(UserNotificationListener)
@@ -762,7 +827,11 @@ class NotificationCollector:
 
             try:
                 self._notification_changed_handler = (
-                    self._build_notification_changed_handler(typed_event_handler_class)
+                    self._build_notification_changed_handler(
+                        typed_event_handler_class,
+                        typed_event_raw_candidate,
+                        typed_event_handler_metadata,
+                    )
                 )
             except Exception as error:
                 self._last_error = f"Failed to construct notification changed delegate: {error}"
