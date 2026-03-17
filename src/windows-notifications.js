@@ -21,17 +21,10 @@ function mapNotification(rawItem) {
   };
 }
 
-export async function readWindowsToastNotifications() {
-  if (process.platform !== 'win32') {
-    return {
-      ok: false,
-      errorCode: 'UNSUPPORTED_PLATFORM',
-      message: 'Windows notifications are only supported on Windows hosts.',
-      notifications: []
-    };
-  }
-
-  const result = await readWinRtNotificationsFromBridge();
+export async function readWindowsToastNotifications({
+  readBridge = readWinRtNotificationsFromBridge
+} = {}) {
+  const result = await readBridge();
 
   if (!result.ok) {
     if (result.errorCode === 'ACCESS_DENIED') {
