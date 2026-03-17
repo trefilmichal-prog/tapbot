@@ -192,6 +192,7 @@ async function logWinRtBridgeStatus() {
 
   const status = await checkWinRtBridgeAvailability();
   if (status.available) {
+    markNotificationForwardBridgeHeartbeat();
     console.log(`WINRT notification helper ready: ${status.helperPath}`);
     return;
   }
@@ -498,6 +499,7 @@ let notificationForwardPollTimer = null;
 let notificationForwardPushWatchdogTimer = null;
 let notificationForwardPollingFallbackActive = false;
 let notificationForwardLastPushEventAt = 0;
+let notificationForwardLastBridgeHeartbeatAt = 0;
 let notificationForwardPushTimedOut = false;
 let notificationForwardBridgeConnected = false;
 let notificationForwardBridgeSubscribed = false;
@@ -823,6 +825,10 @@ function hasDaemonPushForwardingEnabled(readyClient) {
 
 function markNotificationForwardPushActivity() {
   notificationForwardLastPushEventAt = Date.now();
+}
+
+function markNotificationForwardBridgeHeartbeat() {
+  notificationForwardLastBridgeHeartbeatAt = Date.now();
   notificationForwardPushTimedOut = false;
 }
 
@@ -837,6 +843,22 @@ function clearNotificationForwardSubscribeRetryTimer() {
 
 function isNotificationForwardPushFullyActive() {
   return notificationForwardBridgeConnected && notificationForwardBridgeSubscribed;
+}
+
+function getNotificationForwardBridgeHealthStatus() {
+  if (!notificationForwardBridgeConnected || !notificationForwardBridgeSubscribed || notificationForwardPushTimedOut) {
+    return 'bridge timed out/disconnected';
+  }
+
+  const elapsedSinceLastNotificationMs = notificationForwardLastPushEventAt
+    ? Date.now() - notificationForwardLastPushEventAt
+    : Number.POSITIVE_INFINITY;
+
+  if (elapsedSinceLastNotificationMs >= NOTIFICATION_FORWARD_PUSH_TIMEOUT_MS) {
+    return 'bridge alive, no recent notifications';
+  }
+
+  return 'bridge alive, receiving notifications';
 }
 
 function scheduleNotificationForwardSubscribe(readyClient) {
@@ -899,6 +921,7 @@ async function ensureNotificationForwardSubscribed(readyClient) {
     }
 
     notificationForwardBridgeSubscribed = true;
+    markNotificationForwardBridgeHeartbeat();
     markNotificationForwardPushActivity();
     await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
       mode: 'daemon_push',
@@ -930,19 +953,19 @@ async function startNotificationForwardPushWatchdog(readyClient) {
       return;
     }
 
-    if (!notificationForwardLastPushEventAt) {
-      markNotificationForwardPushActivity();
+    if (!notificationForwardLastBridgeHeartbeatAt) {
+      markNotificationForwardBridgeHeartbeat();
       return;
     }
 
-    const elapsedMs = Date.now() - notificationForwardLastPushEventAt;
+    const elapsedMs = Date.now() - notificationForwardLastBridgeHeartbeatAt;
     if (elapsedMs < NOTIFICATION_FORWARD_PUSH_TIMEOUT_MS || notificationForwardPushTimedOut) {
       return;
     }
 
     notificationForwardPushTimedOut = true;
     console.warn(
-      `Notification push heartbeat timeout (${Math.floor(elapsedMs / 1000)}s without bridge event). Switching to polling fallback.`
+      `Notification push heartbeat timeout (${Math.floor(elapsedMs / 1000)}s without bridge heartbeat). Switching to polling fallback.`
     );
 
     notificationForwardBridgeSubscribed = false;
@@ -1147,6 +1170,7 @@ async function startNotificationForwardPolling(readyClient) {
     notificationForwardBridgeConnected = Boolean(state?.connected);
 
     if (!notificationForwardBridgeConnected) {
+      notificationForwardLastBridgeHeartbeatAt = 0;
       notificationForwardBridgeSubscribed = false;
       clearNotificationForwardSubscribeRetryTimer();
       void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
@@ -1164,6 +1188,8 @@ async function startNotificationForwardPolling(readyClient) {
       return;
     }
 
+    markNotificationForwardBridgeHeartbeat();
+
     void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
       lastBridgeStatus: {
         connected: true,
@@ -1176,6 +1202,7 @@ async function startNotificationForwardPolling(readyClient) {
   });
 
   onWinRtBridgeEvent((payload) => {
+    markNotificationForwardBridgeHeartbeat();
     markNotificationForwardPushActivity();
     notificationForwardBridgeSubscribed = true;
     void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
@@ -1215,6 +1242,8 @@ async function startNotificationForwardPolling(readyClient) {
     await beginNotificationForwardPollingFallback(readyClient);
     return;
   }
+
+  markNotificationForwardBridgeHeartbeat();
 
   await ensureNotificationForwardSubscribed(readyClient);
 
@@ -4785,6 +4814,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         const pushActive = Boolean(config.lastBridgeStatus?.connected) && Boolean(config.lastBridgeStatus?.subscribed);
         statusParts.push(`Mode: ${config.mode === 'daemon_push' && pushActive ? 'daemon push' : 'polling fallback'}.`);
+        statusParts.push(`Bridge health: ${getNotificationForwardBridgeHealthStatus()}.`);
         statusParts.push(`Startup mode: ${getNotificationStartupModeLabel(config.startupMode)}.`);
         if (config.lastBridgeStatus?.updatedAt) {
           statusParts.push(`Bridge connected: ${config.lastBridgeStatus.connected ? 'yes' : 'no'}, subscribed: ${config.lastBridgeStatus.subscribed ? 'yes' : 'no'} (${config.lastBridgeStatus.updatedAt}).`);
