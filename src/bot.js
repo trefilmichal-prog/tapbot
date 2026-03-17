@@ -527,12 +527,19 @@ function buildTicketOverviewComponents(ticketEntries, filters = {}) {
 function buildNotificationReadResponse(notifications) {
   const header = ['📣 **Windows Notifications**', ''];
   const lines = notifications.slice(0, 8).flatMap((item, index) => ([
-    `**${index + 1}.** ${item.title ?? '(no title)'}`,
-    `App: ${item.app ?? 'Unknown app'}`,
-    `Time: ${formatNotificationTimestamp(item.timestamp)}`,
-    item.body ? `Body: ${item.body}` : 'Body: *(empty)*',
+    `**${index + 1}.** ${item.notification?.title ?? item.title ?? '(no title)'}`,
+    `App: ${item.notification?.app ?? item.app ?? 'Unknown app'}`,
+    `Time: ${formatNotificationTimestamp(item.notification?.timestamp ?? item.timestamp)}`,
+    item.player?.applicantId
+      ? `Player: <@${item.player.applicantId}> (${item.player.displayNickname})`
+      : item.player?.displayNickname
+        ? `Player: ${item.player.displayNickname}`
+        : null,
+    (item.notification?.body ?? item.body)
+      ? `Body: ${item.notification?.body ?? item.body}`
+      : 'Body: *(empty)*',
     ''
-  ]));
+  ].filter(Boolean)));
 
   if (notifications.length > 8) {
     lines.push(`...and ${notifications.length - 8} more notifications.`);
@@ -542,13 +549,16 @@ function buildNotificationReadResponse(notifications) {
 }
 
 
-function buildForwardNotificationMessage(item) {
+function buildForwardNotificationMessage({ notification, player }) {
   return [
     '📣 **Secret Hatcher**',
     '',
-    `**Title:** ${item.title ?? '(no title)'}`,
-    `**Time:** ${formatNotificationTimestamp(item.timestamp)}`,
-    `**Body:** ${item.body ?? '*(empty)*'}`
+    player?.applicantId
+      ? `**Player:** <@${player.applicantId}> (${player.displayNickname})`
+      : `**Player:** ${player?.displayNickname ?? 'Unknown player'}`,
+    `**Title:** ${notification?.title ?? '(no title)'}`,
+    `**Time:** ${formatNotificationTimestamp(notification?.timestamp)}`,
+    `**Body:** ${notification?.body ?? '*(empty)*'}`
   ].join('\n');
 }
 
@@ -560,9 +570,9 @@ function normalizeClanNicknameForMatch(value) {
   return trimmed ? trimmed : null;
 }
 
-function collectAcceptedClanNicknames(guildId) {
+function collectAcceptedClanPlayers(guildId) {
   const state = getClanState(guildId);
-  const nicknames = new Set();
+  const players = new Map();
 
   for (const entry of Object.values(state?.clan_ticket_decisions ?? {})) {
     if (!entry || entry.status !== CLAN_TICKET_DECISION_ACCEPT) {
@@ -570,37 +580,38 @@ function collectAcceptedClanNicknames(guildId) {
     }
 
     const normalizedNickname = normalizeClanNicknameForMatch(entry?.answers?.robloxNick);
-    if (normalizedNickname) {
-      nicknames.add(normalizedNickname);
+    if (!normalizedNickname || players.has(normalizedNickname)) {
+      continue;
     }
+
+    const displayNickname = typeof entry?.answers?.robloxNick === 'string'
+      ? entry.answers.robloxNick.trim()
+      : '';
+    if (!displayNickname) {
+      continue;
+    }
+
+    const applicantId = normalizeDiscordSnowflake(entry.applicantId)
+      ?? deriveApplicantIdFromTicketEntry(entry);
+
+    players.set(normalizedNickname, {
+      displayNickname,
+      applicantId
+    });
   }
 
-  return nicknames;
+  return players;
+}
+
+function collectAcceptedClanNicknames(guildId) {
+  return new Set(collectAcceptedClanPlayers(guildId).keys());
 }
 
 function collectAcceptedClanNicknamesForDisplay(guildId) {
-  const state = getClanState(guildId);
-  const nicknameMap = new Map();
-
-  for (const entry of Object.values(state?.clan_ticket_decisions ?? {})) {
-    if (!entry || entry.status !== CLAN_TICKET_DECISION_ACCEPT) {
-      continue;
-    }
-
-    if (typeof entry?.answers?.robloxNick !== 'string') {
-      continue;
-    }
-
-    const trimmedNickname = entry.answers.robloxNick.trim();
-    const normalizedNickname = normalizeClanNicknameForMatch(trimmedNickname);
-    if (!normalizedNickname || nicknameMap.has(normalizedNickname)) {
-      continue;
-    }
-
-    nicknameMap.set(normalizedNickname, trimmedNickname);
-  }
-
-  return [...nicknameMap.values()].sort((left, right) => left.localeCompare(right, 'cs', { sensitivity: 'base' }));
+  const players = collectAcceptedClanPlayers(guildId);
+  return [...players.values()]
+    .map((player) => player.displayNickname)
+    .sort((left, right) => left.localeCompare(right, 'cs', { sensitivity: 'base' }));
 }
 
 function extractNicknameBeforeHatched(text) {
@@ -622,18 +633,23 @@ function extractNicknameBeforeHatched(text) {
 }
 
 function filterNotificationsByGuildClanNicknames(guildId, notifications) {
-  const acceptedClanNicknames = collectAcceptedClanNicknames(guildId);
-  if (!acceptedClanNicknames.size) {
+  const acceptedClanPlayers = collectAcceptedClanPlayers(guildId);
+  if (!acceptedClanPlayers.size) {
     return [];
   }
 
-  return notifications.filter((notification) => {
+  return notifications.flatMap((notification) => {
     const matchedNickname = extractNicknameBeforeHatched(notification?.body);
     if (!matchedNickname) {
-      return false;
+      return [];
     }
 
-    return acceptedClanNicknames.has(matchedNickname);
+    const player = acceptedClanPlayers.get(matchedNickname);
+    if (!player) {
+      return [];
+    }
+
+    return [{ notification, matchedNickname, player }];
   });
 }
 
@@ -1346,7 +1362,7 @@ async function initializeNotificationForwardCache(readyClient) {
       await pruneMissingClanTicketsForGuild(guild, { logPrefix: 'notification cache init' });
     }
     const filteredGuildNotifications = filterNotificationsByGuildClanNicknames(guildId, sortedUniqueNotifications);
-    const guildSignatures = filteredGuildNotifications.map(buildNotificationSignature);
+    const guildSignatures = filteredGuildNotifications.map(({ notification }) => buildNotificationSignature(notification));
     const startupMode = config.startupMode === 'send_unseen' ? 'send_unseen' : 'only_new';
     const signatureSet = notificationForwardSeenByGuild.get(guildId) ?? new Set();
 
@@ -1422,8 +1438,8 @@ async function dispatchForwardNotificationsToGuilds(readyClient, notifications) 
       continue;
     }
 
-    for (const notification of filteredNotifications) {
-      const signature = buildNotificationSignature(notification);
+    for (const filteredNotification of filteredNotifications) {
+      const signature = buildNotificationSignature(filteredNotification.notification);
       if (signatureSet.has(signature)) {
         continue;
       }
@@ -1432,7 +1448,7 @@ async function dispatchForwardNotificationsToGuilds(readyClient, notifications) 
       pruneNotificationSignatureSet(signatureSet);
       try {
         await channel.send({
-          components: buildTextComponents(buildForwardNotificationMessage(notification)),
+          components: buildTextComponents(buildForwardNotificationMessage(filteredNotification)),
           flags: buildInteractionFlags({ componentsV2: true })
         });
         await persistNotificationForwardRuntimeState(guildId, {
