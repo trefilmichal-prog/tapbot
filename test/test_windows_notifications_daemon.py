@@ -87,6 +87,12 @@ class _CollectorWithPushRegistrationFailure(NotificationCollector):
         return None
 
 
+class _CollectorWithActivePush(NotificationCollector):
+    def __init__(self, loop):
+        super().__init__(loop)
+        self._push_subscription_active = True
+
+
 class _FakeTextElement:
     def __init__(self, text):
         self.text = text
@@ -215,7 +221,22 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(response)
         self.assertTrue(response["ok"])
+        self.assertFalse(response["pushActive"])
         self.assertIn("fallback mode", response["message"])
+
+    async def test_subscribe_notifications_reports_push_active_when_listener_is_live(self):
+        collector = _CollectorWithActivePush(asyncio.get_running_loop())
+        bridge = TcpBridgeServer("127.0.0.1", 8765, collector)
+
+        response = bridge._handle_message(
+            json.dumps({"id": "2", "type": "subscribe_notifications"}).encode("utf-8"),
+            object(),
+        )
+
+        self.assertIsNotNone(response)
+        self.assertTrue(response["ok"])
+        self.assertTrue(response["pushActive"])
+        self.assertIn("push events", response["message"])
 
     async def test_map_notification_supports_visual_shape_a(self):
         collector = NotificationCollector(asyncio.get_running_loop())

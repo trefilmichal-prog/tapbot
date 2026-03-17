@@ -87,7 +87,7 @@ export class WinRtDaemonClient {
       return {
         ok: Boolean(response?.ok),
         message: response?.message ?? null,
-        pushActive: typeof response?.pushActive === 'boolean' ? response.pushActive : null
+        pushActive: typeof response?.pushActive === 'boolean' ? response.pushActive : false
       };
     } catch (error) {
       return {
