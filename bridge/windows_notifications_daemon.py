@@ -13,6 +13,7 @@ import json
 import logging
 import signal
 import threading
+import types
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Dict, List, Optional, Set
 
@@ -434,17 +435,7 @@ class NotificationCollector:
                 )
             )
 
-        if _looks_like_typing_artifact(TypedEventHandler):
-            LOGGER.debug(
-                "Skipping direct TypedEventHandler(callback) construction due to typing/proxy artifact: %s",
-                _shape_info(TypedEventHandler),
-            )
-        elif not inspect.isclass(TypedEventHandler):
-            LOGGER.debug(
-                "Skipping direct TypedEventHandler(callback) construction because candidate is not a class: %s",
-                _shape_info(TypedEventHandler),
-            )
-        else:
+        if inspect.isclass(TypedEventHandler):
             try:
                 handler = TypedEventHandler(callback)
                 LOGGER.info(
@@ -462,6 +453,12 @@ class NotificationCollector:
                     error,
                     exc_info=True,
                 )
+        else:
+            attempts.append("resolved runtime delegate is not a class")
+            LOGGER.debug(
+                "Resolved runtime delegate candidate is not a class: %s",
+                _shape_info(TypedEventHandler),
+            )
 
         runtime_delegate_class = None
         generic_index_candidate = None
@@ -533,19 +530,166 @@ class NotificationCollector:
             f"Candidate: {_shape_info(TypedEventHandler)}. Attempts: {'; '.join(attempts) or 'none'}"
         )
 
+    def _resolve_typed_event_handler_class(self):
+        """Resolve concrete WINRT TypedEventHandler runtime delegate class."""
+        attempts: List[str] = []
+
+        def _shape_info(candidate) -> str:
+            candidate_module = getattr(candidate, "__module__", "") or ""
+            candidate_name = (
+                getattr(candidate, "__qualname__", None)
+                or getattr(candidate, "__name__", None)
+                or repr(candidate)
+            )
+            candidate_type = type(candidate)
+            candidate_type_module = getattr(candidate_type, "__module__", "") or ""
+            candidate_type_name = getattr(candidate_type, "__name__", "") or ""
+            return (
+                f"module={candidate_module!r}, name={candidate_name!r}, "
+                f"type={candidate_type_module}.{candidate_type_name}"
+            )
+
+        def _is_typing_or_proxy_artifact(candidate) -> bool:
+            candidate_module = (getattr(candidate, "__module__", "") or "").lower()
+            candidate_type = type(candidate)
+            candidate_type_module = (
+                getattr(candidate_type, "__module__", "") or ""
+            ).lower()
+            if "typing" in candidate_module or "typing" in candidate_type_module:
+                return True
+            if isinstance(candidate, types.GenericAlias):
+                return True
+            generic_alias_type = getattr(types, "_GenericAlias", None)
+            if generic_alias_type is not None and isinstance(
+                candidate, generic_alias_type
+            ):
+                return True
+            candidate_type_name = (
+                getattr(candidate_type, "__name__", "") or ""
+            ).lower()
+            return "projection" in candidate_type_name
+
+        def _attempt_candidate(candidate_name: str, candidate):
+            if candidate is None:
+                attempts.append(f"{candidate_name}: missing")
+                return None
+
+            if _is_typing_or_proxy_artifact(candidate):
+                attempts.append(
+                    f"{candidate_name}: rejected typing/proxy artifact ({_shape_info(candidate)})"
+                )
+                return None
+
+            if not inspect.isclass(candidate):
+                attempts.append(
+                    f"{candidate_name}: rejected non-class candidate ({_shape_info(candidate)})"
+                )
+                return None
+
+            try:
+                candidate(self._on_notification_changed)
+            except Exception as error:
+                attempts.append(
+                    f"{candidate_name}: constructor failed ({error.__class__.__name__}: {error})"
+                )
+                return None
+
+            attempts.append(f"{candidate_name}: accepted ({_shape_info(candidate)})")
+            return candidate
+
+        try:
+            foundation = importlib.import_module("winrt.windows.foundation")
+        except Exception as error:
+            attempts.append(
+                "winrt.windows.foundation import failed "
+                f"({error.__class__.__name__}: {error})"
+            )
+            return None, attempts
+
+        direct_candidate = getattr(foundation, "TypedEventHandler", None)
+        resolved = _attempt_candidate("foundation.TypedEventHandler", direct_candidate)
+        if resolved is not None:
+            return resolved, attempts
+
+        for branch_name in ("typed_event_handler", "models"):
+            branch = getattr(foundation, branch_name, None)
+            if branch is None:
+                attempts.append(f"foundation.{branch_name}: missing")
+                continue
+
+            branch_candidate = getattr(branch, "TypedEventHandler", None)
+            resolved = _attempt_candidate(
+                f"foundation.{branch_name}.TypedEventHandler", branch_candidate
+            )
+            if resolved is not None:
+                return resolved, attempts
+
+            for attribute_name, attribute_value in vars(branch).items():
+                if attribute_name.startswith("_"):
+                    continue
+                if (
+                    "typed" not in attribute_name.lower()
+                    or "handler" not in attribute_name.lower()
+                ):
+                    continue
+                resolved = _attempt_candidate(
+                    f"foundation.{branch_name}.{attribute_name}",
+                    attribute_value,
+                )
+                if resolved is not None:
+                    return resolved, attempts
+
+        for attribute_name, attribute_value in vars(foundation).items():
+            if attribute_name.startswith("_"):
+                continue
+            if (
+                "typed" not in attribute_name.lower()
+                or "handler" not in attribute_name.lower()
+            ):
+                continue
+            resolved = _attempt_candidate(
+                f"foundation.{attribute_name}",
+                attribute_value,
+            )
+            if resolved is not None:
+                return resolved, attempts
+
+        return None, attempts
+
     async def start(self) -> None:
         if self._started:
             return
 
         startup_succeeded = False
         try:
-            from winrt.windows.foundation import TypedEventHandler
             from winrt.windows.ui.notifications.management import UserNotificationListener
         except Exception as error:  # pragma: no cover - runtime dependency
             self._available = False
             self._last_error = f"WINRT imports failed: {error}"
             LOGGER.exception("Unable to import WINRT APIs")
             return
+
+        typed_event_handler_class, typed_event_attempts = (
+            self._resolve_typed_event_handler_class()
+        )
+        if typed_event_handler_class is None:
+            self._available = False
+            self._last_error = (
+                "Unable to resolve WINRT TypedEventHandler runtime delegate class. "
+                f"Candidates tried: {'; '.join(typed_event_attempts) or 'none'}"
+            )
+            LOGGER.error(self._last_error)
+            return
+
+        LOGGER.info(
+            "Using WINRT TypedEventHandler runtime delegate: %s.%s",
+            typed_event_handler_class.__module__,
+            getattr(
+                typed_event_handler_class,
+                "__qualname__",
+                typed_event_handler_class.__name__,
+            ),
+        )
 
         try:
             listener = self._resolve_listener(UserNotificationListener)
@@ -593,7 +737,7 @@ class NotificationCollector:
 
             try:
                 self._notification_changed_handler = (
-                    self._build_notification_changed_handler(TypedEventHandler)
+                    self._build_notification_changed_handler(typed_event_handler_class)
                 )
             except Exception as error:
                 self._last_error = f"Failed to construct notification changed delegate: {error}"
