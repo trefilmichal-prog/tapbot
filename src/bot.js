@@ -603,7 +603,7 @@ function extractNicknameBeforeHatched(text) {
     return null;
   }
 
-  const match = flattened.match(/:flag_[a-z]{2}:\s+(.+?)\s+hatched\b/i);
+  const match = flattened.match(/(?::flag_[a-z]{2}:|[\u{1F1E6}-\u{1F1FF}]{2})\s+(.+?)\s+hatched\b/iu);
   if (!match?.[1]) {
     return null;
   }
