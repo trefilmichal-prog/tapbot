@@ -481,6 +481,57 @@ function buildForwardNotificationMessage(item) {
   ].join('\n');
 }
 
+function normalizeClanNicknameForMatch(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim().toLowerCase();
+  return trimmed ? trimmed : null;
+}
+
+function collectAcceptedClanNicknames(guildId) {
+  const state = getClanState(guildId);
+  const nicknames = new Set();
+
+  for (const entry of Object.values(state?.clan_ticket_decisions ?? {})) {
+    if (!entry || entry.status !== CLAN_TICKET_DECISION_ACCEPT) {
+      continue;
+    }
+
+    const normalizedNickname = normalizeClanNicknameForMatch(entry?.answers?.robloxNick);
+    if (normalizedNickname) {
+      nicknames.add(normalizedNickname);
+    }
+  }
+
+  return nicknames;
+}
+
+function filterNotificationsByGuildClanNicknames(guildId, notifications) {
+  const acceptedClanNicknames = collectAcceptedClanNicknames(guildId);
+  if (!acceptedClanNicknames.size) {
+    return [];
+  }
+
+  return notifications.filter((notification) => {
+    const searchableText = [notification?.title, notification?.body]
+      .filter((part) => typeof part === 'string' && part.trim())
+      .join('\n')
+      .toLowerCase();
+
+    if (!searchableText) {
+      return false;
+    }
+
+    for (const nickname of acceptedClanNicknames) {
+      if (searchableText.includes(nickname)) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
 function buildNotificationSignature(item) {
   return [
     item?.timestamp ?? '',
@@ -1184,14 +1235,14 @@ async function initializeNotificationForwardCache(readyClient) {
   }
 
   const sortedUniqueNotifications = buildSortedUniqueForwardNotifications(result.notifications);
-  const allCurrentSignatures = sortedUniqueNotifications.map(buildNotificationSignature);
-
   for (const [guildId, config] of activeGuildConfigs) {
+    const filteredGuildNotifications = filterNotificationsByGuildClanNicknames(guildId, sortedUniqueNotifications);
+    const guildSignatures = filteredGuildNotifications.map(buildNotificationSignature);
     const startupMode = config.startupMode === 'send_unseen' ? 'send_unseen' : 'only_new';
     const signatureSet = notificationForwardSeenByGuild.get(guildId) ?? new Set();
 
     if (startupMode === 'only_new') {
-      for (const signature of allCurrentSignatures) {
+      for (const signature of guildSignatures) {
         signatureSet.add(signature);
       }
       pruneNotificationSignatureSet(signatureSet);
@@ -1205,7 +1256,7 @@ async function initializeNotificationForwardCache(readyClient) {
       continue;
     }
 
-    const lastDeliveredIndex = allCurrentSignatures.lastIndexOf(config.lastDeliveredNotificationSignature);
+    const lastDeliveredIndex = guildSignatures.lastIndexOf(config.lastDeliveredNotificationSignature);
     if (lastDeliveredIndex < 0) {
       pruneNotificationSignatureSet(signatureSet);
       notificationForwardSeenByGuild.set(guildId, signatureSet);
@@ -1213,7 +1264,7 @@ async function initializeNotificationForwardCache(readyClient) {
     }
 
     for (let index = 0; index <= lastDeliveredIndex; index += 1) {
-      signatureSet.add(allCurrentSignatures[index]);
+      signatureSet.add(guildSignatures[index]);
     }
     pruneNotificationSignatureSet(signatureSet);
     notificationForwardSeenByGuild.set(guildId, signatureSet);
@@ -1228,6 +1279,11 @@ async function dispatchForwardNotificationsToGuilds(readyClient, notifications) 
   for (const [guildId, guild] of readyClient.guilds.cache) {
     const config = getNotificationForwardConfig(guildId);
     if (!config.enabled || !config.channelId) continue;
+
+    const filteredNotifications = filterNotificationsByGuildClanNicknames(guildId, notifications);
+    if (!filteredNotifications.length) {
+      continue;
+    }
 
     clearNotificationForwardSystemAlertsForGuild(guildId);
 
@@ -1255,7 +1311,7 @@ async function dispatchForwardNotificationsToGuilds(readyClient, notifications) 
       continue;
     }
 
-    for (const notification of notifications) {
+    for (const notification of filteredNotifications) {
       const signature = buildNotificationSignature(notification);
       if (signatureSet.has(signature)) {
         continue;
@@ -5112,16 +5168,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        if (!result.notifications.length) {
+        const filteredNotifications = filterNotificationsByGuildClanNicknames(
+          interaction.guildId,
+          result.notifications
+        );
+
+        if (!filteredNotifications.length) {
           await interaction.reply({
-            components: buildTextComponents('No notifications were found in Windows Action Center.'),
+            components: buildTextComponents('No clan player nickname was found in Windows notifications.'),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
         }
 
         await interaction.reply({
-          components: buildTextComponents(buildNotificationReadResponse(result.notifications)),
+          components: buildTextComponents(buildNotificationReadResponse(filteredNotifications)),
           flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
       }
