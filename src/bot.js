@@ -207,44 +207,55 @@ client.on(Events.ChannelDelete, async (channel) => {
 });
 
 async function pruneMissingClanTicketsOnStartup(readyClient) {
-  for (const [guildId, guild] of readyClient.guilds.cache) {
-    const state = getClanState(guildId);
-    const entries = Object.entries(state?.clan_ticket_decisions ?? {});
-    if (!entries.length) {
-      continue;
-    }
-
-    const staleChannelIds = [];
-    for (const [channelId] of entries) {
-      try {
-        const channel = await guild.channels.fetch(channelId);
-        if (!channel) {
-          staleChannelIds.push(channelId);
-        }
-      } catch (error) {
-        if (Number(error?.code) === 10003) {
-          staleChannelIds.push(channelId);
-          continue;
-        }
-
-        console.warn(`Failed to verify clan ticket channel ${channelId} in guild ${guildId}:`, error);
-      }
-    }
-
-    if (!staleChannelIds.length) {
-      continue;
-    }
-
-    await updateClanState(guildId, (nextState) => {
-      ensureGuildClanState(nextState);
-      for (const channelId of staleChannelIds) {
-        if (nextState.clan_ticket_decisions && Object.prototype.hasOwnProperty.call(nextState.clan_ticket_decisions, channelId)) {
-          delete nextState.clan_ticket_decisions[channelId];
-        }
-      }
-    });
-    console.log(`Pruned ${staleChannelIds.length} stale clan ticket entr${staleChannelIds.length === 1 ? 'y' : 'ies'} in guild ${guildId}.`);
+  for (const [, guild] of readyClient.guilds.cache) {
+    await pruneMissingClanTicketsForGuild(guild, { logPrefix: 'startup prune' });
   }
+}
+
+async function pruneMissingClanTicketsForGuild(guild, { logPrefix = 'ticket prune' } = {}) {
+  if (!guild?.id) {
+    return 0;
+  }
+
+  const guildId = guild.id;
+  const state = getClanState(guildId);
+  const entries = Object.entries(state?.clan_ticket_decisions ?? {});
+  if (!entries.length) {
+    return 0;
+  }
+
+  const staleChannelIds = [];
+  for (const [channelId] of entries) {
+    try {
+      const channel = await guild.channels.fetch(channelId);
+      if (!channel) {
+        staleChannelIds.push(channelId);
+      }
+    } catch (error) {
+      if (Number(error?.code) === 10003) {
+        staleChannelIds.push(channelId);
+        continue;
+      }
+
+      console.warn(`Failed to verify clan ticket channel ${channelId} in guild ${guildId}:`, error);
+    }
+  }
+
+  if (!staleChannelIds.length) {
+    return 0;
+  }
+
+  await updateClanState(guildId, (nextState) => {
+    ensureGuildClanState(nextState);
+    for (const channelId of staleChannelIds) {
+      if (nextState.clan_ticket_decisions && Object.prototype.hasOwnProperty.call(nextState.clan_ticket_decisions, channelId)) {
+        delete nextState.clan_ticket_decisions[channelId];
+      }
+    }
+  });
+
+  console.log(`[${logPrefix}] Pruned ${staleChannelIds.length} stale clan ticket entr${staleChannelIds.length === 1 ? 'y' : 'ies'} in guild ${guildId}.`);
+  return staleChannelIds.length;
 }
 
 async function logWinRtBridgeStatus() {
@@ -1331,6 +1342,10 @@ async function initializeNotificationForwardCache(readyClient) {
 
   const sortedUniqueNotifications = buildSortedUniqueForwardNotifications(result.notifications);
   for (const [guildId, config] of activeGuildConfigs) {
+    const guild = readyClient.guilds.cache.get(guildId);
+    if (guild) {
+      await pruneMissingClanTicketsForGuild(guild, { logPrefix: 'notification cache init' });
+    }
     const filteredGuildNotifications = filterNotificationsByGuildClanNicknames(guildId, sortedUniqueNotifications);
     const guildSignatures = filteredGuildNotifications.map(buildNotificationSignature);
     const startupMode = config.startupMode === 'send_unseen' ? 'send_unseen' : 'only_new';
@@ -1374,6 +1389,8 @@ async function dispatchForwardNotificationsToGuilds(readyClient, notifications) 
   for (const [guildId, guild] of readyClient.guilds.cache) {
     const config = getNotificationForwardConfig(guildId);
     if (!config.enabled || !config.channelId) continue;
+
+    await pruneMissingClanTicketsForGuild(guild, { logPrefix: 'notification dispatch' });
 
     const filteredNotifications = filterNotificationsByGuildClanNicknames(guildId, notifications);
     if (!filteredNotifications.length) {
@@ -5244,6 +5261,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (subcommand === 'secret') {
+        if (interaction.guild) {
+          await pruneMissingClanTicketsForGuild(interaction.guild, { logPrefix: 'notification secret command' });
+        }
         const clanNicknames = collectAcceptedClanNicknamesForDisplay(interaction.guildId);
         if (!clanNicknames.length) {
           await interaction.reply({
@@ -5262,6 +5282,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (subcommand === 'read') {
+        if (interaction.guild) {
+          await pruneMissingClanTicketsForGuild(interaction.guild, { logPrefix: 'notification read command' });
+        }
         const result = await readWindowsToastNotifications();
 
         if (!result.ok) {
