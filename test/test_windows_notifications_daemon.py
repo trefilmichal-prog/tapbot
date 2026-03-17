@@ -424,5 +424,48 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cache_snapshot[1].body, "Body B2")
 
 
+    async def test_start_logs_expected_fallbacks_as_info(self):
+        collector = _CollectorWithTypingCandidate(asyncio.get_running_loop())
+
+        with self.assertLogs("windows_notifications_daemon", level="INFO") as logs:
+            await collector.start()
+
+        joined = "\n".join(logs.output)
+        self.assertIn(
+            "INFO:windows_notifications_daemon:TypedEventHandler runtime delegate class not resolved",
+            joined,
+        )
+        self.assertIn(
+            "INFO:windows_notifications_daemon:Notification kind enum resolution failed; numeric fallback used",
+            joined,
+        )
+        self.assertIn("Notification collector startup summary", joined)
+        self.assertIn("available=True", joined)
+        self.assertIn("push_subscription_active=True", joined)
+        self.assertIn("notification_kind_source=numeric-fallback", joined)
+        self.assertIn(
+            "notification_changed_handler_source=direct-callable-fallback", joined
+        )
+
+    async def test_push_registration_failure_remains_warning_and_summary_reflects_fallback(self):
+        collector = _CollectorWithPushRegistrationFailure(asyncio.get_running_loop())
+
+        with self.assertLogs("windows_notifications_daemon", level="INFO") as logs:
+            await collector.start()
+
+        joined = "\n".join(logs.output)
+        self.assertIn(
+            "WARNING:windows_notifications_daemon:Notification changed listener registration failed",
+            joined,
+        )
+        self.assertIn("push registration failed", joined)
+        self.assertIn("Notification collector startup summary", joined)
+        self.assertIn("push_subscription_active=False", joined)
+        self.assertIn("notification_kind_source=numeric-fallback", joined)
+        self.assertIn(
+            "notification_changed_handler_source=direct-callable-fallback", joined
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
