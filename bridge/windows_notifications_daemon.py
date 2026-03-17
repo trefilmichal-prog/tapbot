@@ -1127,7 +1127,7 @@ class TcpBridgeServer:
                 if not line:
                     break
 
-                response = self._handle_message(line, writer)
+                response = await self._handle_message(line, writer)
                 if response is not None:
                     sent = await self._send_json(writer, response)
                     if not sent:
@@ -1150,7 +1150,7 @@ class TcpBridgeServer:
             LOGGER.exception("Failed to write response/event to subscriber")
             return False
 
-    def _handle_message(
+    async def _handle_message(
         self, raw: bytes, writer: asyncio.StreamWriter
     ) -> Optional[Dict[str, object]]:
         try:
@@ -1160,6 +1160,14 @@ class TcpBridgeServer:
             if message_type == "ping":
                 return {"id": request_id, "ok": True, "type": "pong"}
             if message_type == "read_notifications":
+                if not self.collector.is_push_subscription_active():
+                    try:
+                        await self.collector.refresh_snapshot()
+                    except Exception as error:
+                        LOGGER.warning(
+                            "Refresh before read_notifications failed, using cached snapshot: %s",
+                            error,
+                        )
                 payload = self.collector.read()
                 payload["id"] = request_id
                 return payload
