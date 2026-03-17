@@ -54,6 +54,7 @@ class NotificationCollector:
         self._cache: List[NotificationRecord] = []
         self._lock = threading.Lock()
         self._listener = None
+        self._notification_changed_handler = None
         self._notification_kind_toast = None
         self._notification_kind_source = None
         self._started = False
@@ -375,14 +376,36 @@ class NotificationCollector:
             self._listener = listener
             self._available = True
 
-            handler = TypedEventHandler[object, object](self._on_notification_changed)
-            self._listener.add_notification_changed(handler)
+            self._notification_changed_handler = TypedEventHandler[object, object](
+                self._on_notification_changed
+            )
+            self._listener.add_notification_changed(self._notification_changed_handler)
+            LOGGER.info(
+                "Notification changed handler registered and active (strong reference retained)."
+            )
             await self.refresh_snapshot()
             LOGGER.info("Notification collector ready.")
         except Exception as error:  # pragma: no cover - winrt runtime behavior
             self._available = False
             self._last_error = str(error)
             LOGGER.exception("Failed to initialize notification collector")
+
+    async def stop(self) -> None:
+        if not self._started:
+            return
+
+        if self._listener and self._notification_changed_handler:
+            try:
+                self._listener.remove_notification_changed(
+                    self._notification_changed_handler
+                )
+                LOGGER.info("Notification changed handler unregistered.")
+            except Exception:
+                LOGGER.exception("Failed to unregister notification changed handler")
+
+        self._notification_changed_handler = None
+        self._listener = None
+        self._started = False
 
     def _resolve_toast_notification_kind(self, notification_kinds_enum):
         """Resolve enum member name differences across WINRT binding variants."""
@@ -650,8 +673,11 @@ async def async_main(host: str, port: int) -> int:
     collector.set_snapshot_callback(bridge.broadcast_notifications)
     await collector.start()
 
-    await bridge.run()
-    return 0
+    try:
+        await bridge.run()
+        return 0
+    finally:
+        await collector.stop()
 
 
 def parse_args() -> argparse.Namespace:
