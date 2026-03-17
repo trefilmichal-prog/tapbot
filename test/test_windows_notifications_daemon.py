@@ -87,6 +87,60 @@ class _CollectorWithPushRegistrationFailure(NotificationCollector):
         return None
 
 
+class _FakeTextElement:
+    def __init__(self, text):
+        self.text = text
+
+
+class _FakeBindingWithTextElements:
+    def __init__(self, *texts):
+        self._texts = [_FakeTextElement(value) for value in texts]
+
+    def get_text_elements(self):
+        return list(self._texts)
+
+
+class _FakeVisualShapeA:
+    def __init__(self, *bindings):
+        self._bindings = list(bindings)
+
+    def get_bindings(self):
+        return list(self._bindings)
+
+
+class _FakeBindingForShapeB:
+    def __init__(self, *texts):
+        self.texts = [_FakeTextElement(value) for value in texts]
+
+
+class _FakeVisualShapeB:
+    def __init__(self, binding):
+        self.binding = binding
+
+    def get_binding(self, _binding_key):
+        return self.binding
+
+
+class _FakeNotificationPayload:
+    def __init__(self, visual):
+        self.visual = visual
+
+
+class _FakeItem:
+    def __init__(self, visual):
+        self.notification = _FakeNotificationPayload(visual)
+        self.creation_time = None
+        self.app_info = None
+
+
+class _SnapshotListener:
+    def __init__(self, notifications):
+        self._notifications = notifications
+
+    async def get_notifications_async(self, _kind):
+        return list(self._notifications)
+
+
 class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._modules_backup = {
@@ -162,6 +216,63 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(response)
         self.assertTrue(response["ok"])
         self.assertIn("fallback mode", response["message"])
+
+    async def test_map_notification_supports_visual_shape_a(self):
+        collector = NotificationCollector(asyncio.get_running_loop())
+        item = _FakeItem(
+            _FakeVisualShapeA(_FakeBindingWithTextElements("Title A", "Body A"))
+        )
+
+        mapped = collector._map_notification(item)
+
+        self.assertIsNotNone(mapped)
+        self.assertEqual(mapped.title, "Title A")
+        self.assertEqual(mapped.body, "Body A")
+
+    async def test_map_notification_supports_visual_shape_b(self):
+        collector = NotificationCollector(asyncio.get_running_loop())
+        item = _FakeItem(_FakeVisualShapeB(_FakeBindingForShapeB("Title B", "Body B")))
+
+        mapped = collector._map_notification(item)
+
+        self.assertIsNotNone(mapped)
+        self.assertEqual(mapped.title, "Title B")
+        self.assertEqual(mapped.body, "Body B")
+
+    async def test_map_notification_without_binding_api_returns_record_without_text(self):
+        collector = NotificationCollector(asyncio.get_running_loop())
+        item = _FakeItem(object())
+
+        mapped = collector._map_notification(item)
+
+        self.assertIsNotNone(mapped)
+        self.assertIsNone(mapped.title)
+        self.assertIsNone(mapped.body)
+
+    async def test_refresh_snapshot_preserves_shape_b_items_in_cache(self):
+        collector = NotificationCollector(asyncio.get_running_loop())
+        collector._listener = _SnapshotListener(
+            [
+                _FakeItem(
+                    _FakeVisualShapeB(_FakeBindingForShapeB("Title B1", "Body B1"))
+                ),
+                _FakeItem(
+                    _FakeVisualShapeB(_FakeBindingForShapeB("Title B2", "Body B2"))
+                ),
+            ]
+        )
+        collector._notification_kind_toast = 1
+
+        await collector.refresh_snapshot()
+
+        with collector._lock:
+            cache_snapshot = list(collector._cache)
+
+        self.assertEqual(len(cache_snapshot), 2)
+        self.assertEqual(cache_snapshot[0].title, "Title B1")
+        self.assertEqual(cache_snapshot[0].body, "Body B1")
+        self.assertEqual(cache_snapshot[1].title, "Title B2")
+        self.assertEqual(cache_snapshot[1].body, "Body B2")
 
 
 if __name__ == "__main__":
