@@ -1369,6 +1369,34 @@ async function startNotificationForwardPolling(readyClient) {
   }
 }
 
+async function activateNotificationForwardRuntimeForGuild(readyClient, guildId) {
+  const status = await checkWinRtBridgeAvailability();
+  if (status.available) {
+    notificationForwardBridgeConnected = true;
+    markNotificationForwardBridgeHeartbeat();
+    await ensureNotificationForwardSubscribed(readyClient);
+  }
+
+  const pushActive = isNotificationForwardPushFullyActive();
+  if (!pushActive) {
+    await runNotificationForwardTick(readyClient);
+  }
+
+  await persistNotificationForwardRuntimeState(guildId, {
+    mode: pushActive ? 'daemon_push' : 'poll',
+    lastBridgeStatus: {
+      connected: notificationForwardBridgeConnected,
+      subscribed: notificationForwardBridgeSubscribed,
+      reason: status.available ? null : (status.reason ?? null)
+    }
+  });
+
+  return {
+    pushActive,
+    bridgeAvailable: status.available
+  };
+}
+
 
 function formatOfficerStatsDisplay(userId, stats) {
   const safeStats = stats && typeof stats === 'object' ? stats : {};
@@ -4886,14 +4914,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
           channelId: channel.id,
           startupMode,
           mode: 'poll',
+          lastBridgeStatus: null,
           lastDeliveryError: null
         });
         notificationForwardSeenByGuild.delete(interaction.guildId);
         clearNotificationForwardSystemAlertsForGuild(interaction.guildId);
 
+        const runtimeActivation = await activateNotificationForwardRuntimeForGuild(client, interaction.guildId);
+
+        const modeLabel = runtimeActivation.pushActive
+          ? 'daemon push'
+          : 'polling fallback (one-time sync executed)';
+
         await interaction.reply({
           components: buildTextComponents(
-            `Automatic notification forwarding was enabled for <#${channel.id}>. Startup mode: ${getNotificationStartupModeLabel(startupMode)}.`
+            `Automatic notification forwarding was enabled for <#${channel.id}>. Startup mode: ${getNotificationStartupModeLabel(startupMode)}. Runtime mode: ${modeLabel}.`
           ),
           flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
