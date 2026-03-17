@@ -5157,7 +5157,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (subcommand === 'read') {
+      if (subcommand === 'read' || subcommand === 'secret') {
         const result = await readWindowsToastNotifications();
 
         if (!result.ok) {
@@ -5190,8 +5190,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
+        if (subcommand === 'read') {
+          await interaction.reply({
+            components: buildTextComponents(buildNotificationReadResponse(filteredNotifications)),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        const foundNicknames = [...new Set(
+          filteredNotifications
+            .map((notification) => extractNicknameBeforeHatched(notification?.body))
+            .filter(Boolean)
+        )];
+
+        if (!foundNicknames.length) {
+          await interaction.reply({
+            components: buildTextComponents('No clan player nickname was found in Windows notifications.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        const nicknameList = foundNicknames.map((nickname, index) => `${index + 1}. ${nickname}`).join('\n');
         await interaction.reply({
-          components: buildTextComponents(buildNotificationReadResponse(filteredNotifications)),
+          components: buildTextComponents(`Searched player nicknames in notification text:\n${nicknameList}`),
           flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
       }
