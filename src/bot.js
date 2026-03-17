@@ -960,8 +960,12 @@ function isNotificationForwardPushFullyActive() {
 }
 
 function getNotificationForwardBridgeHealthStatus() {
-  if (!notificationForwardBridgeConnected || !notificationForwardBridgeSubscribed || notificationForwardPushTimedOut) {
-    return 'bridge timed out/disconnected';
+  if (!notificationForwardBridgeConnected) {
+    return 'bridge disconnected (polling fallback active)';
+  }
+
+  if (!notificationForwardBridgeSubscribed || notificationForwardPushTimedOut) {
+    return 'bridge fallback mode (polling active)';
   }
 
   const elapsedSinceLastNotificationMs = notificationForwardLastPushEventAt
@@ -1013,7 +1017,12 @@ async function ensureNotificationForwardSubscribed(readyClient) {
 
   notificationForwardSubscribeInFlight = (async () => {
     const subscribeResult = await startWinRtNotificationPush();
-    if (!subscribeResult.ok) {
+    const reportedFallbackMode = typeof subscribeResult.message === 'string'
+      && subscribeResult.message.toLowerCase().includes('fallback mode without push updates');
+    const pushActive = subscribeResult.pushActive === true;
+    const fallbackSubscription = subscribeResult.ok && !pushActive;
+
+    if (!subscribeResult.ok || fallbackSubscription || reportedFallbackMode) {
       notificationForwardBridgeSubscribed = false;
       await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
         mode: 'poll',
@@ -1024,10 +1033,10 @@ async function ensureNotificationForwardSubscribed(readyClient) {
           reason: subscribeResult.message ?? 'Subscribe request failed.'
         }
       });
-      if (!notificationForwardPollingFallbackActive) {
-        await beginNotificationForwardPollingFallback(readyClient);
-      }
-      console.warn('Failed to subscribe to WINRT daemon push notifications; using polling fallback.', {
+      await beginNotificationForwardPollingFallback(readyClient);
+      console.warn('WINRT daemon push subscription is unavailable; using polling fallback.', {
+        ok: subscribeResult.ok,
+        pushActive: subscribeResult.pushActive ?? null,
         message: subscribeResult.message ?? null
       });
       scheduleNotificationForwardSubscribe(readyClient);
