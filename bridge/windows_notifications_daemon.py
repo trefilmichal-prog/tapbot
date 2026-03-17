@@ -72,6 +72,160 @@ class NotificationCollector:
     ) -> None:
         self._snapshot_callback = callback
 
+    def _resolve_candidate_path(self, root, candidate_path: str):
+        current_value = root
+        for attribute in candidate_path.split("."):
+            current_value = getattr(current_value, attribute)
+        return current_value
+
+    def _append_attempt(self, attempts: List[str], entry: str) -> None:
+        attempts.append(entry)
+
+    def _format_attempt_summary(self, attempts: List[str], max_items: int = 12) -> str:
+        if not attempts:
+            return "none"
+        if len(attempts) <= max_items:
+            return "; ".join(attempts)
+        remaining = len(attempts) - max_items
+        return f"{'; '.join(attempts[:max_items])}; … (+{remaining} more)"
+
+    def _candidate_name_and_type(self, candidate):
+        candidate_name = getattr(candidate, "__qualname__", None) or getattr(
+            candidate, "__name__", None
+        )
+        if not candidate_name:
+            candidate_name = repr(candidate)
+        return candidate_name, type(candidate).__name__
+
+    def _shape_info(self, candidate) -> str:
+        candidate_module = getattr(candidate, "__module__", "") or ""
+        candidate_name = (
+            getattr(candidate, "__qualname__", None)
+            or getattr(candidate, "__name__", None)
+            or repr(candidate)
+        )
+        candidate_type = type(candidate)
+        candidate_type_module = getattr(candidate_type, "__module__", "") or ""
+        candidate_type_name = getattr(candidate_type, "__name__", "") or ""
+        return (
+            f"module={candidate_module!r}, name={candidate_name!r}, "
+            f"type={candidate_type_module}.{candidate_type_name}"
+        )
+
+    def _validate_runtime_delegate_class(self, candidate_name: str, candidate):
+        if candidate is None:
+            return None, f"{candidate_name}: missing"
+
+        candidate_module = (getattr(candidate, "__module__", "") or "").lower()
+        candidate_type = type(candidate)
+        candidate_type_module = (getattr(candidate_type, "__module__", "") or "").lower()
+        if "typing" in candidate_module or "typing" in candidate_type_module:
+            return (
+                None,
+                f"{candidate_name}: rejected typing/proxy artifact ({self._shape_info(candidate)})",
+            )
+        if isinstance(candidate, types.GenericAlias):
+            return (
+                None,
+                f"{candidate_name}: rejected generic alias artifact ({self._shape_info(candidate)})",
+            )
+        generic_alias_type = getattr(types, "_GenericAlias", None)
+        if generic_alias_type is not None and isinstance(candidate, generic_alias_type):
+            return (
+                None,
+                f"{candidate_name}: rejected generic alias artifact ({self._shape_info(candidate)})",
+            )
+
+        candidate_type_name = (getattr(candidate_type, "__name__", "") or "").lower()
+        if "projection" in candidate_type_name:
+            return (
+                None,
+                f"{candidate_name}: rejected projection artifact ({self._shape_info(candidate)})",
+            )
+
+        if not inspect.isclass(candidate):
+            return (
+                None,
+                f"{candidate_name}: rejected non-class candidate ({self._shape_info(candidate)})",
+            )
+
+        try:
+            candidate(self._on_notification_changed)
+        except Exception as error:
+            return (
+                None,
+                f"{candidate_name}: constructor failed ({error.__class__.__name__}: {error})",
+            )
+
+        return candidate, f"{candidate_name}: accepted ({self._shape_info(candidate)})"
+
+    def _validate_notification_kinds_enum_holder(self, candidate):
+        def has_toast_member(enum_candidate) -> bool:
+            for member_name in ("TOAST", "Toast"):
+                try:
+                    if hasattr(enum_candidate, member_name):
+                        return True
+                except Exception:
+                    continue
+            return False
+
+        def matches_notification_kind_shape(enum_candidate) -> bool:
+            enum_name = (
+                getattr(enum_candidate, "__qualname__", None)
+                or getattr(enum_candidate, "__name__", "")
+            ).lower()
+            if "notification" not in enum_name or "kind" not in enum_name:
+                return False
+
+            try:
+                member_names = {member.name.upper() for member in enum_candidate}
+            except Exception:
+                member_names = {
+                    name.upper()
+                    for name in dir(enum_candidate)
+                    if not name.startswith("_")
+                }
+
+            expected_markers = {"TOAST", "TILE", "BADGE", "RAW"}
+            return bool(member_names & expected_markers)
+
+        def is_valid_notification_kinds_enum(enum_candidate) -> bool:
+            return has_toast_member(enum_candidate) or matches_notification_kind_shape(
+                enum_candidate
+            )
+
+        candidate_name, candidate_type = self._candidate_name_and_type(candidate)
+
+        if isinstance(candidate, enum.EnumMeta):
+            if is_valid_notification_kinds_enum(candidate):
+                return candidate, None
+            return (
+                None,
+                f"rejected enum {candidate_name} ({candidate_type}); missing toast-kind signal",
+            )
+
+        if hasattr(candidate, "__dict__"):
+            nested_rejections = []
+            for _nested_name, value in vars(candidate).items():
+                if not isinstance(value, enum.EnumMeta):
+                    continue
+                if is_valid_notification_kinds_enum(value):
+                    return value, None
+                nested_enum_name, nested_enum_type = self._candidate_name_and_type(value)
+                nested_rejections.append(
+                    f"nested enum {nested_enum_name} ({nested_enum_type}) missing toast-kind signal"
+                )
+            if nested_rejections:
+                return (
+                    None,
+                    f"rejected {candidate_name} ({candidate_type}); " + "; ".join(nested_rejections),
+                )
+
+        return (
+            None,
+            f"rejected {candidate_name} ({candidate_type}); not an enum holder for notification kinds",
+        )
+
     def _resolve_listener(self, UserNotificationListener):
         """Resolve listener instance across WINRT binding API variants."""
         attempts = []
@@ -235,98 +389,23 @@ class NotificationCollector:
             "models.user_notification_kinds.NotificationKind",
         )
 
-        def candidate_name_and_type(candidate):
-            candidate_name = getattr(candidate, "__qualname__", None) or getattr(
-                candidate, "__name__", None
-            )
-            if not candidate_name:
-                candidate_name = repr(candidate)
-            return candidate_name, type(candidate).__name__
-
-        def has_toast_member(enum_candidate) -> bool:
-            for member_name in ("TOAST", "Toast"):
-                try:
-                    if hasattr(enum_candidate, member_name):
-                        return True
-                except Exception:
-                    continue
-            return False
-
-        def matches_notification_kind_shape(enum_candidate) -> bool:
-            enum_name = (
-                getattr(enum_candidate, "__qualname__", None)
-                or getattr(enum_candidate, "__name__", "")
-            ).lower()
-            if "notification" not in enum_name or "kind" not in enum_name:
-                return False
-
-            try:
-                member_names = {member.name.upper() for member in enum_candidate}
-            except Exception:
-                member_names = {
-                    name.upper()
-                    for name in dir(enum_candidate)
-                    if not name.startswith("_")
-                }
-
-            expected_markers = {"TOAST", "TILE", "BADGE", "RAW"}
-            return bool(member_names & expected_markers)
-
-        def is_valid_notification_kinds_enum(enum_candidate) -> bool:
-            return has_toast_member(enum_candidate) or matches_notification_kind_shape(
-                enum_candidate
-            )
-
-        def as_enum_holder(candidate):
-            candidate_name, candidate_type = candidate_name_and_type(candidate)
-
-            if isinstance(candidate, enum.EnumMeta):
-                if is_valid_notification_kinds_enum(candidate):
-                    return candidate, None
-                return (
-                    None,
-                    f"rejected enum {candidate_name} ({candidate_type}); missing toast-kind signal",
-                )
-
-            if hasattr(candidate, "__dict__"):
-                nested_rejections = []
-                for nested_name, value in vars(candidate).items():
-                    if not isinstance(value, enum.EnumMeta):
-                        continue
-                    if is_valid_notification_kinds_enum(value):
-                        return value, None
-                    nested_enum_name, nested_enum_type = candidate_name_and_type(value)
-                    nested_rejections.append(
-                        f"nested enum {nested_enum_name} ({nested_enum_type}) missing toast-kind signal"
-                    )
-                if nested_rejections:
-                    return (
-                        None,
-                        f"rejected {candidate_name} ({candidate_type}); "
-                        + "; ".join(nested_rejections),
-                    )
-
-            return (
-                None,
-                f"rejected {candidate_name} ({candidate_type}); not an enum holder for notification kinds",
-            )
-
         try:
             management_module = importlib.import_module(module_name)
         except Exception as error:
-            attempted_symbols.append(f"{module_name} import failed: {error}")
+            self._append_attempt(attempted_symbols, f"{module_name} import failed: {error}")
             return None, attempted_symbols
 
         for candidate_path in candidate_paths:
-            attempted_symbols.append(candidate_path)
-            current_value = management_module
+            self._append_attempt(attempted_symbols, candidate_path)
             try:
-                for attribute in candidate_path.split("."):
-                    current_value = getattr(current_value, attribute)
-                resolved, rejection_reason = as_enum_holder(current_value)
+                current_value = self._resolve_candidate_path(management_module, candidate_path)
+                resolved, rejection_reason = self._validate_notification_kinds_enum_holder(
+                    current_value
+                )
                 if resolved is None:
-                    attempted_symbols.append(
-                        f"{candidate_path} rejected: {rejection_reason}"
+                    self._append_attempt(
+                        attempted_symbols,
+                        f"{candidate_path} rejected: {rejection_reason}",
                     )
                     continue
 
@@ -339,8 +418,9 @@ class NotificationCollector:
             except AttributeError:
                 continue
             except Exception as error:
-                attempted_symbols.append(
-                    f"{candidate_path} raised {error.__class__.__name__}: {error}"
+                self._append_attempt(
+                    attempted_symbols,
+                    f"{candidate_path} raised {error.__class__.__name__}: {error}",
                 )
 
         fallback_roots = ["<management module>"]
@@ -352,12 +432,13 @@ class NotificationCollector:
                 fallback_candidates.append(branch)
 
         for root_name, root_value in zip(fallback_roots, fallback_candidates):
-            attempted_symbols.append(f"fallback:{root_name}")
+            self._append_attempt(attempted_symbols, f"fallback:{root_name}")
             try:
                 attributes = vars(root_value).items()
             except Exception as error:
-                attempted_symbols.append(
-                    f"fallback:{root_name} vars() failed: {error.__class__.__name__}: {error}"
+                self._append_attempt(
+                    attempted_symbols,
+                    f"fallback:{root_name} vars() failed: {error.__class__.__name__}: {error}",
                 )
                 continue
 
@@ -365,12 +446,15 @@ class NotificationCollector:
                 if attribute_name.startswith("_"):
                     continue
 
-                resolved, rejection_reason = as_enum_holder(attribute_value)
+                resolved, rejection_reason = self._validate_notification_kinds_enum_holder(
+                    attribute_value
+                )
                 if resolved is None:
-                    candidate_name, candidate_type = candidate_name_and_type(
+                    candidate_name, candidate_type = self._candidate_name_and_type(
                         attribute_value
                     )
-                    attempted_symbols.append(
+                    self._append_attempt(
+                        attempted_symbols,
                         "fallback:%s.%s rejected %s (%s): %s"
                         % (
                             root_name,
@@ -378,7 +462,7 @@ class NotificationCollector:
                             candidate_name,
                             candidate_type,
                             rejection_reason,
-                        )
+                        ),
                     )
                     continue
 
@@ -534,125 +618,66 @@ class NotificationCollector:
         """Resolve concrete WINRT TypedEventHandler runtime delegate class."""
         attempts: List[str] = []
 
-        def _shape_info(candidate) -> str:
-            candidate_module = getattr(candidate, "__module__", "") or ""
-            candidate_name = (
-                getattr(candidate, "__qualname__", None)
-                or getattr(candidate, "__name__", None)
-                or repr(candidate)
-            )
-            candidate_type = type(candidate)
-            candidate_type_module = getattr(candidate_type, "__module__", "") or ""
-            candidate_type_name = getattr(candidate_type, "__name__", "") or ""
-            return (
-                f"module={candidate_module!r}, name={candidate_name!r}, "
-                f"type={candidate_type_module}.{candidate_type_name}"
-            )
-
-        def _is_typing_or_proxy_artifact(candidate) -> bool:
-            candidate_module = (getattr(candidate, "__module__", "") or "").lower()
-            candidate_type = type(candidate)
-            candidate_type_module = (
-                getattr(candidate_type, "__module__", "") or ""
-            ).lower()
-            if "typing" in candidate_module or "typing" in candidate_type_module:
-                return True
-            if isinstance(candidate, types.GenericAlias):
-                return True
-            generic_alias_type = getattr(types, "_GenericAlias", None)
-            if generic_alias_type is not None and isinstance(
-                candidate, generic_alias_type
-            ):
-                return True
-            candidate_type_name = (
-                getattr(candidate_type, "__name__", "") or ""
-            ).lower()
-            return "projection" in candidate_type_name
-
-        def _attempt_candidate(candidate_name: str, candidate):
-            if candidate is None:
-                attempts.append(f"{candidate_name}: missing")
-                return None
-
-            if _is_typing_or_proxy_artifact(candidate):
-                attempts.append(
-                    f"{candidate_name}: rejected typing/proxy artifact ({_shape_info(candidate)})"
-                )
-                return None
-
-            if not inspect.isclass(candidate):
-                attempts.append(
-                    f"{candidate_name}: rejected non-class candidate ({_shape_info(candidate)})"
-                )
-                return None
-
-            try:
-                candidate(self._on_notification_changed)
-            except Exception as error:
-                attempts.append(
-                    f"{candidate_name}: constructor failed ({error.__class__.__name__}: {error})"
-                )
-                return None
-
-            attempts.append(f"{candidate_name}: accepted ({_shape_info(candidate)})")
-            return candidate
-
         try:
             foundation = importlib.import_module("winrt.windows.foundation")
         except Exception as error:
-            attempts.append(
+            self._append_attempt(
+                attempts,
                 "winrt.windows.foundation import failed "
-                f"({error.__class__.__name__}: {error})"
+                f"({error.__class__.__name__}: {error})",
             )
             return None, attempts
 
-        direct_candidate = getattr(foundation, "TypedEventHandler", None)
-        resolved = _attempt_candidate("foundation.TypedEventHandler", direct_candidate)
-        if resolved is not None:
-            return resolved, attempts
+        candidate_paths = (
+            "TypedEventHandler",
+            "typed_event_handler.TypedEventHandler",
+            "models.TypedEventHandler",
+        )
 
-        for branch_name in ("typed_event_handler", "models"):
-            branch = getattr(foundation, branch_name, None)
-            if branch is None:
-                attempts.append(f"foundation.{branch_name}: missing")
+        for candidate_path in candidate_paths:
+            self._append_attempt(attempts, candidate_path)
+            try:
+                candidate = self._resolve_candidate_path(foundation, candidate_path)
+            except AttributeError:
+                continue
+            except Exception as error:
+                self._append_attempt(
+                    attempts,
+                    f"{candidate_path} raised {error.__class__.__name__}: {error}",
+                )
                 continue
 
-            branch_candidate = getattr(branch, "TypedEventHandler", None)
-            resolved = _attempt_candidate(
-                f"foundation.{branch_name}.TypedEventHandler", branch_candidate
+            resolved, reason = self._validate_runtime_delegate_class(
+                f"foundation.{candidate_path}", candidate
             )
+            self._append_attempt(attempts, reason)
             if resolved is not None:
                 return resolved, attempts
 
-            for attribute_name, attribute_value in vars(branch).items():
+        for root_name, root_value in (
+            ("foundation", foundation),
+            ("foundation.models", getattr(foundation, "models", None)),
+            (
+                "foundation.typed_event_handler",
+                getattr(foundation, "typed_event_handler", None),
+            ),
+        ):
+            if root_value is None:
+                continue
+            self._append_attempt(attempts, f"fallback:{root_name}")
+            for attribute_name, attribute_value in vars(root_value).items():
                 if attribute_name.startswith("_"):
                     continue
-                if (
-                    "typed" not in attribute_name.lower()
-                    or "handler" not in attribute_name.lower()
-                ):
+                lower_name = attribute_name.lower()
+                if "typed" not in lower_name or "handler" not in lower_name:
                     continue
-                resolved = _attempt_candidate(
-                    f"foundation.{branch_name}.{attribute_name}",
-                    attribute_value,
+
+                resolved, reason = self._validate_runtime_delegate_class(
+                    f"{root_name}.{attribute_name}", attribute_value
                 )
+                self._append_attempt(attempts, reason)
                 if resolved is not None:
                     return resolved, attempts
-
-        for attribute_name, attribute_value in vars(foundation).items():
-            if attribute_name.startswith("_"):
-                continue
-            if (
-                "typed" not in attribute_name.lower()
-                or "handler" not in attribute_name.lower()
-            ):
-                continue
-            resolved = _attempt_candidate(
-                f"foundation.{attribute_name}",
-                attribute_value,
-            )
-            if resolved is not None:
-                return resolved, attempts
 
         return None, attempts
 
@@ -676,7 +701,7 @@ class NotificationCollector:
             self._available = False
             self._last_error = (
                 "Unable to resolve WINRT TypedEventHandler runtime delegate class. "
-                f"Candidates tried: {'; '.join(typed_event_attempts) or 'none'}"
+                f"Candidates tried: {self._format_attempt_summary(typed_event_attempts)}"
             )
             LOGGER.error(self._last_error)
             return
@@ -705,7 +730,7 @@ class NotificationCollector:
                 LOGGER.warning(
                     "Notification kind enum resolution failed; numeric fallback used for toast kind bit (1). "
                     "Tried symbols in winrt.windows.ui.notifications.management: %s",
-                    ", ".join(attempted_symbols),
+                    self._format_attempt_summary(attempted_symbols),
                 )
             else:
                 (
@@ -923,7 +948,7 @@ class NotificationCollector:
             return {
                 "ok": False,
                 "errorCode": "API_UNAVAILABLE",
-                "message": self._last_error or "WINRT notification APIs are unavailable.",
+                "message": "WINRT notification APIs are unavailable.",
                 "notifications": [],
             }
 
@@ -931,7 +956,7 @@ class NotificationCollector:
             return {
                 "ok": False,
                 "errorCode": "ACCESS_DENIED",
-                "message": self._last_error or "Notification access denied.",
+                "message": "Notification access denied.",
                 "notifications": [],
             }
 
