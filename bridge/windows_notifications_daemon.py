@@ -392,28 +392,146 @@ class NotificationCollector:
 
     def _build_notification_changed_handler(self, TypedEventHandler):
         """Build notification change delegate across projection variants."""
-        try:
-            handler = TypedEventHandler(self._on_notification_changed)
-            LOGGER.info(
-                "Constructed notification changed handler via TypedEventHandler(callback)."
+        callback = self._on_notification_changed
+        attempts: List[str] = []
+
+        def _shape_info(candidate) -> str:
+            candidate_module = getattr(candidate, "__module__", "") or ""
+            candidate_name = (
+                getattr(candidate, "__qualname__", None)
+                or getattr(candidate, "__name__", None)
+                or repr(candidate)
             )
-            return handler
-        except Exception:
+            candidate_type = type(candidate)
+            candidate_type_module = (
+                getattr(candidate_type, "__module__", "") or ""
+            )
+            candidate_type_name = getattr(candidate_type, "__name__", "") or ""
+            return (
+                f"module={candidate_module!r}, name={candidate_name!r}, "
+                f"type={candidate_type_module}.{candidate_type_name}"
+            )
+
+        def _looks_like_typing_artifact(candidate) -> bool:
+            details = " ".join(
+                (
+                    getattr(candidate, "__module__", "") or "",
+                    getattr(candidate, "__qualname__", "") or "",
+                    getattr(candidate, "__name__", "") or "",
+                    getattr(type(candidate), "__module__", "") or "",
+                    getattr(type(candidate), "__name__", "") or "",
+                    repr(candidate),
+                )
+            ).lower()
+            return any(
+                marker in details
+                for marker in (
+                    "typing",
+                    "types.genericalias",
+                    "_genericalias",
+                    "types.uniontype",
+                    "projection",
+                )
+            )
+
+        if _looks_like_typing_artifact(TypedEventHandler):
             LOGGER.debug(
-                "TypedEventHandler(callback) construction failed; trying generic-indexed form.",
+                "Skipping direct TypedEventHandler(callback) construction due to typing/proxy artifact: %s",
+                _shape_info(TypedEventHandler),
+            )
+        elif not inspect.isclass(TypedEventHandler):
+            LOGGER.debug(
+                "Skipping direct TypedEventHandler(callback) construction because candidate is not a class: %s",
+                _shape_info(TypedEventHandler),
+            )
+        else:
+            try:
+                handler = TypedEventHandler(callback)
+                LOGGER.info(
+                    "Constructed notification changed handler via TypedEventHandler(callback)."
+                )
+                return handler
+            except Exception as error:
+                attempts.append(
+                    "direct constructor failed "
+                    f"({error.__class__.__name__}: {error})"
+                )
+                LOGGER.debug(
+                    "TypedEventHandler(callback) construction failed; trying generic-indexed form. %s: %s",
+                    error.__class__.__name__,
+                    error,
+                    exc_info=True,
+                )
+
+        runtime_delegate_class = None
+        generic_index_candidate = None
+        try:
+            generic_index_candidate = TypedEventHandler[object, object]
+            LOGGER.debug(
+                "Resolved generic-indexed TypedEventHandler candidate: %s",
+                _shape_info(generic_index_candidate),
+            )
+        except Exception as error:
+            attempts.append(
+                "generic indexing failed "
+                f"({error.__class__.__name__}: {error})"
+            )
+            LOGGER.debug(
+                "TypedEventHandler generic indexing failed. %s: %s",
+                error.__class__.__name__,
+                error,
                 exc_info=True,
             )
 
-        try:
-            handler = TypedEventHandler[object, object](self._on_notification_changed)
-            LOGGER.info(
-                "Constructed notification changed handler via TypedEventHandler[object, object](callback)."
-            )
-            return handler
-        except Exception as generic_error:
-            raise RuntimeError(
-                "Unable to construct notification changed handler using both delegate forms"
-            ) from generic_error
+        if generic_index_candidate is not None:
+            if _looks_like_typing_artifact(generic_index_candidate):
+                LOGGER.debug(
+                    "Skipping generic-indexed candidate due to typing/proxy artifact: %s",
+                    _shape_info(generic_index_candidate),
+                )
+                origin = getattr(generic_index_candidate, "__origin__", None)
+                if inspect.isclass(origin) and not _looks_like_typing_artifact(origin):
+                    runtime_delegate_class = origin
+                    LOGGER.debug(
+                        "Resolved runtime delegate class from generic __origin__: %s",
+                        _shape_info(runtime_delegate_class),
+                    )
+                else:
+                    LOGGER.debug(
+                        "Unable to resolve runtime delegate class from generic __origin__. origin=%s",
+                        _shape_info(origin) if origin is not None else "None",
+                    )
+            elif inspect.isclass(generic_index_candidate):
+                runtime_delegate_class = generic_index_candidate
+            else:
+                LOGGER.debug(
+                    "Generic-indexed candidate is not a class and will be skipped: %s",
+                    _shape_info(generic_index_candidate),
+                )
+
+        if runtime_delegate_class is not None:
+            try:
+                handler = runtime_delegate_class(callback)
+                LOGGER.info(
+                    "Constructed notification changed handler via resolved runtime delegate class."
+                )
+                return handler
+            except Exception as error:
+                attempts.append(
+                    "runtime delegate constructor failed "
+                    f"({error.__class__.__name__}: {error})"
+                )
+                LOGGER.debug(
+                    "Resolved runtime delegate class construction failed. %s: %s",
+                    error.__class__.__name__,
+                    error,
+                    exc_info=True,
+                )
+
+        raise RuntimeError(
+            "Unable to construct notification changed handler from concrete TypedEventHandler delegate forms. "
+            f"Candidate: {_shape_info(TypedEventHandler)}. Attempts: {'; '.join(attempts) or 'none'}"
+        )
 
     async def start(self) -> None:
         if self._started:
