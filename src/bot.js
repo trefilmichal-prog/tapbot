@@ -544,10 +544,9 @@ function buildNotificationReadResponse(notifications) {
 
 function buildForwardNotificationMessage(item) {
   return [
-    '📣 **New Windows Notification**',
+    '📣 **Secret Hatcher**',
     '',
     `**Title:** ${item.title ?? '(no title)'}`,
-    `**App:** ${item.app ?? 'Unknown app'}`,
     `**Time:** ${formatNotificationTimestamp(item.timestamp)}`,
     `**Body:** ${item.body ?? '*(empty)*'}`
   ].join('\n');
