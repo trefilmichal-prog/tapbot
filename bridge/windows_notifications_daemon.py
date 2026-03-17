@@ -60,6 +60,7 @@ class NotificationCollector:
         self._notification_kind_source = None
         self._started = False
         self._available = False
+        self._push_subscription_active = False
         self._access_denied = False
         self._last_error = None
         self._snapshot_callback: Optional[
@@ -824,6 +825,7 @@ class NotificationCollector:
 
             self._listener = listener
             self._available = True
+            self._push_subscription_active = False
 
             try:
                 self._notification_changed_handler = (
@@ -848,12 +850,21 @@ class NotificationCollector:
                 self._last_error = (
                     f"Failed to register notification changed listener: {error}"
                 )
-                LOGGER.exception(
-                    "Notification changed listener registration failed after delegate construction."
+                LOGGER.warning(
+                    "Notification changed listener registration failed; "
+                    "read API remains available, fallback mode enabled. Error: %s",
+                    error,
                 )
                 self._notification_changed_handler = None
+                self._started = True
+                startup_succeeded = True
+                await self.refresh_snapshot()
+                LOGGER.info(
+                    "Notification collector ready in fallback mode without push subscription."
+                )
                 return
 
+            self._push_subscription_active = True
             self._started = True
             startup_succeeded = True
             LOGGER.info(
@@ -868,6 +879,7 @@ class NotificationCollector:
         finally:
             if not startup_succeeded:
                 self._started = False
+                self._push_subscription_active = False
                 self._notification_changed_handler = None
                 self._listener = None
 
@@ -887,6 +899,10 @@ class NotificationCollector:
         self._notification_changed_handler = None
         self._listener = None
         self._started = False
+        self._push_subscription_active = False
+
+    def is_push_subscription_active(self) -> bool:
+        return self._push_subscription_active
 
     def _resolve_toast_notification_kind(self, notification_kinds_enum):
         """Resolve enum member name differences across WINRT binding variants."""
@@ -1094,6 +1110,15 @@ class TcpBridgeServer:
                 return payload
             if message_type == "subscribe_notifications":
                 self._subscribers.add(writer)
+                if not self.collector.is_push_subscription_active():
+                    return {
+                        "id": request_id,
+                        "ok": True,
+                        "message": (
+                            "Subscribed in fallback mode without push updates; "
+                            "poll using read_notifications."
+                        ),
+                    }
                 return {
                     "id": request_id,
                     "ok": True,
