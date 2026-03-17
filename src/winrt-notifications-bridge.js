@@ -45,7 +45,7 @@ export class WinRtDaemonClient {
 
   async checkAvailability() {
     try {
-      const response = await this.sendRequest({ type: 'ping' });
+      const response = await this.ping();
       return {
         available: Boolean(response?.ok),
         helperPath: `${this.host}:${this.port}`,
@@ -94,6 +94,10 @@ export class WinRtDaemonClient {
         message: error.message
       };
     }
+  }
+
+  async ping() {
+    return await this.sendRequest({ type: 'ping' });
   }
 
   onEvent(listener) {
@@ -287,6 +291,10 @@ export async function checkWinRtBridgeAvailability() {
 
 export async function readWinRtNotificationsFromBridge() {
   return await daemonClient.readNotifications();
+}
+
+export async function pingWinRtBridge() {
+  return await daemonClient.ping();
 }
 
 export async function startWinRtNotificationPush() {

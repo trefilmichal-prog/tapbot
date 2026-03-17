@@ -45,6 +45,7 @@ import {
   checkWinRtBridgeAvailability,
   onWinRtBridgeConnectionState,
   onWinRtBridgeEvent,
+  pingWinRtBridge,
   startWinRtNotificationPush
 } from './winrt-notifications-bridge.js';
 
@@ -493,10 +494,12 @@ const NOTIFICATION_FORWARD_POLL_INTERVAL_MS = 2000;
 const NOTIFICATION_SIGNATURE_HISTORY_LIMIT = 500;
 const NOTIFICATION_FORWARD_ERROR_LOG_INTERVAL_MS = 60 * 1000;
 const NOTIFICATION_FORWARD_PUSH_WATCHDOG_INTERVAL_MS = 45 * 1000;
+const NOTIFICATION_FORWARD_BRIDGE_PING_INTERVAL_MS = 45 * 1000;
 const NOTIFICATION_FORWARD_PUSH_TIMEOUT_MS = 3 * 60 * 1000;
 const NOTIFICATION_FORWARD_BRIDGE_SUBSCRIBE_RETRY_DEBOUNCE_MS = 5000;
 let notificationForwardPollTimer = null;
 let notificationForwardPushWatchdogTimer = null;
+let notificationForwardBridgePingTimer = null;
 let notificationForwardPollingFallbackActive = false;
 let notificationForwardLastPushEventAt = 0;
 let notificationForwardLastBridgeHeartbeatAt = 0;
@@ -791,12 +794,74 @@ function pruneNotificationSignatureSet(signatureSet) {
   }
 }
 
+function isNotificationForwardBridgeStatusStateEqual(previousStatus, nextStatus) {
+  if (!previousStatus && !nextStatus) {
+    return true;
+  }
+
+  if (!previousStatus || !nextStatus) {
+    return false;
+  }
+
+  return Boolean(previousStatus.connected) === Boolean(nextStatus.connected)
+    && Boolean(previousStatus.subscribed) === Boolean(nextStatus.subscribed)
+    && (previousStatus.reason ?? null) === (nextStatus.reason ?? null);
+}
+
+function buildNotificationForwardRuntimePatch(current, patch = {}) {
+  const effectivePatch = { ...patch };
+
+  if (Object.hasOwn(effectivePatch, 'lastBridgeStatus')) {
+    const requestedStatus = effectivePatch.lastBridgeStatus && typeof effectivePatch.lastBridgeStatus === 'object'
+      ? {
+          connected: Boolean(effectivePatch.lastBridgeStatus.connected),
+          subscribed: Boolean(effectivePatch.lastBridgeStatus.subscribed),
+          reason: typeof effectivePatch.lastBridgeStatus.reason === 'string'
+            ? effectivePatch.lastBridgeStatus.reason
+            : null
+        }
+      : null;
+
+    if (isNotificationForwardBridgeStatusStateEqual(current.lastBridgeStatus, requestedStatus)) {
+      delete effectivePatch.lastBridgeStatus;
+    } else if (requestedStatus) {
+      effectivePatch.lastBridgeStatus = {
+        ...requestedStatus,
+        updatedAt: new Date().toISOString()
+      };
+    }
+  }
+
+  const patchKeys = Object.keys(effectivePatch);
+  if (!patchKeys.length) {
+    return null;
+  }
+
+  let hasAnyChange = false;
+  for (const key of patchKeys) {
+    if (JSON.stringify(current[key]) !== JSON.stringify(effectivePatch[key])) {
+      hasAnyChange = true;
+      break;
+    }
+  }
+
+  if (!hasAnyChange) {
+    return null;
+  }
+
+  return {
+    ...current,
+    ...effectivePatch
+  };
+}
+
 async function persistNotificationForwardRuntimeState(guildId, patch = {}) {
   const current = getNotificationForwardConfig(guildId);
-  await setNotificationForwardConfig(guildId, {
-    ...current,
-    ...patch
-  });
+  const next = buildNotificationForwardRuntimePatch(current, patch);
+  if (!next) {
+    return;
+  }
+  await setNotificationForwardConfig(guildId, next);
 }
 
 async function persistNotificationForwardRuntimeStateForAllGuilds(readyClient, patch = {}) {
@@ -805,10 +870,11 @@ async function persistNotificationForwardRuntimeStateForAllGuilds(readyClient, p
     if (!current.enabled) {
       continue;
     }
-    await setNotificationForwardConfig(guildId, {
-      ...current,
-      ...patch
-    });
+    const next = buildNotificationForwardRuntimePatch(current, patch);
+    if (!next) {
+      continue;
+    }
+    await setNotificationForwardConfig(guildId, next);
   }
 }
 
@@ -985,6 +1051,56 @@ async function startNotificationForwardPushWatchdog(readyClient) {
     }
     scheduleNotificationForwardSubscribe(readyClient);
   }, NOTIFICATION_FORWARD_PUSH_WATCHDOG_INTERVAL_MS);
+}
+
+async function startNotificationForwardBridgePingTimer(readyClient) {
+  if (notificationForwardBridgePingTimer) {
+    clearInterval(notificationForwardBridgePingTimer);
+    notificationForwardBridgePingTimer = null;
+  }
+
+  notificationForwardBridgePingTimer = setInterval(() => {
+    if (!hasDaemonPushForwardingEnabled(readyClient)) {
+      return;
+    }
+
+    if (!notificationForwardBridgeConnected || !notificationForwardBridgeSubscribed) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const pingResponse = await pingWinRtBridge();
+        if (!pingResponse?.ok) {
+          throw new Error(pingResponse?.message ?? 'Bridge ping failed.');
+        }
+
+        markNotificationForwardBridgeHeartbeat();
+        await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
+          lastBridgeStatus: {
+            connected: notificationForwardBridgeConnected,
+            subscribed: notificationForwardBridgeSubscribed,
+            reason: null
+          }
+        });
+      } catch (error) {
+        notificationForwardBridgeSubscribed = false;
+        await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
+          mode: 'poll',
+          lastBridgeStatus: {
+            connected: notificationForwardBridgeConnected,
+            subscribed: false,
+            reason: error?.message ?? 'Bridge ping failed.'
+          }
+        });
+
+        if (!notificationForwardPollingFallbackActive) {
+          await beginNotificationForwardPollingFallback(readyClient);
+        }
+        scheduleNotificationForwardSubscribe(readyClient);
+      }
+    })();
+  }, NOTIFICATION_FORWARD_BRIDGE_PING_INTERVAL_MS);
 }
 
 async function initializeNotificationForwardCache(readyClient) {
@@ -1165,6 +1281,7 @@ function stopNotificationForwardPollingFallback() {
 
 async function startNotificationForwardPolling(readyClient) {
   await startNotificationForwardPushWatchdog(readyClient);
+  await startNotificationForwardBridgePingTimer(readyClient);
 
   onWinRtBridgeConnectionState((state) => {
     notificationForwardBridgeConnected = Boolean(state?.connected);
