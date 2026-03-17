@@ -1,9 +1,11 @@
+import asyncio
+import json
 import sys
 import types
 import typing
 import unittest
 
-from bridge.windows_notifications_daemon import NotificationCollector
+from bridge.windows_notifications_daemon import NotificationCollector, TcpBridgeServer
 
 
 class _AllowedStatus:
@@ -51,6 +53,40 @@ class _CollectorWithTypingCandidate(NotificationCollector):
         return None
 
 
+class _FailingPushListener(_FakeListener):
+    def add_notification_changed(self, handler):
+        raise RuntimeError("push registration failed")
+
+
+class _CollectorWithPushRegistrationFailure(NotificationCollector):
+    def __init__(self, loop):
+        super().__init__(loop)
+        self.listener = _FailingPushListener()
+        self.refresh_calls = 0
+
+    def _resolve_typed_event_handler_class(self):
+        return (
+            None,
+            typing.Callable,
+            {
+                "candidate_kind": "non-runtime",
+                "candidate_source": "test.typing.Callable",
+                "candidate_shape": str(typing.Callable),
+            },
+            ["test candidate: typing.Callable"],
+        )
+
+    def _resolve_listener(self, _):
+        return self.listener
+
+    def _resolve_notification_kinds_enum(self):
+        return None, ["test enum fallback"]
+
+    async def refresh_snapshot(self):
+        self.refresh_calls += 1
+        return None
+
+
 class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._modules_backup = {
@@ -89,8 +125,6 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
                 sys.modules[name] = value
 
     async def test_start_registers_direct_callable_when_typed_candidate_is_typing(self):
-        import asyncio
-
         collector = _CollectorWithTypingCandidate(asyncio.get_running_loop())
 
         await collector.start()
@@ -103,6 +137,31 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
             collector._notification_changed_handler,
         )
         self.assertTrue(callable(collector._notification_changed_handler))
+
+    async def test_push_registration_failed_read_still_works(self):
+        collector = _CollectorWithPushRegistrationFailure(asyncio.get_running_loop())
+
+        await collector.start()
+
+        self.assertTrue(collector._available)
+        self.assertTrue(collector._started)
+        self.assertFalse(collector.is_push_subscription_active())
+        self.assertEqual(collector.refresh_calls, 1)
+
+        payload = collector.read()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["notifications"], [])
+
+        bridge = TcpBridgeServer("127.0.0.1", 8765, collector)
+        response = bridge._handle_message(
+            json.dumps({"id": "1", "type": "subscribe_notifications"}).encode(
+                "utf-8"
+            ),
+            object(),
+        )
+        self.assertIsNotNone(response)
+        self.assertTrue(response["ok"])
+        self.assertIn("fallback mode", response["message"])
 
 
 if __name__ == "__main__":
