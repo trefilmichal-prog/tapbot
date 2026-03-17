@@ -995,16 +995,71 @@ class NotificationCollector:
     def _on_notification_changed(self, _sender, _args) -> None:
         self.loop.call_soon_threadsafe(asyncio.create_task, self.refresh_snapshot())
 
+    def _iter_visual_bindings(self, visual):
+        get_bindings = getattr(visual, "get_bindings", None)
+        if callable(get_bindings):
+            try:
+                return list(get_bindings())
+            except (TypeError, AttributeError, ValueError) as error:
+                LOGGER.debug("visual.get_bindings() unsupported: %s", error)
+
+        get_binding = getattr(visual, "get_binding", None)
+        if callable(get_binding):
+            for binding_key in (
+                "ToastGeneric",
+                "toastGeneric",
+                "toast-generic",
+                "Generic",
+                "generic",
+            ):
+                try:
+                    binding = get_binding(binding_key)
+                    if binding is not None:
+                        return [binding]
+                except (TypeError, AttributeError, ValueError):
+                    continue
+
+        return []
+
+    def _iter_binding_texts(self, binding):
+        get_text_elements = getattr(binding, "get_text_elements", None)
+        if callable(get_text_elements):
+            try:
+                return list(get_text_elements())
+            except (TypeError, AttributeError, ValueError) as error:
+                LOGGER.debug("binding.get_text_elements() unsupported: %s", error)
+
+        for property_name in ("text_elements", "texts"):
+            try:
+                text_collection = getattr(binding, property_name, None)
+            except Exception:
+                text_collection = None
+            if text_collection is None:
+                continue
+            try:
+                return list(text_collection)
+            except TypeError:
+                text_value = getattr(text_collection, "text", None)
+                if text_value is not None:
+                    return [text_collection]
+
+        return []
+
     def _map_notification(self, item) -> Optional[NotificationRecord]:
         try:
             visual = item.notification.visual
-            bindings = visual.get_bindings()
+            bindings = self._iter_visual_bindings(visual)
+            if not bindings:
+                LOGGER.warning(
+                    "Skipping unsupported visual notification shape: %s",
+                    type(visual).__name__,
+                )
             collected_texts: List[str] = []
 
             for binding in bindings:
-                texts = binding.get_text_elements()
+                texts = self._iter_binding_texts(binding)
                 for text_item in texts:
-                    content = (text_item.text or "").strip()
+                    content = (getattr(text_item, "text", "") or "").strip()
                     if not content:
                         continue
                     collected_texts.append(content)
@@ -1024,8 +1079,8 @@ class NotificationCollector:
                 app = None
 
             return NotificationRecord(timestamp=timestamp, title=title, body=body, app=app)
-        except Exception:
-            LOGGER.exception("Unable to map notification")
+        except Exception as error:
+            LOGGER.warning("Unable to map notification: %s", error)
             return None
 
     def read(self) -> Dict[str, object]:
