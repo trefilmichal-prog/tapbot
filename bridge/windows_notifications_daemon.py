@@ -323,6 +323,31 @@ class NotificationCollector:
 
         return None, attempted_symbols
 
+    def _build_notification_changed_handler(self, TypedEventHandler):
+        """Build notification change delegate across projection variants."""
+        try:
+            handler = TypedEventHandler(self._on_notification_changed)
+            LOGGER.info(
+                "Constructed notification changed handler via TypedEventHandler(callback)."
+            )
+            return handler
+        except Exception:
+            LOGGER.debug(
+                "TypedEventHandler(callback) construction failed; trying generic-indexed form.",
+                exc_info=True,
+            )
+
+        try:
+            handler = TypedEventHandler[object, object](self._on_notification_changed)
+            LOGGER.info(
+                "Constructed notification changed handler via TypedEventHandler[object, object](callback)."
+            )
+            return handler
+        except Exception as generic_error:
+            raise RuntimeError(
+                "Unable to construct notification changed handler using both delegate forms"
+            ) from generic_error
+
     async def start(self) -> None:
         if self._started:
             return
@@ -376,10 +401,31 @@ class NotificationCollector:
             self._listener = listener
             self._available = True
 
-            self._notification_changed_handler = TypedEventHandler[object, object](
-                self._on_notification_changed
-            )
-            self._listener.add_notification_changed(self._notification_changed_handler)
+            try:
+                self._notification_changed_handler = (
+                    self._build_notification_changed_handler(TypedEventHandler)
+                )
+            except Exception as error:
+                self._last_error = f"Failed to construct notification changed delegate: {error}"
+                LOGGER.exception(
+                    "Notification changed delegate construction failed; listener not registered."
+                )
+                return
+
+            try:
+                self._listener.add_notification_changed(
+                    self._notification_changed_handler
+                )
+            except Exception as error:
+                self._last_error = (
+                    f"Failed to register notification changed listener: {error}"
+                )
+                LOGGER.exception(
+                    "Notification changed listener registration failed after delegate construction."
+                )
+                self._notification_changed_handler = None
+                return
+
             LOGGER.info(
                 "Notification changed handler registered and active (strong reference retained)."
             )
