@@ -56,6 +56,7 @@ class NotificationCollector:
         self._lock = threading.Lock()
         self._listener = None
         self._notification_changed_handler = None
+        self._notification_changed_handler_source = None
         self._notification_kind_toast = None
         self._notification_kind_source = None
         self._started = False
@@ -532,6 +533,7 @@ class NotificationCollector:
         if inspect.isclass(typed_event_handler_class):
             try:
                 handler = typed_event_handler_class(callback)
+                self._notification_changed_handler_source = "runtime-delegate"
                 LOGGER.info(
                     "Constructed notification changed handler via delegate class branch."
                 )
@@ -617,6 +619,7 @@ class NotificationCollector:
         if runtime_delegate_class is not None:
             try:
                 handler = runtime_delegate_class(callback)
+                self._notification_changed_handler_source = "runtime-delegate"
                 LOGGER.info(
                     "Constructed notification changed handler via generic-indexed branch runtime delegate class."
                 )
@@ -636,6 +639,7 @@ class NotificationCollector:
         try:
             if not callable(callback):
                 raise TypeError("collector callback is not callable")
+            self._notification_changed_handler_source = "direct-callable-fallback"
             LOGGER.info(
                 "Constructed notification changed handler via direct callable branch."
             )
@@ -750,42 +754,43 @@ class NotificationCollector:
             return
 
         startup_succeeded = False
+        self._notification_changed_handler_source = None
         try:
-            from winrt.windows.ui.notifications.management import UserNotificationListener
-        except Exception as error:  # pragma: no cover - runtime dependency
-            self._available = False
-            self._last_error = f"WINRT imports failed: {error}"
-            LOGGER.exception("Unable to import WINRT APIs")
-            return
+            try:
+                from winrt.windows.ui.notifications.management import UserNotificationListener
+            except Exception as error:  # pragma: no cover - runtime dependency
+                self._available = False
+                self._last_error = f"WINRT imports failed: {error}"
+                LOGGER.exception("Unable to import WINRT APIs")
+                return
 
-        (
-            typed_event_handler_class,
-            typed_event_raw_candidate,
-            typed_event_handler_metadata,
-            typed_event_attempts,
-        ) = (
-            self._resolve_typed_event_handler_class()
-        )
-        if typed_event_handler_class is None:
-            LOGGER.warning(
-                "TypedEventHandler runtime delegate class not resolved; fallback branches will be used. "
-                "Raw candidate metadata: %s. Attempts: %s",
+            (
+                typed_event_handler_class,
+                typed_event_raw_candidate,
                 typed_event_handler_metadata,
-                self._format_attempt_summary(typed_event_attempts),
+                typed_event_attempts,
+            ) = (
+                self._resolve_typed_event_handler_class()
             )
+            if typed_event_handler_class is None:
+                LOGGER.info(
+                    "TypedEventHandler runtime delegate class not resolved; fallback branches will be used. "
+                    "Raw candidate metadata: %s. Attempts: %s",
+                    typed_event_handler_metadata,
+                    self._format_attempt_summary(typed_event_attempts),
+                )
 
-        if typed_event_handler_class is not None:
-            LOGGER.info(
-                "Using WINRT TypedEventHandler runtime delegate: %s.%s",
-                typed_event_handler_class.__module__,
-                getattr(
-                    typed_event_handler_class,
-                    "__qualname__",
-                    typed_event_handler_class.__name__,
-                ),
-            )
+            if typed_event_handler_class is not None:
+                LOGGER.info(
+                    "Using WINRT TypedEventHandler runtime delegate: %s.%s",
+                    typed_event_handler_class.__module__,
+                    getattr(
+                        typed_event_handler_class,
+                        "__qualname__",
+                        typed_event_handler_class.__name__,
+                    ),
+                )
 
-        try:
             listener = self._resolve_listener(UserNotificationListener)
             if listener is None:
                 return
@@ -796,7 +801,7 @@ class NotificationCollector:
             if notification_kinds_enum is None:
                 self._notification_kind_toast = 1
                 self._notification_kind_source = "numeric-fallback"
-                LOGGER.warning(
+                LOGGER.info(
                     "Notification kind enum resolution failed; numeric fallback used for toast kind bit (1). "
                     "Tried symbols in winrt.windows.ui.notifications.management: %s",
                     self._format_attempt_summary(attempted_symbols),
@@ -886,6 +891,14 @@ class NotificationCollector:
                 self._push_subscription_active = False
                 self._notification_changed_handler = None
                 self._listener = None
+            LOGGER.info(
+                "Notification collector startup summary: available=%s push_subscription_active=%s "
+                "notification_kind_source=%s notification_changed_handler_source=%s",
+                self._available,
+                self._push_subscription_active,
+                self._notification_kind_source or "unknown",
+                self._notification_changed_handler_source or "unknown",
+            )
 
     async def stop(self) -> None:
         if not self._started:
