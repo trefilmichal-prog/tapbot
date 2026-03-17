@@ -507,6 +507,24 @@ function collectAcceptedClanNicknames(guildId) {
   return nicknames;
 }
 
+function extractNicknameBeforeHatched(text) {
+  if (typeof text !== 'string') {
+    return null;
+  }
+
+  const flattened = text.replace(/\s+/g, ' ').trim();
+  if (!flattened) {
+    return null;
+  }
+
+  const match = flattened.match(/:flag_[a-z]{2}:\s+(.+?)\s+hatched\b/i);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return normalizeClanNicknameForMatch(match[1]);
+}
+
 function filterNotificationsByGuildClanNicknames(guildId, notifications) {
   const acceptedClanNicknames = collectAcceptedClanNicknames(guildId);
   if (!acceptedClanNicknames.size) {
@@ -514,21 +532,12 @@ function filterNotificationsByGuildClanNicknames(guildId, notifications) {
   }
 
   return notifications.filter((notification) => {
-    const searchableText = [notification?.title, notification?.body]
-      .filter((part) => typeof part === 'string' && part.trim())
-      .join('\n')
-      .toLowerCase();
-
-    if (!searchableText) {
+    const matchedNickname = extractNicknameBeforeHatched(notification?.body);
+    if (!matchedNickname) {
       return false;
     }
 
-    for (const nickname of acceptedClanNicknames) {
-      if (searchableText.includes(nickname)) {
-        return true;
-      }
-    }
-    return false;
+    return acceptedClanNicknames.has(matchedNickname);
   });
 }
 
