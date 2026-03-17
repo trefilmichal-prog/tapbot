@@ -86,12 +86,14 @@ export class WinRtDaemonClient {
       const response = await this.sendRequest({ type: 'subscribe_notifications' });
       return {
         ok: Boolean(response?.ok),
-        message: response?.message ?? null
+        message: response?.message ?? null,
+        pushActive: typeof response?.pushActive === 'boolean' ? response.pushActive : null
       };
     } catch (error) {
       return {
         ok: false,
-        message: error.message
+        message: error.message,
+        pushActive: false
       };
     }
   }
