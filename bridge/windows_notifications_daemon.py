@@ -1169,6 +1169,7 @@ class TcpBridgeServer:
                     return {
                         "id": request_id,
                         "ok": True,
+                        "pushActive": False,
                         "message": (
                             "Subscribed in fallback mode without push updates; "
                             "poll using read_notifications."
@@ -1177,6 +1178,7 @@ class TcpBridgeServer:
                 return {
                     "id": request_id,
                     "ok": True,
+                    "pushActive": True,
                     "message": "Subscribed to notifications push events.",
                 }
             return {

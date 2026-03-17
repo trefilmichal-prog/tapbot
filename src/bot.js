@@ -1017,12 +1017,13 @@ async function ensureNotificationForwardSubscribed(readyClient) {
 
   notificationForwardSubscribeInFlight = (async () => {
     const subscribeResult = await startWinRtNotificationPush();
+    const hasExplicitPushState = typeof subscribeResult.pushActive === 'boolean';
     const reportedFallbackMode = typeof subscribeResult.message === 'string'
       && subscribeResult.message.toLowerCase().includes('fallback mode without push updates');
     const pushActive = subscribeResult.pushActive === true;
-    const fallbackSubscription = subscribeResult.ok && !pushActive;
+    const fallbackSubscription = subscribeResult.ok && (hasExplicitPushState ? !pushActive : reportedFallbackMode);
 
-    if (!subscribeResult.ok || fallbackSubscription || reportedFallbackMode) {
+    if (!subscribeResult.ok || fallbackSubscription) {
       notificationForwardBridgeSubscribed = false;
       await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
         mode: 'poll',

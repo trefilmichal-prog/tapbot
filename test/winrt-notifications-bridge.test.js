@@ -80,3 +80,24 @@ test('ping helper keeps daemon request flow healthy even without notifications e
   assert.equal(pingCount, 6, 'periodic ping/pong should stay successful over long idle periods');
   assert.equal(client.connected, false, 'test performs pure request-level ping checks without notification event dependency');
 });
+
+
+test('startNotificationPush exposes pushActive so caller can enable polling fallback when push is unavailable', async () => {
+  const client = new WinRtDaemonClient();
+
+  client.sendRequest = async (payload) => {
+    assert.equal(payload?.type, 'subscribe_notifications');
+    return {
+      ok: true,
+      pushActive: false,
+      message: 'Subscribed in fallback mode without push updates; poll using read_notifications.'
+    };
+  };
+
+  const result = await client.startNotificationPush();
+
+  assert.equal(result.ok, true);
+  assert.equal(result.pushActive, false);
+  assert.match(result.message, /fallback mode/i);
+  assert.equal(result.ok && result.pushActive !== true, true, 'fallback subscribe should allow caller to keep polling fallback active');
+});

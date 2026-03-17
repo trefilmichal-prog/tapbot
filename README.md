@@ -122,7 +122,9 @@ Supported request frames (client -> daemon):
 
 - `{ "id": "...", "type": "ping" }` -> `{ "id": "...", "ok": true, "type": "pong" }`
 - `{ "id": "...", "type": "read_notifications" }` -> `{ "id": "...", "ok", "errorCode", "message", "notifications": [...] }`
-- `{ "id": "...", "type": "subscribe_notifications" }` -> `{ "id": "...", "ok": true, "message": "Subscribed ..." }`
+- `{ "id": "...", "type": "subscribe_notifications" }` -> `{ "id": "...", "ok": true, "pushActive": true|false, "message": "Subscribed ..." }`
+
+`ok: true` only confirms the subscribe request itself succeeded. Use `pushActive` to determine whether live push is active (`true`) or whether the daemon accepted the subscription in polling fallback mode (`false`).
 
 Push/event frames (daemon -> subscribed clients, no `id`):
 
