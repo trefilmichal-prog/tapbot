@@ -457,11 +457,16 @@ class NotificationCollector:
                 LOGGER.info("Notification kind numeric fallback used for toast filtering.")
 
             access = await listener.request_access_async()
-            status_name = getattr(access, "name", str(access))
-            if status_name != "ALLOWED":
+            raw_status_name = getattr(access, "name", str(access))
+            normalized_status_name = str(raw_status_name).strip().upper()
+            accepted_statuses = {"ALLOWED"}
+            if normalized_status_name not in accepted_statuses:
                 self._available = True
                 self._access_denied = True
-                self._last_error = f"Notification access status is {status_name}."
+                self._last_error = (
+                    "Notification access denied "
+                    f"(raw status: {raw_status_name!r}, normalized status: {normalized_status_name!r})."
+                )
                 LOGGER.warning(self._last_error)
                 return
 
