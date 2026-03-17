@@ -91,6 +91,24 @@ class _CollectorWithPushRegistrationFailure(NotificationCollector):
         return None
 
 
+class _CollectorWithFallbackPollCounter(_CollectorWithPushRegistrationFailure):
+    def __init__(self, loop):
+        super().__init__(loop)
+        self._poll_interval_seconds = 0.01
+
+
+class _CollectorWithSlowRefreshAndFallback(_CollectorWithPushRegistrationFailure):
+    def __init__(self, loop):
+        super().__init__(loop)
+        self._poll_interval_seconds = 0.01
+        self.active_refresh_calls = 0
+
+    async def refresh_snapshot(self):
+        self.refresh_calls += 1
+        self.active_refresh_calls += 1
+        await asyncio.sleep(0.1)
+
+
 class _CollectorWithActivePush(NotificationCollector):
     def __init__(self, loop):
         super().__init__(loop)
@@ -322,6 +340,31 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(response["notifications"][0]["title"], "cached")
         self.assertIn("using cached snapshot", "\n".join(logs.output))
+
+    async def test_fallback_mode_polls_snapshot_periodically_without_reads(self):
+        collector = _CollectorWithFallbackPollCounter(asyncio.get_running_loop())
+
+        await collector.start()
+        self.assertEqual(collector.refresh_calls, 1)
+        self.assertIsNotNone(collector._poll_task)
+
+        await asyncio.sleep(0.06)
+
+        self.assertGreaterEqual(collector.refresh_calls, 2)
+        await collector.stop()
+
+    async def test_stop_cancels_fallback_poll_task(self):
+        collector = _CollectorWithSlowRefreshAndFallback(asyncio.get_running_loop())
+
+        await collector.start()
+        poll_task = collector._poll_task
+        self.assertIsNotNone(poll_task)
+
+        await asyncio.sleep(0.03)
+        await collector.stop()
+
+        self.assertIsNone(collector._poll_task)
+        self.assertTrue(poll_task.cancelled() or poll_task.done())
 
     async def test_map_notification_supports_visual_shape_a(self):
         collector = NotificationCollector(asyncio.get_running_loop())
