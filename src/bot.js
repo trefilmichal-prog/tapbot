@@ -490,7 +490,12 @@ function buildNotificationSignature(item) {
   ].join('|');
 }
 
-const NOTIFICATION_FORWARD_POLL_INTERVAL_MS = 2000;
+const DEFAULT_NOTIFICATION_FORWARD_POLL_INTERVAL_MS = 2000;
+const MIN_NOTIFICATION_FORWARD_POLL_INTERVAL_MS = 500;
+const MAX_NOTIFICATION_FORWARD_POLL_INTERVAL_MS = 60 * 1000;
+const DEFAULT_NOTIFICATION_FORWARD_FAST_START_DURATION_MS = 30 * 1000;
+const MIN_NOTIFICATION_FORWARD_FAST_START_DURATION_MS = 0;
+const MAX_NOTIFICATION_FORWARD_FAST_START_DURATION_MS = 10 * 60 * 1000;
 const NOTIFICATION_SIGNATURE_HISTORY_LIMIT = 500;
 const NOTIFICATION_FORWARD_ERROR_LOG_INTERVAL_MS = 60 * 1000;
 const NOTIFICATION_FORWARD_PUSH_WATCHDOG_INTERVAL_MS = 45 * 1000;
@@ -498,6 +503,9 @@ const NOTIFICATION_FORWARD_BRIDGE_PING_INTERVAL_MS = 45 * 1000;
 const NOTIFICATION_FORWARD_PUSH_TIMEOUT_MS = 3 * 60 * 1000;
 const NOTIFICATION_FORWARD_BRIDGE_SUBSCRIBE_RETRY_DEBOUNCE_MS = 5000;
 let notificationForwardPollTimer = null;
+let notificationForwardPollIntervalMsActive = null;
+let notificationForwardFastStartTimer = null;
+let notificationForwardFastStartActive = false;
 let notificationForwardPushWatchdogTimer = null;
 let notificationForwardBridgePingTimer = null;
 let notificationForwardPollingFallbackActive = false;
@@ -510,6 +518,46 @@ let notificationForwardSubscribeInFlight = null;
 let notificationForwardSubscribeRetryTimer = null;
 let notificationForwardLastSubscribeAttemptAt = 0;
 const notificationForwardSeenByGuild = new Map();
+
+
+function clampNotificationIntervalMs(value, fallbackMs) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallbackMs;
+  }
+  const rounded = Math.floor(parsed);
+  return Math.max(MIN_NOTIFICATION_FORWARD_POLL_INTERVAL_MS, Math.min(MAX_NOTIFICATION_FORWARD_POLL_INTERVAL_MS, rounded));
+}
+
+function clampFastStartDurationMs(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_NOTIFICATION_FORWARD_FAST_START_DURATION_MS;
+  }
+  const rounded = Math.floor(parsed);
+  return Math.max(
+    MIN_NOTIFICATION_FORWARD_FAST_START_DURATION_MS,
+    Math.min(MAX_NOTIFICATION_FORWARD_FAST_START_DURATION_MS, rounded)
+  );
+}
+
+function getNotificationForwardPollingIntervals() {
+  const standardIntervalMs = clampNotificationIntervalMs(
+    cfg?.notificationForwardPollIntervalMs,
+    DEFAULT_NOTIFICATION_FORWARD_POLL_INTERVAL_MS
+  );
+  const fastStartConfiguredIntervalMs = clampNotificationIntervalMs(
+    cfg?.notificationForwardFastStartIntervalMs,
+    DEFAULT_NOTIFICATION_FORWARD_POLL_INTERVAL_MS
+  );
+  const fastStartIntervalMs = Math.min(fastStartConfiguredIntervalMs, standardIntervalMs);
+  const fastStartDurationMs = clampFastStartDurationMs(cfg?.notificationForwardFastStartDurationMs);
+  return {
+    standardIntervalMs,
+    fastStartIntervalMs,
+    fastStartDurationMs
+  };
+}
 
 function getNotificationStartupModeLabel(startupMode) {
   return startupMode === 'send_unseen'
@@ -1253,21 +1301,56 @@ async function runNotificationForwardTick(readyClient) {
   await dispatchForwardNotificationsToGuilds(readyClient, sortedNotifications);
 }
 
-async function beginNotificationForwardPollingFallback(readyClient) {
+function clearNotificationForwardFastStartTimer() {
+  if (notificationForwardFastStartTimer) {
+    clearTimeout(notificationForwardFastStartTimer);
+    notificationForwardFastStartTimer = null;
+  }
+}
+
+function startNotificationForwardPollingTimer(readyClient, intervalMs) {
   if (notificationForwardPollTimer) {
     clearInterval(notificationForwardPollTimer);
-    notificationForwardPollTimer = null;
   }
 
-  notificationForwardPollingFallbackActive = true;
-  await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
-    mode: 'poll'
-  });
+  notificationForwardPollIntervalMsActive = intervalMs;
   notificationForwardPollTimer = setInterval(() => {
     runNotificationForwardTick(readyClient).catch((error) => {
       console.warn('Notification forward poll failed:', error);
     });
-  }, NOTIFICATION_FORWARD_POLL_INTERVAL_MS);
+  }, intervalMs);
+}
+
+async function beginNotificationForwardPollingFallback(readyClient) {
+  const intervals = getNotificationForwardPollingIntervals();
+  clearNotificationForwardFastStartTimer();
+  notificationForwardPollingFallbackActive = true;
+
+  const shouldUseFastStart = intervals.fastStartDurationMs > 0
+    && intervals.fastStartIntervalMs < intervals.standardIntervalMs;
+  notificationForwardFastStartActive = shouldUseFastStart;
+
+  await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
+    mode: 'poll'
+  });
+
+  if (shouldUseFastStart) {
+    startNotificationForwardPollingTimer(readyClient, intervals.fastStartIntervalMs);
+    notificationForwardFastStartTimer = setTimeout(() => {
+      if (!notificationForwardPollingFallbackActive) {
+        notificationForwardFastStartActive = false;
+        notificationForwardFastStartTimer = null;
+        return;
+      }
+      notificationForwardFastStartActive = false;
+      notificationForwardFastStartTimer = null;
+      startNotificationForwardPollingTimer(readyClient, intervals.standardIntervalMs);
+    }, intervals.fastStartDurationMs);
+    return;
+  }
+
+  notificationForwardFastStartActive = false;
+  startNotificationForwardPollingTimer(readyClient, intervals.standardIntervalMs);
 }
 
 function stopNotificationForwardPollingFallback() {
@@ -1275,7 +1358,9 @@ function stopNotificationForwardPollingFallback() {
     clearInterval(notificationForwardPollTimer);
     notificationForwardPollTimer = null;
   }
-
+  clearNotificationForwardFastStartTimer();
+  notificationForwardPollIntervalMsActive = null;
+  notificationForwardFastStartActive = false;
   notificationForwardPollingFallbackActive = false;
 }
 
@@ -4968,6 +5053,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         statusParts.push(`Mode: ${config.mode === 'daemon_push' && pushActive ? 'daemon push' : 'polling fallback'}.`);
         statusParts.push(`Bridge health: ${getNotificationForwardBridgeHealthStatus()}.`);
         statusParts.push(`Startup mode: ${getNotificationStartupModeLabel(config.startupMode)}.`);
+        const intervals = getNotificationForwardPollingIntervals();
+        const activeInterval = notificationForwardPollingFallbackActive
+          ? notificationForwardPollIntervalMsActive ?? intervals.standardIntervalMs
+          : intervals.standardIntervalMs;
+        statusParts.push(`Fallback poll interval: ${activeInterval} ms.`);
+        statusParts.push(`Fast-start mode: ${notificationForwardPollingFallbackActive && notificationForwardFastStartActive ? 'active' : 'inactive'}.`);
         if (config.lastBridgeStatus?.updatedAt) {
           statusParts.push(`Bridge connected: ${config.lastBridgeStatus.connected ? 'yes' : 'no'}, subscribed: ${config.lastBridgeStatus.subscribed ? 'yes' : 'no'} (${config.lastBridgeStatus.updatedAt}).`);
         }

@@ -28,6 +28,9 @@ export function loadConfig() {
   const welcomeChannelIdRaw = (cfg && cfg.welcomeChannelId ? String(cfg.welcomeChannelId) : '').trim();
   const guildId = guildIdRaw === '' ? null : guildIdRaw;
   const welcomeChannelId = welcomeChannelIdRaw === '' ? null : welcomeChannelIdRaw;
+  const notificationForwardPollIntervalMs = Number(cfg?.notificationForwardPollIntervalMs);
+  const notificationForwardFastStartIntervalMs = Number(cfg?.notificationForwardFastStartIntervalMs);
+  const notificationForwardFastStartDurationMs = Number(cfg?.notificationForwardFastStartDurationMs);
 
   if (!token) {
     const err = new Error('config.json is missing token. Run: npm run setup');
@@ -40,5 +43,19 @@ export function loadConfig() {
     throw err;
   }
 
-  return { token, clientId, guildId, welcomeChannelId };
+  return {
+    token,
+    clientId,
+    guildId,
+    welcomeChannelId,
+    notificationForwardPollIntervalMs: Number.isFinite(notificationForwardPollIntervalMs)
+      ? notificationForwardPollIntervalMs
+      : null,
+    notificationForwardFastStartIntervalMs: Number.isFinite(notificationForwardFastStartIntervalMs)
+      ? notificationForwardFastStartIntervalMs
+      : null,
+    notificationForwardFastStartDurationMs: Number.isFinite(notificationForwardFastStartDurationMs)
+      ? notificationForwardFastStartDurationMs
+      : null
+  };
 }
