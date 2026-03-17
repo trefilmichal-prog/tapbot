@@ -215,6 +215,7 @@ function normalizeNotificationForwardConfig(config) {
     lastBridgeStatus: parsed.lastBridgeStatus && typeof parsed.lastBridgeStatus === 'object'
       ? {
           connected: Boolean(parsed.lastBridgeStatus.connected),
+          subscribed: Boolean(parsed.lastBridgeStatus.subscribed),
           updatedAt: typeof parsed.lastBridgeStatus.updatedAt === 'string' ? parsed.lastBridgeStatus.updatedAt : null,
           reason: typeof parsed.lastBridgeStatus.reason === 'string' ? parsed.lastBridgeStatus.reason : null
         }
