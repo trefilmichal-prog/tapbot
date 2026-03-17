@@ -651,7 +651,7 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'secret',
-        description: 'List clan player nicknames searched inside notification text'
+        description: 'List stored clan player nicknames from accepted clan tickets'
       }
     ]
   }

@@ -507,6 +507,31 @@ function collectAcceptedClanNicknames(guildId) {
   return nicknames;
 }
 
+function collectAcceptedClanNicknamesForDisplay(guildId) {
+  const state = getClanState(guildId);
+  const nicknameMap = new Map();
+
+  for (const entry of Object.values(state?.clan_ticket_decisions ?? {})) {
+    if (!entry || entry.status !== CLAN_TICKET_DECISION_ACCEPT) {
+      continue;
+    }
+
+    if (typeof entry?.answers?.robloxNick !== 'string') {
+      continue;
+    }
+
+    const trimmedNickname = entry.answers.robloxNick.trim();
+    const normalizedNickname = normalizeClanNicknameForMatch(trimmedNickname);
+    if (!normalizedNickname || nicknameMap.has(normalizedNickname)) {
+      continue;
+    }
+
+    nicknameMap.set(normalizedNickname, trimmedNickname);
+  }
+
+  return [...nicknameMap.values()].sort((left, right) => left.localeCompare(right, 'cs', { sensitivity: 'base' }));
+}
+
 function extractNicknameBeforeHatched(text) {
   if (typeof text !== 'string') {
     return null;
@@ -5157,7 +5182,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (subcommand === 'read' || subcommand === 'secret') {
+      if (subcommand === 'secret') {
+        const clanNicknames = collectAcceptedClanNicknamesForDisplay(interaction.guildId);
+        if (!clanNicknames.length) {
+          await interaction.reply({
+            components: buildTextComponents('No accepted clan player nicknames are stored for this server.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        const nicknameList = clanNicknames.map((nickname, index) => `${index + 1}. ${nickname}`).join('\n');
+        await interaction.reply({
+          components: buildTextComponents(`Stored clan player nicknames:\n${nicknameList}`),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      if (subcommand === 'read') {
         const result = await readWindowsToastNotifications();
 
         if (!result.ok) {
@@ -5190,33 +5233,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        if (subcommand === 'read') {
-          await interaction.reply({
-            components: buildTextComponents(buildNotificationReadResponse(filteredNotifications)),
-            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          });
-          return;
-        }
-
-        const foundNicknames = [...new Set(
-          filteredNotifications
-            .map((notification) => extractNicknameBeforeHatched(notification?.body))
-            .filter(Boolean)
-        )];
-
-        if (!foundNicknames.length) {
-          await interaction.reply({
-            components: buildTextComponents('No clan player nickname was found in Windows notifications.'),
-            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          });
-          return;
-        }
-
-        const nicknameList = foundNicknames.map((nickname, index) => `${index + 1}. ${nickname}`).join('\n');
         await interaction.reply({
-          components: buildTextComponents(`Searched player nicknames in notification text:\n${nicknameList}`),
+          components: buildTextComponents(buildNotificationReadResponse(filteredNotifications)),
           flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
+        return;
       }
       return;
     }
