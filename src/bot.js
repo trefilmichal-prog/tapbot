@@ -493,11 +493,17 @@ const NOTIFICATION_SIGNATURE_HISTORY_LIMIT = 500;
 const NOTIFICATION_FORWARD_ERROR_LOG_INTERVAL_MS = 60 * 1000;
 const NOTIFICATION_FORWARD_PUSH_WATCHDOG_INTERVAL_MS = 45 * 1000;
 const NOTIFICATION_FORWARD_PUSH_TIMEOUT_MS = 3 * 60 * 1000;
+const NOTIFICATION_FORWARD_BRIDGE_SUBSCRIBE_RETRY_DEBOUNCE_MS = 5000;
 let notificationForwardPollTimer = null;
 let notificationForwardPushWatchdogTimer = null;
 let notificationForwardPollingFallbackActive = false;
 let notificationForwardLastPushEventAt = 0;
 let notificationForwardPushTimedOut = false;
+let notificationForwardBridgeConnected = false;
+let notificationForwardBridgeSubscribed = false;
+let notificationForwardSubscribeInFlight = null;
+let notificationForwardSubscribeRetryTimer = null;
+let notificationForwardLastSubscribeAttemptAt = 0;
 const notificationForwardSeenByGuild = new Map();
 
 function getNotificationStartupModeLabel(startupMode) {
@@ -820,6 +826,99 @@ function markNotificationForwardPushActivity() {
   notificationForwardPushTimedOut = false;
 }
 
+function clearNotificationForwardSubscribeRetryTimer() {
+  if (!notificationForwardSubscribeRetryTimer) {
+    return;
+  }
+
+  clearTimeout(notificationForwardSubscribeRetryTimer);
+  notificationForwardSubscribeRetryTimer = null;
+}
+
+function isNotificationForwardPushFullyActive() {
+  return notificationForwardBridgeConnected && notificationForwardBridgeSubscribed;
+}
+
+function scheduleNotificationForwardSubscribe(readyClient) {
+  clearNotificationForwardSubscribeRetryTimer();
+
+  if (!notificationForwardBridgeConnected || notificationForwardBridgeSubscribed || notificationForwardSubscribeInFlight) {
+    return;
+  }
+
+  const elapsedMs = Date.now() - notificationForwardLastSubscribeAttemptAt;
+  if (elapsedMs >= NOTIFICATION_FORWARD_BRIDGE_SUBSCRIBE_RETRY_DEBOUNCE_MS) {
+    void ensureNotificationForwardSubscribed(readyClient);
+    return;
+  }
+
+  const delayMs = NOTIFICATION_FORWARD_BRIDGE_SUBSCRIBE_RETRY_DEBOUNCE_MS - elapsedMs;
+  notificationForwardSubscribeRetryTimer = setTimeout(() => {
+    notificationForwardSubscribeRetryTimer = null;
+    if (!notificationForwardBridgeConnected || notificationForwardBridgeSubscribed) {
+      return;
+    }
+    void ensureNotificationForwardSubscribed(readyClient);
+  }, delayMs);
+}
+
+async function ensureNotificationForwardSubscribed(readyClient) {
+  if (!notificationForwardBridgeConnected || notificationForwardBridgeSubscribed) {
+    return;
+  }
+
+  if (notificationForwardSubscribeInFlight) {
+    await notificationForwardSubscribeInFlight;
+    return;
+  }
+
+  clearNotificationForwardSubscribeRetryTimer();
+  notificationForwardLastSubscribeAttemptAt = Date.now();
+
+  notificationForwardSubscribeInFlight = (async () => {
+    const subscribeResult = await startWinRtNotificationPush();
+    if (!subscribeResult.ok) {
+      notificationForwardBridgeSubscribed = false;
+      await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
+        mode: 'poll',
+        lastBridgeStatus: {
+          connected: notificationForwardBridgeConnected,
+          subscribed: false,
+          updatedAt: new Date().toISOString(),
+          reason: subscribeResult.message ?? 'Subscribe request failed.'
+        }
+      });
+      if (!notificationForwardPollingFallbackActive) {
+        await beginNotificationForwardPollingFallback(readyClient);
+      }
+      console.warn('Failed to subscribe to WINRT daemon push notifications; using polling fallback.', {
+        message: subscribeResult.message ?? null
+      });
+      scheduleNotificationForwardSubscribe(readyClient);
+      return;
+    }
+
+    notificationForwardBridgeSubscribed = true;
+    markNotificationForwardPushActivity();
+    await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
+      mode: 'daemon_push',
+      lastBridgeStatus: {
+        connected: notificationForwardBridgeConnected,
+        subscribed: true,
+        updatedAt: new Date().toISOString(),
+        reason: null
+      }
+    });
+    stopNotificationForwardPollingFallback();
+  })();
+
+  try {
+    await notificationForwardSubscribeInFlight;
+  } finally {
+    notificationForwardSubscribeInFlight = null;
+  }
+}
+
 async function startNotificationForwardPushWatchdog(readyClient) {
   if (notificationForwardPushWatchdogTimer) {
     clearInterval(notificationForwardPushWatchdogTimer);
@@ -846,9 +945,13 @@ async function startNotificationForwardPushWatchdog(readyClient) {
       `Notification push heartbeat timeout (${Math.floor(elapsedMs / 1000)}s without bridge event). Switching to polling fallback.`
     );
 
+    notificationForwardBridgeSubscribed = false;
+
     void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
+      mode: 'poll',
       lastBridgeStatus: {
-        connected: false,
+        connected: notificationForwardBridgeConnected,
+        subscribed: false,
         updatedAt: new Date().toISOString(),
         reason: 'push timeout'
       }
@@ -857,6 +960,7 @@ async function startNotificationForwardPushWatchdog(readyClient) {
     if (!notificationForwardPollingFallbackActive) {
       void beginNotificationForwardPollingFallback(readyClient);
     }
+    scheduleNotificationForwardSubscribe(readyClient);
   }, NOTIFICATION_FORWARD_PUSH_WATCHDOG_INTERVAL_MS);
 }
 
@@ -1040,32 +1144,48 @@ async function startNotificationForwardPolling(readyClient) {
   await startNotificationForwardPushWatchdog(readyClient);
 
   onWinRtBridgeConnectionState((state) => {
-    void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
-      lastBridgeStatus: {
-        connected: Boolean(state?.connected),
-        updatedAt: new Date().toISOString(),
-        reason: state?.error?.message ?? null
-      }
-    });
+    notificationForwardBridgeConnected = Boolean(state?.connected);
 
-    if (state?.connected) {
-      markNotificationForwardPushActivity();
+    if (!notificationForwardBridgeConnected) {
+      notificationForwardBridgeSubscribed = false;
+      clearNotificationForwardSubscribeRetryTimer();
       void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
-        mode: 'daemon_push'
+        mode: 'poll',
+        lastBridgeStatus: {
+          connected: false,
+          subscribed: false,
+          updatedAt: new Date().toISOString(),
+          reason: state?.error?.message ?? null
+        }
       });
-      stopNotificationForwardPollingFallback();
+      if (!notificationForwardPollingFallbackActive) {
+        void beginNotificationForwardPollingFallback(readyClient);
+      }
       return;
     }
 
-    if (!notificationForwardPollingFallbackActive) {
-      void beginNotificationForwardPollingFallback(readyClient);
-    }
+    void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
+      lastBridgeStatus: {
+        connected: true,
+        subscribed: notificationForwardBridgeSubscribed,
+        updatedAt: new Date().toISOString(),
+        reason: null
+      }
+    });
+    scheduleNotificationForwardSubscribe(readyClient);
   });
 
   onWinRtBridgeEvent((payload) => {
     markNotificationForwardPushActivity();
+    notificationForwardBridgeSubscribed = true;
     void persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
-      mode: 'daemon_push'
+      mode: 'daemon_push',
+      lastBridgeStatus: {
+        connected: notificationForwardBridgeConnected,
+        subscribed: true,
+        updatedAt: new Date().toISOString(),
+        reason: null
+      }
     });
 
     const eventNotifications = buildSortedUniqueForwardNotifications(extractNotificationsFromBridgeEvent(payload));
@@ -1080,18 +1200,27 @@ async function startNotificationForwardPolling(readyClient) {
 
   await initializeNotificationForwardCache(readyClient);
 
-  const subscribeResult = await startWinRtNotificationPush();
-  if (!subscribeResult.ok) {
+  const status = await checkWinRtBridgeAvailability();
+  notificationForwardBridgeConnected = Boolean(status.available);
+  if (!notificationForwardBridgeConnected) {
+    await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
+      mode: 'poll',
+      lastBridgeStatus: {
+        connected: false,
+        subscribed: false,
+        updatedAt: new Date().toISOString(),
+        reason: status.reason ?? null
+      }
+    });
     await beginNotificationForwardPollingFallback(readyClient);
-    console.warn(`Failed to start daemon notification push mode. Falling back to polling. ${subscribeResult.message ?? ''}`.trim());
     return;
   }
 
-  await persistNotificationForwardRuntimeStateForAllGuilds(readyClient, {
-    mode: 'daemon_push'
-  });
-  markNotificationForwardPushActivity();
-  stopNotificationForwardPollingFallback();
+  await ensureNotificationForwardSubscribed(readyClient);
+
+  if (!isNotificationForwardPushFullyActive() && !notificationForwardPollingFallbackActive) {
+    await beginNotificationForwardPollingFallback(readyClient);
+  }
 }
 
 
@@ -4654,10 +4783,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         } else {
           statusParts.push('Forwarding is currently disabled.');
         }
-        statusParts.push(`Mode: ${config.mode === 'daemon_push' ? 'daemon push' : 'polling fallback'}.`);
+        const pushActive = Boolean(config.lastBridgeStatus?.connected) && Boolean(config.lastBridgeStatus?.subscribed);
+        statusParts.push(`Mode: ${config.mode === 'daemon_push' && pushActive ? 'daemon push' : 'polling fallback'}.`);
         statusParts.push(`Startup mode: ${getNotificationStartupModeLabel(config.startupMode)}.`);
         if (config.lastBridgeStatus?.updatedAt) {
-          statusParts.push(`Bridge connected: ${config.lastBridgeStatus.connected ? 'yes' : 'no'} (${config.lastBridgeStatus.updatedAt}).`);
+          statusParts.push(`Bridge connected: ${config.lastBridgeStatus.connected ? 'yes' : 'no'}, subscribed: ${config.lastBridgeStatus.subscribed ? 'yes' : 'no'} (${config.lastBridgeStatus.updatedAt}).`);
         }
         if (config.lastDeliveryError) {
           const deliveryError = config.lastDeliveryError;
