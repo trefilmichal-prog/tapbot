@@ -537,7 +537,7 @@ class NotificationCollector:
         if self._started:
             return
 
-        self._started = True
+        startup_succeeded = False
         try:
             from winrt.windows.foundation import TypedEventHandler
             from winrt.windows.ui.notifications.management import UserNotificationListener
@@ -616,6 +616,8 @@ class NotificationCollector:
                 self._notification_changed_handler = None
                 return
 
+            self._started = True
+            startup_succeeded = True
             LOGGER.info(
                 "Notification changed handler registered and active (strong reference retained)."
             )
@@ -625,6 +627,11 @@ class NotificationCollector:
             self._available = False
             self._last_error = str(error)
             LOGGER.exception("Failed to initialize notification collector")
+        finally:
+            if not startup_succeeded:
+                self._started = False
+                self._notification_changed_handler = None
+                self._listener = None
 
     async def stop(self) -> None:
         if not self._started:
