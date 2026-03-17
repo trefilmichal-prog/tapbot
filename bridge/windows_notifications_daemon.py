@@ -61,8 +61,11 @@ class NotificationCollector:
         self._started = False
         self._available = False
         self._push_subscription_active = False
+        self._poll_task: Optional[asyncio.Task] = None
+        self._poll_interval_seconds = 1.5
         self._access_denied = False
         self._last_error = None
+        self._last_broadcast_payload: Optional[List[Dict[str, Optional[str]]]] = None
         self._snapshot_callback: Optional[
             Callable[[List[Dict[str, Optional[str]]]], Optional[Awaitable[None]]]
         ] = None
@@ -859,6 +862,7 @@ class NotificationCollector:
                 self._started = True
                 startup_succeeded = True
                 await self.refresh_snapshot()
+                self._poll_task = asyncio.create_task(self._poll_loop())
                 LOGGER.info(
                     "Notification collector ready in fallback mode without push subscription."
                 )
@@ -887,6 +891,15 @@ class NotificationCollector:
         if not self._started:
             return
 
+        if self._poll_task is not None:
+            self._poll_task.cancel()
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                self._poll_task = None
+
         if self._listener and self._notification_changed_handler:
             try:
                 self._listener.remove_notification_changed(
@@ -900,6 +913,19 @@ class NotificationCollector:
         self._listener = None
         self._started = False
         self._push_subscription_active = False
+        self._last_broadcast_payload = None
+
+    async def _poll_loop(self) -> None:
+        try:
+            while self._started and not self._push_subscription_active:
+                await asyncio.sleep(self._poll_interval_seconds)
+                if not self._started:
+                    break
+                await self.refresh_snapshot()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.exception("Fallback notification polling loop crashed")
 
     def is_push_subscription_active(self) -> bool:
         return self._push_subscription_active
@@ -986,6 +1012,9 @@ class NotificationCollector:
 
             if self._snapshot_callback:
                 payload = [item.to_json() for item in self._cache]
+                if payload == self._last_broadcast_payload:
+                    return
+                self._last_broadcast_payload = payload
                 callback_result = self._snapshot_callback(payload)
                 if asyncio.iscoroutine(callback_result):
                     await callback_result
