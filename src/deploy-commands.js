@@ -647,6 +647,11 @@ export const defaultCommands = [
         type: ApplicationCommandOptionType.Subcommand,
         name: 'read',
         description: 'Read recent Windows toast notifications immediately'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'secret',
+        description: 'List clan player nicknames searched inside notification text'
       }
     ]
   }
