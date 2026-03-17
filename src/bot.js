@@ -168,6 +168,7 @@ client.on(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
   (async () => {
     try {
+      await pruneMissingClanTicketsOnStartup(readyClient);
       await logWinRtBridgeStatus();
       await refreshClanPanelsOnStartup(readyClient);
       await refreshPingRolePanelsOnStartup(readyClient);
@@ -185,6 +186,66 @@ client.on(Events.ClientReady, (readyClient) => {
     }
   })();
 });
+
+client.on(Events.ChannelDelete, async (channel) => {
+  if (!channel?.guildId || !channel?.id) {
+    return;
+  }
+
+  const state = getClanState(channel.guildId);
+  if (!state?.clan_ticket_decisions?.[channel.id]) {
+    return;
+  }
+
+  await updateClanState(channel.guildId, (nextState) => {
+    ensureGuildClanState(nextState);
+    if (nextState.clan_ticket_decisions && Object.prototype.hasOwnProperty.call(nextState.clan_ticket_decisions, channel.id)) {
+      delete nextState.clan_ticket_decisions[channel.id];
+    }
+  });
+  console.log(`Removed stale clan ticket state for deleted channel ${channel.id} in guild ${channel.guildId}.`);
+});
+
+async function pruneMissingClanTicketsOnStartup(readyClient) {
+  for (const [guildId, guild] of readyClient.guilds.cache) {
+    const state = getClanState(guildId);
+    const entries = Object.entries(state?.clan_ticket_decisions ?? {});
+    if (!entries.length) {
+      continue;
+    }
+
+    const staleChannelIds = [];
+    for (const [channelId] of entries) {
+      try {
+        const channel = await guild.channels.fetch(channelId);
+        if (!channel) {
+          staleChannelIds.push(channelId);
+        }
+      } catch (error) {
+        if (Number(error?.code) === 10003) {
+          staleChannelIds.push(channelId);
+          continue;
+        }
+
+        console.warn(`Failed to verify clan ticket channel ${channelId} in guild ${guildId}:`, error);
+      }
+    }
+
+    if (!staleChannelIds.length) {
+      continue;
+    }
+
+    await updateClanState(guildId, (nextState) => {
+      ensureGuildClanState(nextState);
+      for (const channelId of staleChannelIds) {
+        if (nextState.clan_ticket_decisions && Object.prototype.hasOwnProperty.call(nextState.clan_ticket_decisions, channelId)) {
+          delete nextState.clan_ticket_decisions[channelId];
+        }
+      }
+    });
+    console.log(`Pruned ${staleChannelIds.length} stale clan ticket entr${staleChannelIds.length === 1 ? 'y' : 'ies'} in guild ${guildId}.`);
+  }
+}
 
 async function logWinRtBridgeStatus() {
   if (process.platform !== 'win32') {
