@@ -234,6 +234,14 @@ class NotificationCollector:
             "models.user_notification_kinds.NotificationKind",
         )
 
+        def candidate_name_and_type(candidate):
+            candidate_name = getattr(candidate, "__qualname__", None) or getattr(
+                candidate, "__name__", None
+            )
+            if not candidate_name:
+                candidate_name = repr(candidate)
+            return candidate_name, type(candidate).__name__
+
         def has_toast_member(enum_candidate) -> bool:
             for member_name in ("TOAST", "Toast"):
                 try:
@@ -243,18 +251,64 @@ class NotificationCollector:
                     continue
             return False
 
-        def as_enum_holder(candidate):
-            if isinstance(candidate, enum.EnumMeta):
-                return candidate
+        def matches_notification_kind_shape(enum_candidate) -> bool:
+            enum_name = (
+                getattr(enum_candidate, "__qualname__", None)
+                or getattr(enum_candidate, "__name__", "")
+            ).lower()
+            if "notification" not in enum_name or "kind" not in enum_name:
+                return False
 
-            if has_toast_member(candidate):
-                return candidate
+            try:
+                member_names = {member.name.upper() for member in enum_candidate}
+            except Exception:
+                member_names = {
+                    name.upper()
+                    for name in dir(enum_candidate)
+                    if not name.startswith("_")
+                }
+
+            expected_markers = {"TOAST", "TILE", "BADGE", "RAW"}
+            return bool(member_names & expected_markers)
+
+        def is_valid_notification_kinds_enum(enum_candidate) -> bool:
+            return has_toast_member(enum_candidate) or matches_notification_kind_shape(
+                enum_candidate
+            )
+
+        def as_enum_holder(candidate):
+            candidate_name, candidate_type = candidate_name_and_type(candidate)
+
+            if isinstance(candidate, enum.EnumMeta):
+                if is_valid_notification_kinds_enum(candidate):
+                    return candidate, None
+                return (
+                    None,
+                    f"rejected enum {candidate_name} ({candidate_type}); missing toast-kind signal",
+                )
 
             if hasattr(candidate, "__dict__"):
-                for value in vars(candidate).values():
-                    if isinstance(value, enum.EnumMeta) and has_toast_member(value):
-                        return value
-            return None
+                nested_rejections = []
+                for nested_name, value in vars(candidate).items():
+                    if not isinstance(value, enum.EnumMeta):
+                        continue
+                    if is_valid_notification_kinds_enum(value):
+                        return value, None
+                    nested_enum_name, nested_enum_type = candidate_name_and_type(value)
+                    nested_rejections.append(
+                        f"nested enum {nested_enum_name} ({nested_enum_type}) missing toast-kind signal"
+                    )
+                if nested_rejections:
+                    return (
+                        None,
+                        f"rejected {candidate_name} ({candidate_type}); "
+                        + "; ".join(nested_rejections),
+                    )
+
+            return (
+                None,
+                f"rejected {candidate_name} ({candidate_type}); not an enum holder for notification kinds",
+            )
 
         try:
             management_module = importlib.import_module(module_name)
@@ -268,10 +322,10 @@ class NotificationCollector:
             try:
                 for attribute in candidate_path.split("."):
                     current_value = getattr(current_value, attribute)
-                resolved = as_enum_holder(current_value)
+                resolved, rejection_reason = as_enum_holder(current_value)
                 if resolved is None:
                     attempted_symbols.append(
-                        f"{candidate_path} found non-enum/non-toast object ({type(current_value).__name__})"
+                        f"{candidate_path} rejected: {rejection_reason}"
                     )
                     continue
 
@@ -310,8 +364,21 @@ class NotificationCollector:
                 if attribute_name.startswith("_"):
                     continue
 
-                resolved = as_enum_holder(attribute_value)
+                resolved, rejection_reason = as_enum_holder(attribute_value)
                 if resolved is None:
+                    candidate_name, candidate_type = candidate_name_and_type(
+                        attribute_value
+                    )
+                    attempted_symbols.append(
+                        "fallback:%s.%s rejected %s (%s): %s"
+                        % (
+                            root_name,
+                            attribute_name,
+                            candidate_name,
+                            candidate_type,
+                            rejection_reason,
+                        )
+                    )
                     continue
 
                 LOGGER.info(
