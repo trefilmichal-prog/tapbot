@@ -5,7 +5,11 @@ import types
 import typing
 import unittest
 
-from bridge.windows_notifications_daemon import NotificationCollector, TcpBridgeServer
+from bridge.windows_notifications_daemon import (
+    NotificationCollector,
+    NotificationRecord,
+    TcpBridgeServer,
+)
 
 
 class _AllowedStatus:
@@ -91,6 +95,48 @@ class _CollectorWithActivePush(NotificationCollector):
     def __init__(self, loop):
         super().__init__(loop)
         self._push_subscription_active = True
+
+
+class _CollectorWithFallbackRefreshSequence(_CollectorWithPushRegistrationFailure):
+    async def refresh_snapshot(self):
+        self.refresh_calls += 1
+        with self._lock:
+            self._cache = [
+                NotificationRecord(
+                    timestamp=None,
+                    title=f"Title {self.refresh_calls}",
+                    body=f"Body {self.refresh_calls}",
+                    app="TestApp",
+                )
+            ]
+
+
+class _CollectorWithRefreshFailure:
+    def __init__(self):
+        self.refresh_calls = 0
+
+    def is_push_subscription_active(self):
+        return False
+
+    async def refresh_snapshot(self):
+        self.refresh_calls += 1
+        raise RuntimeError("refresh crash")
+
+    def read(self):
+        return {
+            "ok": True,
+            "errorCode": None,
+            "message": None,
+            "notifications": [
+                {
+                    "type": "notification",
+                    "timestamp": None,
+                    "title": "cached",
+                    "body": "cached-body",
+                    "app": "cached-app",
+                }
+            ],
+        }
 
 
 class _FakeTextElement:
@@ -213,7 +259,7 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["notifications"], [])
 
         bridge = TcpBridgeServer("127.0.0.1", 8765, collector)
-        response = bridge._handle_message(
+        response = await bridge._handle_message(
             json.dumps({"id": "1", "type": "subscribe_notifications"}).encode(
                 "utf-8"
             ),
@@ -228,7 +274,7 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
         collector = _CollectorWithActivePush(asyncio.get_running_loop())
         bridge = TcpBridgeServer("127.0.0.1", 8765, collector)
 
-        response = bridge._handle_message(
+        response = await bridge._handle_message(
             json.dumps({"id": "2", "type": "subscribe_notifications"}).encode("utf-8"),
             object(),
         )
@@ -237,6 +283,45 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response["ok"])
         self.assertTrue(response["pushActive"])
         self.assertIn("push events", response["message"])
+
+    async def test_read_notifications_refreshes_cache_in_fallback_mode(self):
+        collector = _CollectorWithFallbackRefreshSequence(asyncio.get_running_loop())
+
+        await collector.start()
+        self.assertEqual(collector.refresh_calls, 1)
+        self.assertFalse(collector.is_push_subscription_active())
+
+        bridge = TcpBridgeServer("127.0.0.1", 8765, collector)
+
+        response_first = await bridge._handle_message(
+            json.dumps({"id": "3", "type": "read_notifications"}).encode("utf-8"),
+            object(),
+        )
+        response_second = await bridge._handle_message(
+            json.dumps({"id": "4", "type": "read_notifications"}).encode("utf-8"),
+            object(),
+        )
+
+        self.assertEqual(collector.refresh_calls, 3)
+        self.assertEqual(response_first["notifications"][0]["title"], "Title 2")
+        self.assertEqual(response_second["notifications"][0]["title"], "Title 3")
+
+    async def test_read_notifications_refresh_failure_falls_back_to_cached_data(self):
+        collector = _CollectorWithRefreshFailure()
+        bridge = TcpBridgeServer("127.0.0.1", 8765, collector)
+
+        with self.assertLogs("windows_notifications_daemon", level="WARNING") as logs:
+            response = await bridge._handle_message(
+                json.dumps({"id": "5", "type": "read_notifications"}).encode(
+                    "utf-8"
+                ),
+                object(),
+            )
+
+        self.assertEqual(collector.refresh_calls, 1)
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["notifications"][0]["title"], "cached")
+        self.assertIn("using cached snapshot", "\n".join(logs.output))
 
     async def test_map_notification_supports_visual_shape_a(self):
         collector = NotificationCollector(asyncio.get_running_loop())
