@@ -23,6 +23,12 @@ import {
   filterNotificationsByClanNicknames,
   normalizeClanNicknameForMatch
 } from './clan-notification-matching.js';
+import {
+  buildForwardNotificationMessage,
+  buildNotificationSignature,
+  buildSortedUniqueForwardNotifications,
+  extractNotificationsFromBridgeEvent
+} from './notification-forwarding.js';
 import { loadConfig } from './config.js';
 import {
   getClanState,
@@ -555,19 +561,6 @@ function buildNotificationReadResponse(notifications) {
 }
 
 
-function buildForwardNotificationMessage({ notification, player }) {
-  return [
-    '📣 **Secret Hatcher**',
-    '',
-    player?.applicantId
-      ? `**Player:** <@${player.applicantId}> (${player.displayNickname})`
-      : `**Player:** ${player?.displayNickname ?? 'Unknown player'}`,
-    `**Title:** ${notification?.title ?? '(no title)'}`,
-    `**Time:** ${formatNotificationTimestamp(notification?.timestamp)}`,
-    `**Body:** ${notification?.body ?? '*(empty)*'}`
-  ].join('\n');
-}
-
 function collectAcceptedClanPlayers(guildId) {
   const state = getClanState(guildId);
   const players = collectAcceptedClanPlayersFromState(state, CLAN_TICKET_DECISION_ACCEPT);
@@ -610,15 +603,6 @@ function collectAcceptedClanNicknamesForDisplay(guildId) {
 function filterNotificationsByGuildClanNicknames(guildId, notifications) {
   const acceptedClanPlayers = collectAcceptedClanPlayers(guildId);
   return filterNotificationsByClanNicknames(notifications, acceptedClanPlayers);
-}
-
-function buildNotificationSignature(item) {
-  return [
-    item?.timestamp ?? '',
-    item?.app ?? '',
-    item?.title ?? '',
-    item?.body ?? ''
-  ].join('|');
 }
 
 const DEFAULT_NOTIFICATION_FORWARD_POLL_INTERVAL_MS = 2000;
@@ -838,71 +822,6 @@ async function sendNotificationDeliveryFailureAlert(guildId, guild, channelId, s
   } catch (error) {
     console.warn(`Failed to send notification forwarding delivery alert to guild ${guildId}:`, error);
   }
-}
-
-function normalizeNotificationForForward(rawItem) {
-  if (!rawItem || typeof rawItem !== 'object') {
-    return null;
-  }
-
-  const title = typeof rawItem.title === 'string' && rawItem.title.trim() ? rawItem.title.trim() : null;
-  const app = typeof rawItem.app === 'string' && rawItem.app.trim() ? rawItem.app.trim() : 'Unknown app';
-  const timestamp = typeof rawItem.timestamp === 'string' ? rawItem.timestamp : null;
-  const hasBody = typeof rawItem.body === 'string';
-  const body = hasBody
-    ? (rawItem.body.trim() ? rawItem.body.trim() : null)
-    : null;
-
-  return {
-    title,
-    app,
-    timestamp,
-    body
-  };
-}
-
-function extractNotificationsFromBridgeEvent(eventPayload) {
-  if (!eventPayload || typeof eventPayload !== 'object') {
-    return [];
-  }
-
-  const eventType = typeof eventPayload.type === 'string'
-    ? eventPayload.type
-    : (typeof eventPayload.event === 'string' ? eventPayload.event : '');
-
-  if (eventType === 'notification' && eventPayload.notification && typeof eventPayload.notification === 'object') {
-    return [eventPayload.notification];
-  }
-
-  if ((eventType === 'notifications' || eventType === 'notification_batch') && Array.isArray(eventPayload.notifications)) {
-    return eventPayload.notifications;
-  }
-
-  if (Array.isArray(eventPayload.notifications)) {
-    return eventPayload.notifications;
-  }
-
-  if (eventPayload.notification && typeof eventPayload.notification === 'object') {
-    return [eventPayload.notification];
-  }
-
-  return [];
-}
-
-function buildSortedUniqueForwardNotifications(rawItems) {
-  const uniqueBySignature = new Map();
-  for (const rawItem of rawItems) {
-    const normalizedItem = normalizeNotificationForForward(rawItem);
-    if (!normalizedItem) {
-      continue;
-    }
-
-    const signature = buildNotificationSignature(normalizedItem);
-    uniqueBySignature.set(signature, normalizedItem);
-  }
-
-  return [...uniqueBySignature.values()]
-    .sort((a, b) => (new Date(a.timestamp ?? 0).getTime() || 0) - (new Date(b.timestamp ?? 0).getTime() || 0));
 }
 
 function shouldLogNotificationForwardError(guildId, errorCode, message) {

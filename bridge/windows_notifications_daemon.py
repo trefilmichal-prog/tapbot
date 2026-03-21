@@ -1107,7 +1107,8 @@ class NotificationCollector:
                     collected_texts.append(content)
 
             title = collected_texts[0] if len(collected_texts) >= 1 else None
-            body = collected_texts[1] if len(collected_texts) >= 2 else None
+            body_lines = collected_texts[1:] if len(collected_texts) >= 2 else []
+            body = "\n".join(body_lines) if body_lines else None
 
             timestamp = None
             if item.creation_time:

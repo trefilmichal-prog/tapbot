@@ -369,24 +369,48 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_map_notification_supports_visual_shape_a(self):
         collector = NotificationCollector(asyncio.get_running_loop())
         item = _FakeItem(
-            _FakeVisualShapeA(_FakeBindingWithTextElements("Title A", "Body A"))
+            _FakeVisualShapeA(
+                _FakeBindingWithTextElements(
+                    "Secret Hatcher",
+                    "Egg: Dragon Egg",
+                    "Rarity: Legendary",
+                    "Serial: #123",
+                    "Stats: STR 99 / DEX 42"
+                )
+            )
         )
 
         mapped = collector._map_notification(item)
 
         self.assertIsNotNone(mapped)
-        self.assertEqual(mapped.title, "Title A")
-        self.assertEqual(mapped.body, "Body A")
+        self.assertEqual(mapped.title, "Secret Hatcher")
+        self.assertEqual(
+            mapped.body,
+            "Egg: Dragon Egg\nRarity: Legendary\nSerial: #123\nStats: STR 99 / DEX 42"
+        )
+        self.assertIn("Egg", mapped.body)
+        self.assertIn("Rarity", mapped.body)
+        self.assertIn("Serial", mapped.body)
+        self.assertIn("Stats", mapped.body)
 
     async def test_map_notification_supports_visual_shape_b(self):
         collector = NotificationCollector(asyncio.get_running_loop())
-        item = _FakeItem(_FakeVisualShapeB(_FakeBindingForShapeB("Title B", "Body B")))
+        item = _FakeItem(
+            _FakeVisualShapeB(
+                _FakeBindingForShapeB(
+                    "Title B",
+                    "Egg: Bee",
+                    "Rarity: Mythic",
+                    "Serial: #9"
+                )
+            )
+        )
 
         mapped = collector._map_notification(item)
 
         self.assertIsNotNone(mapped)
         self.assertEqual(mapped.title, "Title B")
-        self.assertEqual(mapped.body, "Body B")
+        self.assertEqual(mapped.body, "Egg: Bee\nRarity: Mythic\nSerial: #9")
 
     async def test_map_notification_without_binding_api_returns_record_without_text(self):
         collector = NotificationCollector(asyncio.get_running_loop())
@@ -403,10 +427,24 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
         collector._listener = _SnapshotListener(
             [
                 _FakeItem(
-                    _FakeVisualShapeB(_FakeBindingForShapeB("Title B1", "Body B1"))
+                    _FakeVisualShapeB(
+                        _FakeBindingForShapeB(
+                            "Title B1",
+                            "Egg: Cat",
+                            "Rarity: Epic",
+                            "Serial: #1"
+                        )
+                    )
                 ),
                 _FakeItem(
-                    _FakeVisualShapeB(_FakeBindingForShapeB("Title B2", "Body B2"))
+                    _FakeVisualShapeB(
+                        _FakeBindingForShapeB(
+                            "Title B2",
+                            "Egg: Dog",
+                            "Rarity: Rare",
+                            "Serial: #2"
+                        )
+                    )
                 ),
             ]
         )
@@ -419,9 +457,9 @@ class NotificationCollectorFallbackTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(cache_snapshot), 2)
         self.assertEqual(cache_snapshot[0].title, "Title B1")
-        self.assertEqual(cache_snapshot[0].body, "Body B1")
+        self.assertEqual(cache_snapshot[0].body, "Egg: Cat\nRarity: Epic\nSerial: #1")
         self.assertEqual(cache_snapshot[1].title, "Title B2")
-        self.assertEqual(cache_snapshot[1].body, "Body B2")
+        self.assertEqual(cache_snapshot[1].body, "Egg: Dog\nRarity: Rare\nSerial: #2")
 
 
     async def test_start_logs_expected_fallbacks_as_info(self):
