@@ -135,7 +135,7 @@ Push/event frames (daemon -> subscribed clients, no `id`):
 - `type` (`"notification"`)
 - `timestamp` (ISO-like string or `null`)
 - `title` (`string | null`)
-- `body` (`string | null`)
+- `body` (`string | null`) — all toast text lines after the title joined with `\n`
 - `app` (`string | null`)
 
 `read_notifications` remains supported for polling fallback compatibility.
@@ -200,7 +200,7 @@ If only `tapbot` is present, review daemon preflight logs:
 
 Expected behavior:
 
-- returns a Components V2 text response with recent notifications (`title`, `body`, `app`, `timestamp`),
+- returns a Components V2 text response with recent notifications (`title`, `body`, `app`, `timestamp`), where `body` preserves all remaining toast lines joined by newlines,
 - returns clear errors for unsupported platform, access denied, or unavailable notification API,
 - returns a clear message when no notifications are available.
 
