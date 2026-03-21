@@ -6,11 +6,13 @@ export function formatNotificationTimestamp(isoTimestamp) {
 }
 
 export function buildForwardNotificationMessage({ notification, player }) {
+  const mentionTargetId = player?.mentionTargetId ?? player?.applicantId ?? null;
+
   return [
     '📣 **Secret Hatcher**',
     '',
-    player?.applicantId
-      ? `**Player:** <@${player.applicantId}> (${player.displayNickname})`
+    mentionTargetId
+      ? `**Player:** <@${mentionTargetId}> (${player.displayNickname})`
       : `**Player:** ${player?.displayNickname ?? 'Unknown player'}`,
     `**Title:** ${notification?.title ?? '(no title)'}`,
     `**Time:** ${formatNotificationTimestamp(notification?.timestamp)}`,

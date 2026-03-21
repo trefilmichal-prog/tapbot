@@ -25,7 +25,7 @@ let legacyMigrationDone = false;
 
 function getDefaultClanState() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     clan_application_panels: {},
     clan_panel_configs: {},
     clan_clans: {},
@@ -178,6 +178,80 @@ function enqueueNotificationForwardWrite(guildId, task) {
   const nextQueue = queue.then(task, task);
   notificationForwardWriteQueues.set(key, nextQueue);
   return nextQueue;
+}
+
+function isValidDiscordSnowflake(value) {
+  return typeof value === 'string' && /^\d{17,20}$/.test(value.trim());
+}
+
+function normalizeManualNotificationNicknameEntry(entry) {
+  if (typeof entry === 'string') {
+    const nickname = entry.trim();
+    if (!nickname) {
+      return null;
+    }
+    return {
+      nickname,
+      ownerUserId: null,
+      createdAt: null
+    };
+  }
+
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return null;
+  }
+
+  const nickname = typeof entry.nickname === 'string'
+    ? entry.nickname.trim()
+    : (typeof entry.displayNickname === 'string' ? entry.displayNickname.trim() : '');
+  if (!nickname) {
+    return null;
+  }
+
+  const ownerUserId = isValidDiscordSnowflake(entry.ownerUserId)
+    ? entry.ownerUserId.trim()
+    : null;
+  const createdAt = typeof entry.createdAt === 'string' && Number.isFinite(new Date(entry.createdAt).getTime())
+    ? entry.createdAt
+    : null;
+
+  return {
+    nickname,
+    ownerUserId,
+    createdAt
+  };
+}
+
+function normalizeManualNotificationNicknameEntries(entries) {
+  if (!Array.isArray(entries)) {
+    return { entries: [], changed: true };
+  }
+
+  const normalizedEntries = [];
+  let changed = false;
+
+  for (const entry of entries) {
+    const normalizedEntry = normalizeManualNotificationNicknameEntry(entry);
+    if (!normalizedEntry) {
+      changed = true;
+      continue;
+    }
+
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      changed = true;
+    } else if (
+      entry.nickname !== normalizedEntry.nickname
+      || (entry.ownerUserId ?? null) !== normalizedEntry.ownerUserId
+      || (entry.createdAt ?? null) !== normalizedEntry.createdAt
+      || Object.keys(entry).some((key) => !['nickname', 'ownerUserId', 'createdAt'].includes(key))
+    ) {
+      changed = true;
+    }
+
+    normalizedEntries.push(normalizedEntry);
+  }
+
+  return { entries: normalizedEntries, changed };
 }
 
 function getDefaultNotificationForwardConfig() {
@@ -477,7 +551,14 @@ function loadClanState(guildId) {
       ...getDefaultClanState(),
       ...parsed
     };
-    migrateClanState(merged);
+    const migrationState = migrateClanState(merged);
+    if (migrationState.changed) {
+      try {
+        atomicWriteJsonSync(clanStatePath, merged);
+      } catch (error) {
+        console.warn(`Failed to migrate clan_state.json for guild ${key}:`, error);
+      }
+    }
     cachedClanState.set(key, merged);
     return merged;
   } catch (e) {
@@ -489,6 +570,20 @@ function loadClanState(guildId) {
 }
 
 function migrateClanState(state) {
+  let changed = false;
+
+  const normalizedSchemaVersion = Number(state.schemaVersion) || 1;
+  if (normalizedSchemaVersion !== 2) {
+    state.schemaVersion = 2;
+    changed = true;
+  }
+
+  const manualNicknameMigration = normalizeManualNotificationNicknameEntries(state.manual_notification_nicknames);
+  if (manualNicknameMigration.changed) {
+    changed = true;
+  }
+  state.manual_notification_nicknames = manualNicknameMigration.entries;
+
   const officerStats = state.officer_stats;
   if (!officerStats || typeof officerStats !== 'object' || Array.isArray(officerStats)) {
     state.officer_stats = {};
@@ -534,7 +629,7 @@ function migrateClanState(state) {
   const ticketDecisions = state.clan_ticket_decisions;
   if (!ticketDecisions || typeof ticketDecisions !== 'object' || Array.isArray(ticketDecisions)) {
     state.clan_ticket_decisions = {};
-    return;
+    return { changed: true };
   }
 
   for (const [channelId, decision] of Object.entries(ticketDecisions)) {
@@ -545,27 +640,43 @@ function migrateClanState(state) {
 
     if (!Object.prototype.hasOwnProperty.call(decision, 'activeReviewRoleId')) {
       decision.activeReviewRoleId = null;
+      changed = true;
     } else if (decision.activeReviewRoleId != null) {
-      decision.activeReviewRoleId = String(decision.activeReviewRoleId);
+      const normalizedActiveReviewRoleId = String(decision.activeReviewRoleId);
+      if (decision.activeReviewRoleId !== normalizedActiveReviewRoleId) {
+        changed = true;
+      }
+      decision.activeReviewRoleId = normalizedActiveReviewRoleId;
     }
 
     if (!Object.prototype.hasOwnProperty.call(decision, 'lastMoveAt')) {
       decision.lastMoveAt = null;
+      changed = true;
     } else if (decision.lastMoveAt == null) {
       decision.lastMoveAt = null;
     } else {
       const normalizedLastMoveAt = String(decision.lastMoveAt);
       const hasIsoShape = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))$/.test(normalizedLastMoveAt);
       const parsedTimestamp = new Date(normalizedLastMoveAt).getTime();
-      decision.lastMoveAt = hasIsoShape && Number.isFinite(parsedTimestamp)
+      const nextLastMoveAt = hasIsoShape && Number.isFinite(parsedTimestamp)
         ? normalizedLastMoveAt
         : null;
+      if (decision.lastMoveAt !== nextLastMoveAt) {
+        changed = true;
+      }
+      decision.lastMoveAt = nextLastMoveAt;
     }
 
     if (Object.prototype.hasOwnProperty.call(decision, 'reassignedBy') && decision.reassignedBy != null) {
-      decision.reassignedBy = String(decision.reassignedBy);
+      const normalizedReassignedBy = String(decision.reassignedBy);
+      if (decision.reassignedBy !== normalizedReassignedBy) {
+        changed = true;
+      }
+      decision.reassignedBy = normalizedReassignedBy;
     }
   }
+
+  return { changed };
 }
 
 function persistClanState(guildId) {
