@@ -617,17 +617,17 @@ export const defaultCommands = [
   },
   {
     name: 'notifications',
-    description: 'Manage host notification forwarding',
+    description: 'Manage host notification forwarding and manual nickname filters for secret notifications',
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'start',
-        description: 'Enable automatic forwarding to a text channel',
+        description: 'Enable automatic forwarding of secret notifications to a text channel',
         options: [
           {
             type: ApplicationCommandOptionType.Channel,
             name: 'channel',
-            description: 'Destination text channel',
+            description: 'Destination text channel for secret notifications',
             required: true,
             channel_types: [ChannelType.GuildText]
           }
@@ -636,22 +636,53 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'stop',
-        description: 'Disable automatic notification forwarding'
+        description: 'Disable automatic forwarding of secret notifications'
       },
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'status',
-        description: 'Show current notification forwarding settings'
+        description: 'Show current secret notification forwarding settings'
       },
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'read',
-        description: 'Read recent Windows toast notifications immediately'
+        description: 'Read recent Windows toast notifications and apply secret filters immediately'
       },
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'secret',
-        description: 'List stored clan player nicknames from accepted clan tickets'
+        description: 'List nicknames currently used for filtering secret notifications'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'nick_add',
+        description: 'Add a nickname to the manually managed filter list for secret notifications',
+        options: [
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'nick',
+            description: 'Nickname to include in the manual secret notification filter list',
+            required: true
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'nick_remove',
+        description: 'Remove a nickname from the manually managed filter list for secret notifications',
+        options: [
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'nick',
+            description: 'Nickname to remove from the manual secret notification filter list',
+            required: true
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'nick_list',
+        description: 'Show the manually managed nickname filter list for secret notifications'
       }
     ]
   }
