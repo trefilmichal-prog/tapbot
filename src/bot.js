@@ -538,20 +538,23 @@ function buildTicketOverviewComponents(ticketEntries, filters = {}) {
 
 function buildNotificationReadResponse(notifications) {
   const header = ['📣 **Windows Notifications**', ''];
-  const lines = notifications.slice(0, 8).flatMap((item, index) => ([
-    `**${index + 1}.** ${item.notification?.title ?? item.title ?? '(no title)'}`,
-    `App: ${item.notification?.app ?? item.app ?? 'Unknown app'}`,
-    `Time: ${formatNotificationTimestamp(item.notification?.timestamp ?? item.timestamp)}`,
-    item.player?.applicantId
-      ? `Player: <@${item.player.applicantId}> (${item.player.displayNickname})`
-      : item.player?.displayNickname
-        ? `Player: ${item.player.displayNickname}`
-        : null,
-    (item.notification?.body ?? item.body)
-      ? `Body: ${item.notification?.body ?? item.body}`
-      : 'Body: *(empty)*',
-    ''
-  ].filter(Boolean)));
+  const lines = notifications.slice(0, 8).flatMap((item, index) => {
+    const mentionTargetId = item.player?.mentionTargetId ?? item.player?.applicantId ?? null;
+    return [
+      `**${index + 1}.** ${item.notification?.title ?? item.title ?? '(no title)'}`,
+      `App: ${item.notification?.app ?? item.app ?? 'Unknown app'}`,
+      `Time: ${formatNotificationTimestamp(item.notification?.timestamp ?? item.timestamp)}`,
+      mentionTargetId
+        ? `Player: <@${mentionTargetId}> (${item.player.displayNickname})`
+        : item.player?.displayNickname
+          ? `Player: ${item.player.displayNickname}`
+          : null,
+      (item.notification?.body ?? item.body)
+        ? `Body: ${item.notification?.body ?? item.body}`
+        : 'Body: *(empty)*',
+      ''
+    ].filter(Boolean);
+  });
 
   if (notifications.length > 8) {
     lines.push(`...and ${notifications.length - 8} more notifications.`);
@@ -579,10 +582,12 @@ function collectAcceptedClanPlayers(guildId) {
 
   for (const [nickname, player] of players) {
     const entry = entryByNickname.get(nickname);
+    const applicantId = normalizeDiscordSnowflake(entry?.applicantId)
+      ?? deriveApplicantIdFromTicketEntry(entry);
     players.set(nickname, {
       ...player,
-      applicantId: normalizeDiscordSnowflake(entry?.applicantId)
-        ?? deriveApplicantIdFromTicketEntry(entry)
+      applicantId,
+      mentionTargetId: applicantId
     });
   }
 
@@ -596,20 +601,24 @@ function getManualNotificationNicknames(guildId) {
     : [];
   const uniqueNicknames = new Map();
 
-  for (const rawNickname of rawNicknames) {
-    if (typeof rawNickname !== 'string') {
-      continue;
-    }
-
-    const displayNickname = rawNickname.trim();
+  for (const rawEntry of rawNicknames) {
+    const displayNickname = typeof rawEntry === 'string'
+      ? rawEntry.trim()
+      : (typeof rawEntry?.nickname === 'string' ? rawEntry.nickname.trim() : '');
     const normalizedNickname = normalizeClanNicknameForMatch(displayNickname);
     if (!displayNickname || !normalizedNickname || uniqueNicknames.has(normalizedNickname)) {
       continue;
     }
 
+    const ownerUserId = typeof rawEntry === 'object' && rawEntry !== null
+      ? normalizeDiscordSnowflake(rawEntry.ownerUserId)
+      : null;
+
     uniqueNicknames.set(normalizedNickname, {
       displayNickname,
-      applicantId: null,
+      applicantId: ownerUserId,
+      mentionTargetId: ownerUserId,
+      ownerUserId,
       source: 'manual'
     });
   }
@@ -2989,6 +2998,30 @@ function ensureGuildClanState(state) {
   if (!Array.isArray(state.manual_notification_nicknames)) {
     state.manual_notification_nicknames = [];
   }
+  state.manual_notification_nicknames = state.manual_notification_nicknames
+    .map((entry) => {
+      if (typeof entry === 'string') {
+        const nickname = entry.trim();
+        return nickname
+          ? { nickname, ownerUserId: null, createdAt: null }
+          : null;
+      }
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return null;
+      }
+      const nickname = typeof entry.nickname === 'string' ? entry.nickname.trim() : '';
+      if (!nickname) {
+        return null;
+      }
+      return {
+        nickname,
+        ownerUserId: normalizeDiscordSnowflake(entry.ownerUserId),
+        createdAt: typeof entry.createdAt === 'string' && Number.isFinite(new Date(entry.createdAt).getTime())
+          ? entry.createdAt
+          : null
+      };
+    })
+    .filter(Boolean);
   if (!state.officer_stats) {
     state.officer_stats = {};
   }
@@ -5256,6 +5289,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const rawNickname = interaction.options.getString('nick', true);
         const displayNickname = rawNickname.trim();
         const normalizedNickname = normalizeClanNicknameForMatch(displayNickname);
+        const ownerUserId = normalizeDiscordSnowflake(interaction.user?.id)
+          ?? normalizeDiscordSnowflake(interaction.member?.id);
 
         if (!displayNickname || !normalizedNickname) {
           await interaction.reply({
@@ -5267,26 +5302,52 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         let alreadyStored = false;
         let storedNickname = displayNickname;
+        let ownerWasUpdated = false;
         await updateClanState(interaction.guildId, (state) => {
           ensureGuildClanState(state);
           const manualNicknames = Array.isArray(state.manual_notification_nicknames)
             ? state.manual_notification_nicknames
             : [];
-          const existingNickname = manualNicknames.find((entry) => normalizeClanNicknameForMatch(entry) === normalizedNickname);
-          if (existingNickname) {
+          const existingIndex = manualNicknames.findIndex((entry) => normalizeClanNicknameForMatch(
+            typeof entry === 'string' ? entry : entry?.nickname
+          ) === normalizedNickname);
+          if (existingIndex >= 0) {
             alreadyStored = true;
-            storedNickname = existingNickname.trim();
+            const existingEntry = manualNicknames[existingIndex];
+            storedNickname = typeof existingEntry === 'string'
+              ? existingEntry.trim()
+              : (typeof existingEntry?.nickname === 'string' ? existingEntry.nickname.trim() : displayNickname);
+            const normalizedExistingEntry = typeof existingEntry === 'string'
+              ? { nickname: storedNickname, ownerUserId: null, createdAt: null }
+              : {
+                  nickname: storedNickname,
+                  ownerUserId: normalizeDiscordSnowflake(existingEntry?.ownerUserId),
+                  createdAt: typeof existingEntry?.createdAt === 'string' && Number.isFinite(new Date(existingEntry.createdAt).getTime())
+                    ? existingEntry.createdAt
+                    : null
+                };
+            if (ownerUserId && normalizedExistingEntry.ownerUserId !== ownerUserId) {
+              normalizedExistingEntry.ownerUserId = ownerUserId;
+              ownerWasUpdated = true;
+            }
+            manualNicknames[existingIndex] = normalizedExistingEntry;
             state.manual_notification_nicknames = manualNicknames;
             return;
           }
-          state.manual_notification_nicknames = [...manualNicknames, displayNickname];
+          state.manual_notification_nicknames = [...manualNicknames, {
+            nickname: displayNickname,
+            ownerUserId,
+            createdAt: new Date().toISOString()
+          }];
         });
 
         await interaction.reply({
           components: buildTextComponents(
             alreadyStored
-              ? `Nickname **${storedNickname}** is already in the manual notification filter list.`
-              : `Nickname **${displayNickname}** was added to the manual notification filter list.`
+              ? ownerWasUpdated
+                ? `Nickname **${storedNickname}** is already stored, but its notification owner was updated to <@${ownerUserId}>.`
+                : `Nickname **${storedNickname}** is already in the manual notification filter list.`
+              : `Nickname **${displayNickname}** was added to the manual notification filter list${ownerUserId ? ` for <@${ownerUserId}>` : ''}.`
           ),
           flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
@@ -5313,9 +5374,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             ? state.manual_notification_nicknames
             : [];
           state.manual_notification_nicknames = manualNicknames.filter((entry) => {
-            const isMatch = normalizeClanNicknameForMatch(entry) === normalizedNickname;
-            if (isMatch && removedNickname === null && typeof entry === 'string') {
-              removedNickname = entry.trim();
+            const entryNickname = typeof entry === 'string' ? entry : entry?.nickname;
+            const isMatch = normalizeClanNicknameForMatch(entryNickname) === normalizedNickname;
+            if (isMatch && removedNickname === null) {
+              removedNickname = typeof entryNickname === 'string' ? entryNickname.trim() : displayNickname;
             }
             return !isMatch;
           });
