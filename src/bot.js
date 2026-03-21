@@ -17,6 +17,12 @@ import {
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import {
+  collectAcceptedClanPlayersFromState,
+  extractNicknameBeforeHatched,
+  filterNotificationsByClanNicknames,
+  normalizeClanNicknameForMatch
+} from './clan-notification-matching.js';
 import { loadConfig } from './config.js';
 import {
   getClanState,
@@ -562,41 +568,28 @@ function buildForwardNotificationMessage({ notification, player }) {
   ].join('\n');
 }
 
-function normalizeClanNicknameForMatch(value) {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const trimmed = value.trim().toLowerCase();
-  return trimmed ? trimmed : null;
-}
-
 function collectAcceptedClanPlayers(guildId) {
   const state = getClanState(guildId);
-  const players = new Map();
+  const players = collectAcceptedClanPlayersFromState(state, CLAN_TICKET_DECISION_ACCEPT);
+  const entryByNickname = new Map();
 
   for (const entry of Object.values(state?.clan_ticket_decisions ?? {})) {
     if (!entry || entry.status !== CLAN_TICKET_DECISION_ACCEPT) {
       continue;
     }
 
-    const normalizedNickname = normalizeClanNicknameForMatch(entry?.answers?.robloxNick);
-    if (!normalizedNickname || players.has(normalizedNickname)) {
-      continue;
+    const nickname = normalizeClanNicknameForMatch(entry?.answers?.robloxNick);
+    if (nickname && !entryByNickname.has(nickname)) {
+      entryByNickname.set(nickname, entry);
     }
+  }
 
-    const displayNickname = typeof entry?.answers?.robloxNick === 'string'
-      ? entry.answers.robloxNick.trim()
-      : '';
-    if (!displayNickname) {
-      continue;
-    }
-
-    const applicantId = normalizeDiscordSnowflake(entry.applicantId)
-      ?? deriveApplicantIdFromTicketEntry(entry);
-
-    players.set(normalizedNickname, {
-      displayNickname,
-      applicantId
+  for (const [nickname, player] of players) {
+    const entry = entryByNickname.get(nickname);
+    players.set(nickname, {
+      ...player,
+      applicantId: normalizeDiscordSnowflake(entry?.applicantId)
+        ?? deriveApplicantIdFromTicketEntry(entry)
     });
   }
 
@@ -614,43 +607,9 @@ function collectAcceptedClanNicknamesForDisplay(guildId) {
     .sort((left, right) => left.localeCompare(right, 'cs', { sensitivity: 'base' }));
 }
 
-function extractNicknameBeforeHatched(text) {
-  if (typeof text !== 'string') {
-    return null;
-  }
-
-  const flattened = text.replace(/\s+/g, ' ').trim();
-  if (!flattened) {
-    return null;
-  }
-
-  const match = flattened.match(/(?::flag_[a-z]{2}:|[\u{1F1E6}-\u{1F1FF}]{2})\s+(.+?)\s+hatched\b/iu);
-  if (!match?.[1]) {
-    return null;
-  }
-
-  return normalizeClanNicknameForMatch(match[1]);
-}
-
 function filterNotificationsByGuildClanNicknames(guildId, notifications) {
   const acceptedClanPlayers = collectAcceptedClanPlayers(guildId);
-  if (!acceptedClanPlayers.size) {
-    return [];
-  }
-
-  return notifications.flatMap((notification) => {
-    const matchedNickname = extractNicknameBeforeHatched(notification?.body);
-    if (!matchedNickname) {
-      return [];
-    }
-
-    const player = acceptedClanPlayers.get(matchedNickname);
-    if (!player) {
-      return [];
-    }
-
-    return [{ notification, matchedNickname, player }];
-  });
+  return filterNotificationsByClanNicknames(notifications, acceptedClanPlayers);
 }
 
 function buildNotificationSignature(item) {
