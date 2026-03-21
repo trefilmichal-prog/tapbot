@@ -34,6 +34,7 @@ function getDefaultClanState() {
     officer_stats: {},
     clan_ticket_vacations: {},
     clan_ticket_reminders: {},
+    manual_notification_nicknames: [],
     permission_role_id: null,
     cooldowns: {},
     cooldowns_user: {},

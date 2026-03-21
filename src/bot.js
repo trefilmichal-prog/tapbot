@@ -589,20 +589,82 @@ function collectAcceptedClanPlayers(guildId) {
   return players;
 }
 
-function collectAcceptedClanNicknames(guildId) {
-  return new Set(collectAcceptedClanPlayers(guildId).keys());
+function getManualNotificationNicknames(guildId) {
+  const state = getClanState(guildId);
+  const rawNicknames = Array.isArray(state?.manual_notification_nicknames)
+    ? state.manual_notification_nicknames
+    : [];
+  const uniqueNicknames = new Map();
+
+  for (const rawNickname of rawNicknames) {
+    if (typeof rawNickname !== 'string') {
+      continue;
+    }
+
+    const displayNickname = rawNickname.trim();
+    const normalizedNickname = normalizeClanNicknameForMatch(displayNickname);
+    if (!displayNickname || !normalizedNickname || uniqueNicknames.has(normalizedNickname)) {
+      continue;
+    }
+
+    uniqueNicknames.set(normalizedNickname, {
+      displayNickname,
+      applicantId: null,
+      source: 'manual'
+    });
+  }
+
+  return uniqueNicknames;
 }
 
-function collectAcceptedClanNicknamesForDisplay(guildId) {
+function collectNotificationFilterPlayers(guildId) {
   const players = collectAcceptedClanPlayers(guildId);
-  return [...players.values()]
+  const manualNicknames = getManualNotificationNicknames(guildId);
+
+  for (const [nickname, player] of manualNicknames) {
+    if (!players.has(nickname)) {
+      players.set(nickname, player);
+    }
+  }
+
+  return players;
+}
+
+function collectNotificationFilterNicknamesForDisplay(guildId) {
+  return [...collectNotificationFilterPlayers(guildId).values()]
     .map((player) => player.displayNickname)
     .sort((left, right) => left.localeCompare(right, 'cs', { sensitivity: 'base' }));
 }
 
 function filterNotificationsByGuildClanNicknames(guildId, notifications) {
-  const acceptedClanPlayers = collectAcceptedClanPlayers(guildId);
+  const acceptedClanPlayers = collectNotificationFilterPlayers(guildId);
   return filterNotificationsByClanNicknames(notifications, acceptedClanPlayers);
+}
+
+function hasClanMemberNotificationNicknamePermission(member) {
+  if (!(member instanceof GuildMember)) {
+    return false;
+  }
+
+  if (hasAdminPermission(member)) {
+    return true;
+  }
+
+  const state = getClanState(member.guild.id);
+  for (const clan of Object.values(state?.clan_clans ?? {})) {
+    if (clan?.acceptRoleId && member.roles.cache.has(clan.acceptRoleId)) {
+      return true;
+    }
+  }
+
+  const acceptedPlayers = collectAcceptedClanPlayers(member.guild.id);
+  for (const player of acceptedPlayers.values()) {
+    if (player?.applicantId && String(player.applicantId) === member.id) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 const DEFAULT_NOTIFICATION_FORWARD_POLL_INTERVAL_MS = 2000;
@@ -2924,6 +2986,9 @@ function ensureGuildClanState(state) {
   if (!state.clan_ticket_decisions) {
     state.clan_ticket_decisions = {};
   }
+  if (!Array.isArray(state.manual_notification_nicknames)) {
+    state.manual_notification_nicknames = [];
+  }
   if (!state.officer_stats) {
     state.officer_stats = {};
   }
@@ -5045,7 +5110,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      if (!hasAdminPermission(interaction.member)) {
+      const subcommand = interaction.options.getSubcommand(true);
+      const canManageNotificationNicknames = hasClanMemberNotificationNicknamePermission(interaction.member);
+      const requiresNicknamePermission = subcommand === 'nick_add'
+        || subcommand === 'nick_remove'
+        || subcommand === 'nick_list';
+
+      if (requiresNicknamePermission) {
+        if (!canManageNotificationNicknames) {
+          await interaction.reply({
+            components: buildTextComponents('You do not have permission to manage notification nicknames.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+      } else if (!hasAdminPermission(interaction.member)) {
         await interaction.reply({
           components: buildTextComponents('You do not have permission to use this command.'),
           flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
@@ -5053,7 +5132,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const subcommand = interaction.options.getSubcommand(true);
       if (subcommand === 'start') {
         const channel = interaction.options.getChannel('channel', true);
         if (!channel || channel.type !== ChannelType.GuildText) {
@@ -5157,10 +5235,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.guild) {
           await pruneMissingClanTicketsForGuild(interaction.guild, { logPrefix: 'notification secret command' });
         }
-        const clanNicknames = collectAcceptedClanNicknamesForDisplay(interaction.guildId);
+        const clanNicknames = collectNotificationFilterNicknamesForDisplay(interaction.guildId);
         if (!clanNicknames.length) {
           await interaction.reply({
-            components: buildTextComponents('No accepted clan player nicknames are stored for this server.'),
+            components: buildTextComponents('No notification filter nicknames are stored for this server.'),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
@@ -5168,7 +5246,108 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const nicknameList = clanNicknames.map((nickname, index) => `${index + 1}. ${nickname}`).join('\n');
         await interaction.reply({
-          components: buildTextComponents(`Stored clan player nicknames:\n${nicknameList}`),
+          components: buildTextComponents(`Stored notification filter nicknames:\n${nicknameList}`),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      if (subcommand === 'nick_add') {
+        const rawNickname = interaction.options.getString('nick', true);
+        const displayNickname = rawNickname.trim();
+        const normalizedNickname = normalizeClanNicknameForMatch(displayNickname);
+
+        if (!displayNickname || !normalizedNickname) {
+          await interaction.reply({
+            components: buildTextComponents('Nickname cannot be empty.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        let alreadyStored = false;
+        let storedNickname = displayNickname;
+        await updateClanState(interaction.guildId, (state) => {
+          ensureGuildClanState(state);
+          const manualNicknames = Array.isArray(state.manual_notification_nicknames)
+            ? state.manual_notification_nicknames
+            : [];
+          const existingNickname = manualNicknames.find((entry) => normalizeClanNicknameForMatch(entry) === normalizedNickname);
+          if (existingNickname) {
+            alreadyStored = true;
+            storedNickname = existingNickname.trim();
+            state.manual_notification_nicknames = manualNicknames;
+            return;
+          }
+          state.manual_notification_nicknames = [...manualNicknames, displayNickname];
+        });
+
+        await interaction.reply({
+          components: buildTextComponents(
+            alreadyStored
+              ? `Nickname **${storedNickname}** is already in the manual notification filter list.`
+              : `Nickname **${displayNickname}** was added to the manual notification filter list.`
+          ),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      if (subcommand === 'nick_remove') {
+        const rawNickname = interaction.options.getString('nick', true);
+        const displayNickname = rawNickname.trim();
+        const normalizedNickname = normalizeClanNicknameForMatch(displayNickname);
+
+        if (!displayNickname || !normalizedNickname) {
+          await interaction.reply({
+            components: buildTextComponents('Nickname cannot be empty.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        let removedNickname = null;
+        await updateClanState(interaction.guildId, (state) => {
+          ensureGuildClanState(state);
+          const manualNicknames = Array.isArray(state.manual_notification_nicknames)
+            ? state.manual_notification_nicknames
+            : [];
+          state.manual_notification_nicknames = manualNicknames.filter((entry) => {
+            const isMatch = normalizeClanNicknameForMatch(entry) === normalizedNickname;
+            if (isMatch && removedNickname === null && typeof entry === 'string') {
+              removedNickname = entry.trim();
+            }
+            return !isMatch;
+          });
+        });
+
+        await interaction.reply({
+          components: buildTextComponents(
+            removedNickname
+              ? `Nickname **${removedNickname}** was removed from the manual notification filter list.`
+              : `Nickname **${displayNickname}** was not found in the manual notification filter list.`
+          ),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      if (subcommand === 'nick_list') {
+        const manualNicknames = [...getManualNotificationNicknames(interaction.guildId).values()]
+          .map((player) => player.displayNickname)
+          .sort((left, right) => left.localeCompare(right, 'cs', { sensitivity: 'base' }));
+
+        if (!manualNicknames.length) {
+          await interaction.reply({
+            components: buildTextComponents('No manual notification nicknames are stored for this server.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        const nicknameList = manualNicknames.map((nickname, index) => `${index + 1}. ${nickname}`).join('\n');
+        await interaction.reply({
+          components: buildTextComponents(`Stored manual notification nicknames:\n${nicknameList}`),
           flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
