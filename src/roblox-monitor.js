@@ -1,4 +1,5 @@
 import { getClanState, getRobloxMonitorState, updateRobloxMonitorState } from './persistence.js';
+import { collectAcceptedTicketRobloxIdentitiesFromState } from './clan-notification-matching.js';
 
 const DEFAULT_TARGET_USERNAME = 'altiksenpaicat2';
 const DEFAULT_CHECK_INTERVAL_MINUTES = 5;
@@ -180,18 +181,13 @@ function collectApprovedTicketUsers(guildId) {
   const discordUserIds = new Set();
   const robloxUsernames = new Set();
 
-  for (const entry of Object.values(state?.clan_ticket_decisions ?? {})) {
-    if (!entry || entry.status !== 'accept') {
-      continue;
+  for (const identity of collectAcceptedTicketRobloxIdentitiesFromState(state)) {
+    if (identity.applicantId) {
+      discordUserIds.add(identity.applicantId);
     }
 
-    if (typeof entry.applicantId === 'string' && entry.applicantId.trim()) {
-      discordUserIds.add(entry.applicantId.trim());
-    }
-
-    const robloxUsername = typeof entry.answers?.robloxNick === 'string' ? entry.answers.robloxNick.trim() : '';
-    if (robloxUsername) {
-      robloxUsernames.add(robloxUsername);
+    if (identity.robloxNickname) {
+      robloxUsernames.add(identity.robloxNickname);
     }
   }
 
@@ -247,10 +243,12 @@ async function runRobloxMonitorTick(client, guildId) {
   const approvedUsers = collectApprovedTicketUsers(guildId);
   let state = getRobloxMonitorState(guildId);
   const normalizedTargetUsername = state.targetUsername || DEFAULT_TARGET_USERNAME;
+  const approvedDiscordUserIdSet = new Set(approvedUsers.discordUserIds);
+  const filteredSubscriberUserIds = state.subscriberUserIds.filter((userId) => approvedDiscordUserIdSet.has(userId));
 
-  if (JSON.stringify(state.subscriberUserIds) !== JSON.stringify(approvedUsers.discordUserIds)) {
+  if (JSON.stringify(state.subscriberUserIds) !== JSON.stringify(filteredSubscriberUserIds)) {
     state = await updateRobloxMonitorState(guildId, (nextState) => {
-      nextState.subscriberUserIds = approvedUsers.discordUserIds;
+      nextState.subscriberUserIds = filteredSubscriberUserIds;
       if (!nextState.targetUsername) {
         nextState.targetUsername = DEFAULT_TARGET_USERNAME;
       }
@@ -318,17 +316,17 @@ async function runRobloxMonitorTick(client, guildId) {
     const reminderIntervalMs = getOfflineReminderMinutes(state) * 60 * 1000;
     const lastReminderMs = state.lastOfflineReminderAt ? new Date(state.lastOfflineReminderAt).getTime() : 0;
     const shouldSendOfflineReminder = !nextPresence.isOnline
-      && state.subscriberUserIds.length > 0
+      && filteredSubscriberUserIds.length > 0
       && (!lastReminderMs || Number.isNaN(lastReminderMs) || (nowMs - lastReminderMs) >= reminderIntervalMs);
 
     if (shouldSendOfflineReminder) {
-      await sendOfflineReminderToSubscribers(client, guild, targetUsername, state.subscriberUserIds);
+      await sendOfflineReminderToSubscribers(client, guild, targetUsername, filteredSubscriberUserIds);
     }
 
     await updateRobloxMonitorState(guildId, (nextState) => {
       nextState.targetUsername = targetUsername;
       nextState.targetUserId = targetUserId;
-      nextState.subscriberUserIds = approvedUsers.discordUserIds;
+      nextState.subscriberUserIds = filteredSubscriberUserIds;
       nextState.lastKnownPresence = nextPresence;
       nextState.lastFriendRequestSweepAt = new Date().toISOString();
       nextState.lastOfflineReminderAt = nextPresence.isOnline

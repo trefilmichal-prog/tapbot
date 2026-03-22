@@ -685,6 +685,29 @@ export const defaultCommands = [
         description: 'Show the manually managed nickname filter list for secret notifications'
       }
     ]
+  },
+  {
+    name: 'roblox_monitor',
+    description: 'Manage Roblox monitor alerts',
+    options: [
+      {
+        type: ApplicationCommandOptionType.SubcommandGroup,
+        name: 'alerts',
+        description: 'Manage Roblox monitor alert subscriptions',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'opt_in',
+            description: 'Enable Roblox monitor alerts for your accepted ticket account'
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'opt_out',
+            description: 'Disable Roblox monitor alerts for your accepted ticket account'
+          }
+        ]
+      }
+    ]
   }
 ];
 
