@@ -21,6 +21,8 @@ const cachedNotificationForwardConfig = new Map();
 const notificationForwardWriteQueues = new Map();
 const cachedPrivateMessageState = new Map();
 const privateMessageStateWriteQueues = new Map();
+const cachedRobloxMonitorState = new Map();
+const robloxMonitorStateWriteQueues = new Map();
 let legacyMigrationDone = false;
 
 function getDefaultClanState() {
@@ -64,6 +66,21 @@ function getDefaultPrivateMessageState() {
   return {
     schemaVersion: 1,
     messages: {}
+  };
+}
+
+function getDefaultRobloxMonitorState() {
+  return {
+    schemaVersion: 1,
+    sessionCookie: null,
+    targetUsername: 'altiksenpaicat2',
+    targetUserId: null,
+    checkIntervalMinutes: 5,
+    offlineReminderMinutes: 10,
+    lastKnownPresence: null,
+    lastOfflineReminderAt: null,
+    subscriberUserIds: [],
+    lastFriendRequestSweepAt: null
   };
 }
 
@@ -140,6 +157,10 @@ function getGuildPrivateMessageStatePath(guildId) {
   return path.join(getGuildDir(guildId), 'private-messages.json');
 }
 
+function getGuildRobloxMonitorStatePath(guildId) {
+  return path.join(getGuildDir(guildId), 'roblox-monitor.json');
+}
+
 function enqueueClanStateWrite(guildId, task) {
   const key = String(guildId);
   const queue = clanStateWriteQueues.get(key) ?? Promise.resolve();
@@ -169,6 +190,14 @@ function enqueuePrivateMessageStateWrite(guildId, task) {
   const queue = privateMessageStateWriteQueues.get(key) ?? Promise.resolve();
   const nextQueue = queue.then(task, task);
   privateMessageStateWriteQueues.set(key, nextQueue);
+  return nextQueue;
+}
+
+function enqueueRobloxMonitorStateWrite(guildId, task) {
+  const key = String(guildId);
+  const queue = robloxMonitorStateWriteQueues.get(key) ?? Promise.resolve();
+  const nextQueue = queue.then(task, task);
+  robloxMonitorStateWriteQueues.set(key, nextQueue);
   return nextQueue;
 }
 
@@ -274,6 +303,131 @@ function normalizeNotificationForwardStartupMode(startupMode) {
 
 function normalizeNotificationForwardMode(mode) {
   return mode === 'daemon_push' || mode === 'poll' ? mode : 'poll';
+}
+
+
+function normalizeRobloxMonitorSubscriberUserIds(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+
+  return [...new Set(
+    entries
+      .filter((entry) => isValidDiscordSnowflake(entry))
+      .map((entry) => entry.trim())
+  )].sort();
+}
+
+function normalizeRobloxMonitorPresence(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const checkedAt = typeof value.checkedAt === 'string' && Number.isFinite(new Date(value.checkedAt).getTime())
+    ? value.checkedAt
+    : null;
+  const lastOnlineAt = typeof value.lastOnlineAt === 'string' && Number.isFinite(new Date(value.lastOnlineAt).getTime())
+    ? value.lastOnlineAt
+    : null;
+  const targetUsername = typeof value.targetUsername === 'string' && value.targetUsername.trim()
+    ? value.targetUsername.trim()
+    : null;
+  const targetUserId = Number.isInteger(value.targetUserId) && value.targetUserId > 0
+    ? value.targetUserId
+    : null;
+
+  if (!checkedAt) {
+    return null;
+  }
+
+  return {
+    checkedAt,
+    isOnline: Boolean(value.isOnline),
+    userPresenceType: Number.isInteger(value.userPresenceType) ? value.userPresenceType : 0,
+    targetUsername,
+    targetUserId,
+    monitoringAccountUserId: Number.isInteger(value.monitoringAccountUserId) ? value.monitoringAccountUserId : null,
+    isFriend: typeof value.isFriend === 'boolean' ? value.isFriend : null,
+    lastOnlineAt,
+    lastLocation: typeof value.lastLocation === 'string' && value.lastLocation.trim() ? value.lastLocation.trim() : null,
+    placeId: Number.isInteger(value.placeId) ? value.placeId : null,
+    rootPlaceId: Number.isInteger(value.rootPlaceId) ? value.rootPlaceId : null,
+    universeId: Number.isInteger(value.universeId) ? value.universeId : null,
+    gameId: typeof value.gameId === 'string' && value.gameId.trim() ? value.gameId.trim() : null,
+    lastError: typeof value.lastError === 'string' && value.lastError.trim() ? value.lastError.trim() : null
+  };
+}
+
+function normalizeRobloxMonitorState(state) {
+  const fallback = getDefaultRobloxMonitorState();
+  const parsed = state && typeof state === 'object' && !Array.isArray(state) ? state : {};
+  const sessionCookie = typeof parsed.sessionCookie === 'string' && parsed.sessionCookie.trim()
+    ? parsed.sessionCookie.trim()
+    : null;
+  const targetUsername = typeof parsed.targetUsername === 'string' && parsed.targetUsername.trim()
+    ? parsed.targetUsername.trim()
+    : fallback.targetUsername;
+  const targetUserId = Number.isInteger(parsed.targetUserId) && parsed.targetUserId > 0
+    ? parsed.targetUserId
+    : null;
+  const checkIntervalMinutes = Math.max(1, Number(parsed.checkIntervalMinutes) || fallback.checkIntervalMinutes);
+  const offlineReminderMinutes = Math.max(1, Number(parsed.offlineReminderMinutes) || fallback.offlineReminderMinutes);
+  const lastOfflineReminderAt = typeof parsed.lastOfflineReminderAt === 'string'
+    && Number.isFinite(new Date(parsed.lastOfflineReminderAt).getTime())
+    ? parsed.lastOfflineReminderAt
+    : null;
+  const lastFriendRequestSweepAt = typeof parsed.lastFriendRequestSweepAt === 'string'
+    && Number.isFinite(new Date(parsed.lastFriendRequestSweepAt).getTime())
+    ? parsed.lastFriendRequestSweepAt
+    : null;
+
+  return {
+    schemaVersion: 1,
+    sessionCookie,
+    targetUsername,
+    targetUserId,
+    checkIntervalMinutes,
+    offlineReminderMinutes,
+    lastKnownPresence: normalizeRobloxMonitorPresence(parsed.lastKnownPresence),
+    lastOfflineReminderAt,
+    subscriberUserIds: normalizeRobloxMonitorSubscriberUserIds(parsed.subscriberUserIds),
+    lastFriendRequestSweepAt
+  };
+}
+
+function loadRobloxMonitorState(guildId) {
+  const key = String(guildId);
+  if (cachedRobloxMonitorState.has(key)) return cachedRobloxMonitorState.get(key);
+
+  const statePath = getGuildRobloxMonitorStatePath(key);
+  if (!fs.existsSync(statePath)) {
+    const fallback = getDefaultRobloxMonitorState();
+    cachedRobloxMonitorState.set(key, fallback);
+    return fallback;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  } catch (error) {
+    console.warn(`Invalid roblox-monitor.json for guild ${key}, resetting:`, error);
+    const fallback = getDefaultRobloxMonitorState();
+    cachedRobloxMonitorState.set(key, fallback);
+    return fallback;
+  }
+
+  const normalized = normalizeRobloxMonitorState(parsed);
+  cachedRobloxMonitorState.set(key, normalized);
+  return normalized;
+}
+
+function persistRobloxMonitorState(guildId) {
+  const key = String(guildId);
+  return enqueueRobloxMonitorStateWrite(key, async () => {
+    const state = normalizeRobloxMonitorState(cachedRobloxMonitorState.get(key));
+    cachedRobloxMonitorState.set(key, state);
+    await atomicWriteJson(getGuildRobloxMonitorStatePath(key), state);
+  });
 }
 
 function normalizeNotificationForwardConfig(config) {
@@ -1005,6 +1159,23 @@ export function setNotificationForwardConfig(guildId, config) {
   const entry = normalizeNotificationForwardConfig(config);
   cachedNotificationForwardConfig.set(key, entry);
   return persistNotificationForwardConfig(key, entry).then(() => entry);
+}
+
+
+export function getRobloxMonitorState(guildId) {
+  return normalizeRobloxMonitorState(loadRobloxMonitorState(guildId));
+}
+
+export function updateRobloxMonitorState(guildId, mutator) {
+  const key = String(guildId);
+  const state = normalizeRobloxMonitorState(loadRobloxMonitorState(key));
+  cachedRobloxMonitorState.set(key, state);
+  if (typeof mutator === 'function') {
+    mutator(state);
+  }
+  const normalized = normalizeRobloxMonitorState(state);
+  cachedRobloxMonitorState.set(key, normalized);
+  return persistRobloxMonitorState(key).then(() => normalized);
 }
 
 export function getWelcomeConfig(guildId) {

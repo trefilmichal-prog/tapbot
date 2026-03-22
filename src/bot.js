@@ -52,6 +52,7 @@ import {
 } from './persistence.js';
 import { runUpdate } from './update.js';
 import { syncApplicationCommands } from './deploy-commands.js';
+import { startRobloxMonitorScheduler, startRobloxMonitorSchedulers, stopRobloxMonitorScheduler } from './roblox-monitor.js';
 import { readWindowsToastNotifications } from './windows-notifications.js';
 import {
   checkWinRtBridgeAvailability,
@@ -185,6 +186,7 @@ client.on(Events.ClientReady, (readyClient) => {
       await refreshClanPanelsOnStartup(readyClient);
       await refreshPingRolePanelsOnStartup(readyClient);
       await startNotificationForwardPolling(readyClient);
+      startRobloxMonitorSchedulers(readyClient);
       const result = await syncApplicationCommands({
         token: cfg.token,
         clientId: cfg.clientId,
@@ -197,6 +199,17 @@ client.on(Events.ClientReady, (readyClient) => {
       console.error('Startup command sync failed:', error);
     }
   })();
+});
+
+
+client.on(Events.GuildCreate, (guild) => {
+  startRobloxMonitorScheduler(client, guild.id);
+});
+
+client.on(Events.GuildDelete, (guild) => {
+  if (guild?.id) {
+    stopRobloxMonitorScheduler(guild.id);
+  }
 });
 
 client.on(Events.ChannelDelete, async (channel) => {
