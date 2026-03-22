@@ -21,6 +21,7 @@ import {
   collectAcceptedClanPlayersFromState,
   extractNicknameBeforeHatched,
   filterNotificationsByClanNicknames,
+  getAcceptedTicketRobloxIdentityFromState,
   normalizeClanNicknameForMatch
 } from './clan-notification-matching.js';
 import {
@@ -40,6 +41,7 @@ import {
   getPermissionRoleId,
   getWelcomeConfig,
   getNotificationForwardConfig,
+  getRobloxMonitorState,
   setLogConfig,
   setNotificationForwardConfig,
   setPingRolePanelConfig,
@@ -48,6 +50,7 @@ import {
   updateClanState,
   updatePrivateMessageState,
   updatePingRoleState,
+  updateRobloxMonitorState,
   updateRpsState
 } from './persistence.js';
 import { runUpdate } from './update.js';
@@ -605,6 +608,23 @@ function collectAcceptedClanPlayers(guildId) {
   }
 
   return players;
+}
+
+function getAcceptedTicketRobloxIdentity(guildId, userId) {
+  const state = getClanState(guildId);
+  return getAcceptedTicketRobloxIdentityFromState(state, userId, CLAN_TICKET_DECISION_ACCEPT);
+}
+
+function getAcceptedTicketRobloxAccessError(identity) {
+  if (!identity) {
+    return 'Only members with an accepted ticket in this server can use Roblox monitor alerts.';
+  }
+
+  if (!identity.robloxNickname) {
+    return 'Your accepted ticket has no Roblox account attached yet.';
+  }
+
+  return null;
 }
 
 function getManualNotificationNicknames(guildId) {
@@ -5677,6 +5697,58 @@ client.on(Events.InteractionCreate, async (interaction) => {
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
         }
+      }
+    }
+
+    if (interaction.commandName === 'roblox_monitor') {
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('This command can only be used in a server.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      const subcommandGroup = interaction.options.getSubcommandGroup(false);
+      const subcommand = interaction.options.getSubcommand(true);
+
+      if (subcommandGroup === 'alerts' && (subcommand === 'opt_in' || subcommand === 'opt_out')) {
+        const acceptedIdentity = getAcceptedTicketRobloxIdentity(interaction.guildId, interaction.user.id);
+        const accessError = getAcceptedTicketRobloxAccessError(acceptedIdentity);
+        if (accessError) {
+          await interaction.reply({
+            components: buildTextComponents(accessError),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        const currentMonitorState = getRobloxMonitorState(interaction.guildId);
+        const updatedState = await updateRobloxMonitorState(interaction.guildId, (state) => {
+          const subscriberIds = new Set(Array.isArray(state.subscriberUserIds) ? state.subscriberUserIds : []);
+          if (subcommand === 'opt_in') {
+            subscriberIds.add(interaction.user.id);
+          } else {
+            subscriberIds.delete(interaction.user.id);
+          }
+          state.subscriberUserIds = [...subscriberIds].sort();
+        });
+
+        const isSubscribed = updatedState.subscriberUserIds.includes(interaction.user.id);
+        const targetUsername = updatedState.targetUsername || currentMonitorState.targetUsername;
+        const confirmationMessage = subcommand === 'opt_in'
+          ? isSubscribed
+            ? `Roblox monitor alerts are now enabled for you in **${interaction.guild.name}**. Ticket account: **${acceptedIdentity.robloxNickname}**. Target: **${targetUsername}**.`
+            : 'Roblox monitor alerts could not be enabled right now.'
+          : isSubscribed
+            ? 'Roblox monitor alerts are still enabled for you.'
+            : `Roblox monitor alerts are now disabled for you in **${interaction.guild.name}**. Ticket account: **${acceptedIdentity.robloxNickname}**.`;
+
+        await interaction.reply({
+          components: buildTextComponents(confirmationMessage),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
       }
     }
 
