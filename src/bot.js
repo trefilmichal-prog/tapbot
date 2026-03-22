@@ -626,23 +626,82 @@ function getManualNotificationNicknames(guildId) {
   return uniqueNicknames;
 }
 
-function collectNotificationFilterPlayers(guildId) {
-  const players = collectAcceptedClanPlayers(guildId);
+function buildNotificationFilterRoster(guildId) {
+  const acceptedPlayers = collectAcceptedClanPlayers(guildId);
   const manualNicknames = getManualNotificationNicknames(guildId);
+  const roster = new Map();
+  const normalizedNicknames = new Set([
+    ...acceptedPlayers.keys(),
+    ...manualNicknames.keys()
+  ]);
 
-  for (const [nickname, player] of manualNicknames) {
-    if (!players.has(nickname)) {
-      players.set(nickname, player);
+  for (const nickname of normalizedNicknames) {
+    const acceptedPlayer = acceptedPlayers.get(nickname) ?? null;
+    const manualPlayer = manualNicknames.get(nickname) ?? null;
+    // Collision rule: a manual nickname override always wins over an accepted clan member
+    // so /notifications nick_add consistently pings the manual record owner.
+    const effectivePlayer = manualPlayer ?? acceptedPlayer;
+
+    if (!effectivePlayer) {
+      continue;
     }
+
+    roster.set(nickname, {
+      normalizedNickname: nickname,
+      acceptedPlayer,
+      manualPlayer,
+      effectivePlayer,
+      collision: Boolean(acceptedPlayer && manualPlayer),
+      collisionRule: acceptedPlayer && manualPlayer ? 'manual_overrides_accepted' : null
+    });
+  }
+
+  return roster;
+}
+
+function collectNotificationFilterPlayers(guildId) {
+  const roster = buildNotificationFilterRoster(guildId);
+  const players = new Map();
+
+  for (const [nickname, entry] of roster) {
+    players.set(nickname, entry.effectivePlayer);
   }
 
   return players;
 }
 
 function collectNotificationFilterNicknamesForDisplay(guildId) {
-  return [...collectNotificationFilterPlayers(guildId).values()]
-    .map((player) => player.displayNickname)
+  return [...buildNotificationFilterRoster(guildId).values()]
+    .map((entry) => {
+      const player = entry.effectivePlayer;
+      const sourceLabel = entry.manualPlayer
+        ? 'manual'
+        : 'accepted';
+      const ownerLabel = entry.manualPlayer?.ownerUserId
+        ? ` owner <@${entry.manualPlayer.ownerUserId}>`
+        : entry.manualPlayer
+          ? ' owner unknown'
+          : player?.mentionTargetId
+            ? ` member <@${player.mentionTargetId}>`
+            : '';
+      const collisionLabel = entry.collision
+        ? ` (manual override replaces accepted${entry.acceptedPlayer?.mentionTargetId ? ` <@${entry.acceptedPlayer.mentionTargetId}>` : ''})`
+        : '';
+      return `${player.displayNickname} — ${sourceLabel}${ownerLabel}${collisionLabel}`;
+    })
     .sort((left, right) => left.localeCompare(right, 'cs', { sensitivity: 'base' }));
+}
+
+function describeManualNotificationNickname(entry, index, rosterEntry) {
+  const ownerLabel = entry.ownerUserId
+    ? `<@${entry.ownerUserId}>`
+    : 'unknown owner';
+  const collisionLabel = rosterEntry?.acceptedPlayer
+    ? rosterEntry.acceptedPlayer.mentionTargetId
+      ? ` — overrides accepted member <@${rosterEntry.acceptedPlayer.mentionTargetId}>`
+      : ` — overrides accepted nickname ${rosterEntry.acceptedPlayer.displayNickname}`
+    : '';
+  return `${index + 1}. ${entry.displayNickname} — owner ${ownerLabel}${collisionLabel}`;
 }
 
 function filterNotificationsByGuildClanNicknames(guildId, notifications) {
@@ -5291,6 +5350,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const normalizedNickname = normalizeClanNicknameForMatch(displayNickname);
         const ownerUserId = normalizeDiscordSnowflake(interaction.user?.id)
           ?? normalizeDiscordSnowflake(interaction.member?.id);
+        const acceptedPlayer = collectAcceptedClanPlayers(interaction.guildId).get(normalizedNickname) ?? null;
 
         if (!displayNickname || !normalizedNickname) {
           await interaction.reply({
@@ -5300,9 +5360,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        let alreadyStored = false;
+        let resultType = 'created';
         let storedNickname = displayNickname;
-        let ownerWasUpdated = false;
+        let existingOwnerUserId = null;
         await updateClanState(interaction.guildId, (state) => {
           ensureGuildClanState(state);
           const manualNicknames = Array.isArray(state.manual_notification_nicknames)
@@ -5312,26 +5372,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
             typeof entry === 'string' ? entry : entry?.nickname
           ) === normalizedNickname);
           if (existingIndex >= 0) {
-            alreadyStored = true;
             const existingEntry = manualNicknames[existingIndex];
             storedNickname = typeof existingEntry === 'string'
               ? existingEntry.trim()
               : (typeof existingEntry?.nickname === 'string' ? existingEntry.nickname.trim() : displayNickname);
-            const normalizedExistingEntry = typeof existingEntry === 'string'
-              ? { nickname: storedNickname, ownerUserId: null, createdAt: null }
-              : {
-                  nickname: storedNickname,
-                  ownerUserId: normalizeDiscordSnowflake(existingEntry?.ownerUserId),
-                  createdAt: typeof existingEntry?.createdAt === 'string' && Number.isFinite(new Date(existingEntry.createdAt).getTime())
-                    ? existingEntry.createdAt
-                    : null
-                };
-            if (ownerUserId && normalizedExistingEntry.ownerUserId !== ownerUserId) {
-              normalizedExistingEntry.ownerUserId = ownerUserId;
-              ownerWasUpdated = true;
+            existingOwnerUserId = typeof existingEntry === 'string'
+              ? null
+              : normalizeDiscordSnowflake(existingEntry?.ownerUserId);
+            resultType = existingOwnerUserId === ownerUserId
+              ? 'already_owned_by_requester'
+              : existingOwnerUserId
+                ? 'owned_by_other_manual_user'
+                : 'claimed_ownerless_manual';
+            if (resultType === 'claimed_ownerless_manual') {
+              manualNicknames[existingIndex] = {
+                nickname: storedNickname,
+                ownerUserId,
+                createdAt: typeof existingEntry?.createdAt === 'string' && Number.isFinite(new Date(existingEntry.createdAt).getTime())
+                  ? existingEntry.createdAt
+                  : null
+              };
+              state.manual_notification_nicknames = manualNicknames;
             }
-            manualNicknames[existingIndex] = normalizedExistingEntry;
-            state.manual_notification_nicknames = manualNicknames;
             return;
           }
           state.manual_notification_nicknames = [...manualNicknames, {
@@ -5341,14 +5403,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }];
         });
 
+        let replyMessage;
+        if (resultType === 'already_owned_by_requester') {
+          replyMessage = `Nickname **${storedNickname}** already exists as your manual notification record${ownerUserId ? ` for <@${ownerUserId}>` : ''}.`;
+        } else if (resultType === 'owned_by_other_manual_user') {
+          replyMessage = `Nickname **${storedNickname}** already belongs to another manual notification owner${existingOwnerUserId ? `: <@${existingOwnerUserId}>` : ''}.`;
+        } else if (resultType === 'claimed_ownerless_manual') {
+          replyMessage = `Nickname **${storedNickname}** already existed as a manual record without owner; it is now assigned to <@${ownerUserId}>.`;
+        } else {
+          replyMessage = `Nickname **${displayNickname}** was added to the manual notification filter list${ownerUserId ? ` for <@${ownerUserId}>` : ''}.`;
+        }
+
+        if (acceptedPlayer) {
+          const acceptedTargetLabel = acceptedPlayer.mentionTargetId
+            ? `<@${acceptedPlayer.mentionTargetId}>`
+            : `accepted nickname **${acceptedPlayer.displayNickname}**`;
+          if (resultType === 'owned_by_other_manual_user') {
+            replyMessage += ` This nickname is also occupied by accepted member ${acceptedTargetLabel}, but the existing manual owner keeps priority and will still be pinged.`;
+          } else {
+            replyMessage += ` This nickname is also occupied by accepted member ${acceptedTargetLabel}; manual records have higher priority, so notifications will ping ${ownerUserId ? `<@${ownerUserId}>` : 'the manual owner'}.`;
+          }
+        }
+
         await interaction.reply({
-          components: buildTextComponents(
-            alreadyStored
-              ? ownerWasUpdated
-                ? `Nickname **${storedNickname}** is already stored, but its notification owner was updated to <@${ownerUserId}>.`
-                : `Nickname **${storedNickname}** is already in the manual notification filter list.`
-              : `Nickname **${displayNickname}** was added to the manual notification filter list${ownerUserId ? ` for <@${ownerUserId}>` : ''}.`
-          ),
+          components: buildTextComponents(replyMessage),
           flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
         });
         return;
@@ -5395,9 +5473,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (subcommand === 'nick_list') {
-        const manualNicknames = [...getManualNotificationNicknames(interaction.guildId).values()]
-          .map((player) => player.displayNickname)
-          .sort((left, right) => left.localeCompare(right, 'cs', { sensitivity: 'base' }));
+        const roster = buildNotificationFilterRoster(interaction.guildId);
+        const manualNicknames = [...getManualNotificationNicknames(interaction.guildId).entries()]
+          .map(([normalizedNickname, player]) => ({
+            normalizedNickname,
+            displayNickname: player.displayNickname,
+            ownerUserId: player.ownerUserId
+          }))
+          .sort((left, right) => left.displayNickname.localeCompare(right.displayNickname, 'cs', { sensitivity: 'base' }));
 
         if (!manualNicknames.length) {
           await interaction.reply({
@@ -5407,7 +5490,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        const nicknameList = manualNicknames.map((nickname, index) => `${index + 1}. ${nickname}`).join('\n');
+        const nicknameList = manualNicknames
+          .map((entry, index) => describeManualNotificationNickname(entry, index, roster.get(entry.normalizedNickname) ?? null))
+          .join('\n');
         await interaction.reply({
           components: buildTextComponents(`Stored manual notification nicknames:\n${nicknameList}`),
           flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
