@@ -692,6 +692,28 @@ export const defaultCommands = [
     options: [
       {
         type: ApplicationCommandOptionType.SubcommandGroup,
+        name: 'config',
+        description: 'Manage Roblox monitor configuration',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'set_session',
+            description: 'Securely set the Roblox .ROBLOSECURITY session cookie'
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'clear_session',
+            description: 'Clear the stored Roblox .ROBLOSECURITY session cookie'
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'status',
+            description: 'Show Roblox monitor session and status information'
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.SubcommandGroup,
         name: 'alerts',
         description: 'Manage Roblox monitor alert subscriptions',
         options: [
