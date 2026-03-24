@@ -6212,7 +6212,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const sessionCookie = getRobloxMonitorSessionCookie(currentMonitorState);
           if (!sessionCookie) {
             await interaction.reply({
-              components: buildTextComponents('Roblox monitor session není nastavená. Požádej admina, aby nejdřív použil `/roblox_monitor config set_session`.'),
+              components: buildTextComponents('Roblox monitor session is not configured. Ask an admin to run `/roblox_monitor config set_session` first.'),
               flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
@@ -6256,11 +6256,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 ? `${monitoringUser.name} (@${monitoringUser.name})`
                 : `ID ${monitoringUser?.id ?? 'unknown'}`;
               const handshakeStatusLine = autoAcceptedFriendRequest
-                ? 'Friend handshake: žádost byla přijata automaticky.'
-                : 'Friend handshake: žádná čekající žádost.';
+                ? 'Friend handshake: request was auto-accepted.'
+                : 'Friend handshake: no pending request.';
               const nextStepLine = autoAcceptedFriendRequest
-                ? 'Přátelství se zatím neprojevilo. Zkus to prosím za chvíli znovu; pokud problém přetrvá, zkontroluj přátelství na obou účtech.'
-                : `Pošli žádost monitorovacímu účtu ${monitoringAccountLabel} nebo přijmi jeho žádost na Robloxu a pak spusť opt-in znovu.`;
+                ? 'Friendship is not visible yet. Please try again in a moment; if the issue persists, verify friendship on both accounts.'
+                : `Send a friend request to the monitoring account ${monitoringAccountLabel} or accept its request on Roblox, then run opt-in again.`;
               await interaction.reply({
                 components: buildTextComponents(
                   `${handshakeStatusLine}\n${nextStepLine}`
@@ -6271,8 +6271,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
 
             const friendHandshakeStatusLine = autoAcceptedFriendRequest
-              ? 'Friend handshake: žádost byla přijata automaticky.'
-              : 'Friend handshake: žádná čekající žádost.';
+              ? 'Friend handshake: request was auto-accepted.'
+              : 'Friend handshake: no pending request.';
             optInHandshakeStatusLine = `✅ ${friendHandshakeStatusLine}`;
           } catch (error) {
             console.warn(`Roblox monitor opt-in friendship check failed for guild ${interaction.guildId} user ${interaction.user.id}:`, error);
@@ -6291,7 +6291,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               state.subscriberFriendshipStatus[interaction.user.id] = optInFriendshipStatus;
             });
             await interaction.reply({
-              components: buildTextComponents('Nepodařilo se ověřit friendship přes Roblox API. Zkus to prosím za chvíli znovu.'),
+              components: buildTextComponents('Failed to verify friendship via the Roblox API. Please try again in a moment.'),
               flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
