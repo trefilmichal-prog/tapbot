@@ -1173,6 +1173,12 @@ export function updateRobloxMonitorState(guildId, mutator) {
   if (typeof mutator === 'function') {
     mutator(state);
   }
+  if (typeof state.sessionCookie === 'string') {
+    const trimmedSessionCookie = state.sessionCookie.trim();
+    state.sessionCookie = trimmedSessionCookie || null;
+  } else if (state.sessionCookie === '') {
+    state.sessionCookie = null;
+  }
   const normalized = normalizeRobloxMonitorState(state);
   cachedRobloxMonitorState.set(key, normalized);
   return persistRobloxMonitorState(key).then(() => normalized);

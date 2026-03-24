@@ -102,6 +102,7 @@ const TICKET_MOVE_COOLDOWN_MS = 10 * 60 * 1000;
 const PING_ROLES_SELECT_ID = 'ping_roles_select';
 const PRIVATE_MESSAGE_READ_PREFIX = 'pm:read:';
 const RPS_CHOICE_PREFIX = 'rps:choose:';
+const ROBLOX_MONITOR_SESSION_MODAL_PREFIX = 'roblox_monitor_session_modal:';
 const RPS_MOVES = ['rock', 'paper', 'scissors'];
 const RPS_MOVE_META = {
   rock: { label: 'Rock', emoji: '🪨' },
@@ -376,6 +377,76 @@ function buildTextComponents(content) {
       ]
     }
   ];
+}
+
+function buildRobloxMonitorSessionModalCustomId({ guildId, userId }) {
+  return `${ROBLOX_MONITOR_SESSION_MODAL_PREFIX}${guildId}:${userId}`;
+}
+
+function parseRobloxMonitorSessionModalCustomId(customId) {
+  if (typeof customId !== 'string' || !customId.startsWith(ROBLOX_MONITOR_SESSION_MODAL_PREFIX)) {
+    return null;
+  }
+
+  const payload = customId.slice(ROBLOX_MONITOR_SESSION_MODAL_PREFIX.length);
+  const separatorIndex = payload.indexOf(':');
+  if (separatorIndex <= 0 || separatorIndex === payload.length - 1) {
+    return null;
+  }
+
+  const guildId = payload.slice(0, separatorIndex);
+  const userId = payload.slice(separatorIndex + 1);
+  if (!guildId || !userId) {
+    return null;
+  }
+
+  return { guildId, userId };
+}
+
+function buildRobloxMonitorStatusComponents(state) {
+  const hasSession = Boolean(state?.sessionCookie);
+  const targetUsername = state?.targetUsername ?? 'Unknown';
+  const targetUserId = Number.isInteger(state?.targetUserId) ? state.targetUserId : null;
+  const monitoringAccountUserId = Number.isInteger(state?.lastKnownPresence?.monitoringAccountUserId)
+    ? state.lastKnownPresence.monitoringAccountUserId
+    : null;
+  const lastError = typeof state?.lastKnownPresence?.lastError === 'string' && state.lastKnownPresence.lastError.trim()
+    ? state.lastKnownPresence.lastError.trim()
+    : null;
+
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: '🛠️ **Roblox monitor status**'
+        },
+        {
+          type: ComponentType.Separator,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small
+        },
+        {
+          type: ComponentType.TextDisplay,
+          content: [
+            `Session configured: **${hasSession ? 'Yes' : 'No'}**`,
+            `Monitoring account user ID: **${monitoringAccountUserId ?? 'Unknown'}**`,
+            `Target user: **${targetUsername}**${targetUserId ? ` (ID: ${targetUserId})` : ''}`,
+            `Last error: ${lastError ?? 'None'}`
+          ].join('\n')
+        }
+      ]
+    }
+  ];
+}
+
+async function restartRobloxMonitorSchedulerForGuild(readyClient, guildId) {
+  if (!readyClient || !guildId) {
+    return;
+  }
+
+  startRobloxMonitorScheduler(readyClient, guildId);
 }
 
 function formatLogContent(content) {
@@ -3749,6 +3820,55 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isModalSubmit()) {
+      const robloxMonitorSessionModalContext = parseRobloxMonitorSessionModalCustomId(interaction.customId);
+      if (robloxMonitorSessionModalContext) {
+        if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+          await interaction.reply({
+            components: buildTextComponents('This form can only be submitted in a server.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        const { guildId: modalGuildId, userId: modalUserId } = robloxMonitorSessionModalContext;
+        if (interaction.guildId !== modalGuildId || interaction.user.id !== modalUserId) {
+          await interaction.reply({
+            components: buildTextComponents('This form is not valid for your account or server.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (!hasAdminPermission(interaction.member)) {
+          await interaction.reply({
+            components: buildTextComponents('You do not have permission to use this command.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        const rawSessionCookie = interaction.fields.getTextInputValue('session_cookie');
+        const trimmedSessionCookie = rawSessionCookie.trim();
+        if (!trimmedSessionCookie) {
+          await interaction.reply({
+            components: buildTextComponents('Session cookie cannot be empty.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        await updateRobloxMonitorState(interaction.guildId, (state) => {
+          state.sessionCookie = trimmedSessionCookie;
+        });
+        await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
+
+        await interaction.reply({
+          components: buildTextComponents('Roblox monitor session cookie was saved and the scheduler was restarted for this guild.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
       const panelEditModalContext = parseClanPanelEditModalCustomId(interaction.customId);
       if (panelEditModalContext) {
         if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
@@ -5711,6 +5831,66 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const subcommandGroup = interaction.options.getSubcommandGroup(false);
       const subcommand = interaction.options.getSubcommand(true);
+
+      if (subcommandGroup === 'config') {
+        if (!hasAdminPermission(interaction.member)) {
+          await interaction.reply({
+            components: buildTextComponents('You do not have permission to use this command.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (subcommand === 'set_session') {
+          await interaction.showModal({
+            custom_id: buildRobloxMonitorSessionModalCustomId({
+              guildId: interaction.guildId,
+              userId: interaction.user.id
+            }),
+            title: 'Set Roblox session',
+            components: [
+              {
+                type: ComponentType.ActionRow,
+                components: [
+                  {
+                    type: ComponentType.TextInput,
+                    custom_id: 'session_cookie',
+                    style: TextInputStyle.Paragraph,
+                    label: 'Roblox .ROBLOSECURITY cookie',
+                    required: true,
+                    min_length: 1,
+                    max_length: 4000,
+                    placeholder: 'Paste only the cookie value or the full .ROBLOSECURITY=... pair'
+                  }
+                ]
+              }
+            ]
+          });
+          return;
+        }
+
+        if (subcommand === 'clear_session') {
+          await updateRobloxMonitorState(interaction.guildId, (state) => {
+            state.sessionCookie = null;
+          });
+          await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
+
+          await interaction.reply({
+            components: buildTextComponents('Roblox monitor session cookie was cleared and the scheduler was restarted for this guild.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (subcommand === 'status') {
+          const state = getRobloxMonitorState(interaction.guildId);
+          await interaction.reply({
+            components: buildRobloxMonitorStatusComponents(state),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+      }
 
       if (subcommandGroup === 'alerts' && (subcommand === 'opt_in' || subcommand === 'opt_out')) {
         const acceptedIdentity = getAcceptedTicketRobloxIdentity(interaction.guildId, interaction.user.id);
