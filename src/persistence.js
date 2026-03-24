@@ -71,7 +71,7 @@ function getDefaultPrivateMessageState() {
 
 function getDefaultRobloxMonitorState() {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     monitoringSession: {
       sessionCookie: null,
       updatedAt: null
@@ -104,6 +104,10 @@ function getDefaultRobloxMonitorState() {
     subscriberFriendshipStatus: {},
     lastFriendRequestSweepAt: null
   };
+}
+
+function getLegacyRobloxMonitorStatePath() {
+  return path.join(dataDir, 'roblox-monitor.json');
 }
 
 async function atomicWriteJson(targetPath, data) {
@@ -510,6 +514,7 @@ function normalizeRobloxMonitorPresence(value) {
 function normalizeRobloxMonitorState(state) {
   const fallback = getDefaultRobloxMonitorState();
   const parsed = state && typeof state === 'object' && !Array.isArray(state) ? state : {};
+  const parsedSchemaVersion = Number(parsed.schemaVersion) || 1;
   const parsedMonitoringSession = parsed.monitoringSession && typeof parsed.monitoringSession === 'object' && !Array.isArray(parsed.monitoringSession)
     ? parsed.monitoringSession
     : {};
@@ -575,8 +580,36 @@ function normalizeRobloxMonitorState(state) {
     ? parsedMonitorSource.game_id
     : requiredRootPlaceId;
 
+  const normalizedSubscriberUserIds = normalizeRobloxMonitorSubscriberUserIds(parsed.subscriberUserIds);
+  const normalizedSubscriberRobloxAccounts = normalizeRobloxMonitorSubscriberAccounts(parsed.subscriberRobloxAccounts);
+  const migratedGlobalTargetUsername = typeof parsed.targetUsername === 'string' && parsed.targetUsername.trim()
+    ? parsed.targetUsername.trim()
+    : (typeof parsedMonitorSource.target_override === 'string' && parsedMonitorSource.target_override.trim()
+      ? parsedMonitorSource.target_override.trim()
+      : null);
+  const migratedGlobalTargetUserId = Number.isInteger(parsed.targetUserId) && parsed.targetUserId > 0
+    ? parsed.targetUserId
+    : null;
+  const shouldMigrateGuildLevelTargetToSubscribers = parsedSchemaVersion < 5
+    && migratedGlobalTargetUsername
+    && normalizedSubscriberUserIds.length > 0;
+  if (shouldMigrateGuildLevelTargetToSubscribers) {
+    for (const subscriberUserId of normalizedSubscriberUserIds) {
+      const existingAccount = normalizedSubscriberRobloxAccounts[subscriberUserId];
+      if (existingAccount?.robloxUsername) {
+        continue;
+      }
+      normalizedSubscriberRobloxAccounts[subscriberUserId] = {
+        robloxUsername: migratedGlobalTargetUsername,
+        robloxUserId: migratedGlobalTargetUserId,
+        source: 'target_override',
+        optedInAt: monitorSourceUpdatedAt
+      };
+    }
+  }
+
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     monitoringSession: {
       sessionCookie,
       updatedAt: monitoringSessionUpdatedAt
@@ -604,14 +637,15 @@ function normalizeRobloxMonitorState(state) {
     subscriberPresence: normalizeRobloxMonitorPresenceBySubscriber(parsed.subscriberPresence),
     lastOfflineReminderAt,
     subscriberOfflineReminderAt: normalizeRobloxMonitorSubscriberReminderTimestamps(parsed.subscriberOfflineReminderAt),
-    subscriberUserIds: normalizeRobloxMonitorSubscriberUserIds(parsed.subscriberUserIds),
-    subscriberRobloxAccounts: normalizeRobloxMonitorSubscriberAccounts(parsed.subscriberRobloxAccounts),
+    subscriberUserIds: normalizedSubscriberUserIds,
+    subscriberRobloxAccounts: normalizedSubscriberRobloxAccounts,
     subscriberFriendshipStatus: normalizeRobloxMonitorFriendshipStatuses(parsed.subscriberFriendshipStatus),
     lastFriendRequestSweepAt
   };
 }
 
 function loadRobloxMonitorState(guildId) {
+  ensureLegacyMigration();
   const key = String(guildId);
   if (cachedRobloxMonitorState.has(key)) return cachedRobloxMonitorState.get(key);
 
@@ -778,11 +812,44 @@ function migrateLegacyClanState() {
   }
 }
 
+function migrateLegacyRobloxMonitorState() {
+  const legacyPath = getLegacyRobloxMonitorStatePath();
+  if (!fs.existsSync(legacyPath)) return;
+  let parsed;
+  try {
+    const raw = fs.readFileSync(legacyPath, 'utf8');
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn('Invalid legacy roblox-monitor.json, skipping migration:', e);
+    return;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+
+  for (const [guildId, guildState] of Object.entries(parsed)) {
+    if (!guildId || !guildState || typeof guildState !== 'object' || Array.isArray(guildState)) {
+      continue;
+    }
+    const targetPath = getGuildRobloxMonitorStatePath(guildId);
+    if (fs.existsSync(targetPath)) continue;
+    const normalizedState = normalizeRobloxMonitorState(guildState);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, JSON.stringify(normalizedState, null, 2), 'utf8');
+  }
+
+  const migratedPath = path.join(dataDir, 'roblox-monitor.legacy.json');
+  try {
+    fs.renameSync(legacyPath, migratedPath);
+  } catch (e) {
+    console.warn('Failed to archive legacy roblox-monitor.json:', e);
+  }
+}
+
 function ensureLegacyMigration() {
   if (legacyMigrationDone) return;
   legacyMigrationDone = true;
   migrateLegacyWelcomeConfig();
   migrateLegacyClanState();
+  migrateLegacyRobloxMonitorState();
 }
 
 function loadWelcomeConfig(guildId) {

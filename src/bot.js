@@ -58,7 +58,6 @@ import { syncApplicationCommands } from './deploy-commands.js';
 import {
   robloxMonitorInternals,
   startRobloxMonitorScheduler,
-  startRobloxMonitorSchedulers,
   stopRobloxMonitorScheduler
 } from './roblox-monitor.js';
 import { readWindowsToastNotifications } from './windows-notifications.js';
@@ -216,7 +215,7 @@ client.on(Events.ClientReady, (readyClient) => {
       await refreshPingRolePanelsOnStartup(readyClient);
       await startNotificationForwardPolling(readyClient);
       await warmupRobloxMonitorStateOnStartup(readyClient);
-      startRobloxMonitorSchedulers(readyClient);
+      await restoreRobloxMonitorSchedulersOnStartup(readyClient);
       const result = await syncApplicationCommands({
         token: cfg.token,
         clientId: cfg.clientId,
@@ -596,6 +595,23 @@ async function warmupRobloxMonitorStateOnStartup(readyClient) {
         ? state.monitorSource.updated_at
         : null;
     });
+  }
+}
+
+async function restoreRobloxMonitorSchedulersOnStartup(readyClient) {
+  for (const [guildId] of readyClient.guilds.cache) {
+    const state = getRobloxMonitorState(guildId);
+    const subscribedUsers = Array.isArray(state?.subscriberUserIds) ? state.subscriberUserIds : [];
+    const subscriberRobloxAccounts = state?.subscriberRobloxAccounts && typeof state.subscriberRobloxAccounts === 'object' && !Array.isArray(state.subscriberRobloxAccounts)
+      ? state.subscriberRobloxAccounts
+      : {};
+    const targetBoundCount = subscribedUsers.filter((userId) => {
+      const username = subscriberRobloxAccounts[userId]?.robloxUsername;
+      return typeof username === 'string' && username.trim().length > 0;
+    }).length;
+
+    startRobloxMonitorScheduler(readyClient, guildId);
+    console.log(`[startup] Roblox monitor scheduler restored for guild ${guildId}. Subscribers=${subscribedUsers.length}, withTarget=${targetBoundCount}.`);
   }
 }
 
@@ -6319,7 +6335,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
         const isSubscribed = updatedState.subscriberUserIds.includes(interaction.user.id);
-        const targetUsername = updatedState.targetUsername || currentMonitorState.targetUsername;
+        const subscriberTargetUsername = updatedState?.subscriberRobloxAccounts?.[interaction.user.id]?.robloxUsername
+          ?? currentMonitorState?.subscriberRobloxAccounts?.[interaction.user.id]?.robloxUsername
+          ?? null;
         const requiredRootPlaceId = Number.isInteger(updatedState.requiredRootPlaceId)
           ? updatedState.requiredRootPlaceId
           : 74260430392611;
@@ -6331,7 +6349,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           : '';
         const confirmationMessage = subcommand === 'opt_in'
           ? isSubscribed
-            ? `${handshakeStatusPrefix}Roblox monitor alerts are now enabled for you in **${interaction.guild.name}**. ${accountInfoLine} Target: **${targetUsername}**. Monitored game: **Rebirth Champions Ultimate** (${requiredRootPlaceId}).`
+            ? `${handshakeStatusPrefix}Roblox monitor alerts are now enabled for you in **${interaction.guild.name}**. ${accountInfoLine} Target: **${subscriberTargetUsername ?? 'N/A'}**. Monitored game: **Rebirth Champions Ultimate** (${requiredRootPlaceId}).`
             : 'Roblox monitor alerts could not be enabled right now.'
           : isSubscribed
             ? 'Roblox monitor alerts are still enabled for you.'
