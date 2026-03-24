@@ -190,6 +190,7 @@ client.on(Events.ClientReady, (readyClient) => {
       await refreshClanPanelsOnStartup(readyClient);
       await refreshPingRolePanelsOnStartup(readyClient);
       await startNotificationForwardPolling(readyClient);
+      await warmupRobloxMonitorStateOnStartup(readyClient);
       startRobloxMonitorSchedulers(readyClient);
       const result = await syncApplicationCommands({
         token: cfg.token,
@@ -404,12 +405,20 @@ function parseRobloxMonitorSessionModalCustomId(customId) {
 }
 
 function buildRobloxMonitorStatusComponents(state) {
-  const hasSession = Boolean(state?.sessionCookie);
-  const requiredRootPlaceId = Number.isInteger(state?.requiredRootPlaceId) ? state.requiredRootPlaceId : 74260430392611;
-  const monitoredGameName = 'Rebirth Champions Ultimate';
+  const monitoringSessionCookie = state?.monitoringSession?.sessionCookie ?? state?.sessionCookie ?? null;
+  const hasSession = Boolean(monitoringSessionCookie);
+  const requiredRootPlaceId = Number.isInteger(state?.targetGame?.requiredRootPlaceId)
+    ? state.targetGame.requiredRootPlaceId
+    : Number.isInteger(state?.requiredRootPlaceId)
+      ? state.requiredRootPlaceId
+      : 74260430392611;
+  const monitoredGameName = typeof state?.targetGame?.name === 'string' && state.targetGame.name.trim()
+    ? state.targetGame.name.trim()
+    : 'Rebirth Champions Ultimate';
   const targetUsername = state?.targetUsername ?? 'Unknown';
   const targetUserId = Number.isInteger(state?.targetUserId) ? state.targetUserId : null;
   const lastPresence = state?.lastKnownPresence ?? null;
+  const hasLastKnownPresence = Boolean(lastPresence?.checkedAt);
   const monitoringAccountUserId = Number.isInteger(state?.lastKnownPresence?.monitoringAccountUserId)
     ? state.lastKnownPresence.monitoringAccountUserId
     : null;
@@ -441,11 +450,13 @@ function buildRobloxMonitorStatusComponents(state) {
           type: ComponentType.TextDisplay,
           content: [
             `Session configured: **${hasSession ? 'Yes' : 'No'}**`,
+            `Session persisted after restart: **${hasSession ? 'Yes' : 'No'}**`,
             `Monitoring account user ID: **${monitoringAccountUserId ?? 'Unknown'}**`,
             `Target user: **${targetUsername}**${targetUserId ? ` (ID: ${targetUserId})` : ''}`,
-            `Monitored game: **${monitoredGameName}**`,
+            `Monitored game (persisted): **${monitoredGameName}**`,
             `Required rootPlaceId/placeId: **${requiredRootPlaceId}**`,
             `Presence state: **${presenceLabel}**`,
+            `Last known monitor state persisted: **${hasLastKnownPresence ? `Yes (${lastPresence.checkedAt})` : 'No'}**`,
             `Last error: ${lastError ?? 'None'}`
           ].join('\n')
         }
@@ -460,6 +471,31 @@ async function restartRobloxMonitorSchedulerForGuild(readyClient, guildId) {
   }
 
   startRobloxMonitorScheduler(readyClient, guildId);
+}
+
+async function warmupRobloxMonitorStateOnStartup(readyClient) {
+  for (const [guildId] of readyClient.guilds.cache) {
+    await updateRobloxMonitorState(guildId, (state) => {
+      const normalizedSessionCookie = state?.monitoringSession?.sessionCookie ?? state?.sessionCookie ?? null;
+      const hadSessionBefore = Boolean(state.sessionCookie || state.monitoringSession?.sessionCookie);
+      state.monitoringSession = {
+        sessionCookie: normalizedSessionCookie,
+        updatedAt: state.monitoringSession?.updatedAt ?? (hadSessionBefore ? new Date().toISOString() : null)
+      };
+      state.sessionCookie = normalizedSessionCookie;
+      state.targetGame = {
+        name: typeof state?.targetGame?.name === 'string' && state.targetGame.name.trim()
+          ? state.targetGame.name.trim()
+          : 'Rebirth Champions Ultimate',
+        requiredRootPlaceId: Number.isInteger(state?.targetGame?.requiredRootPlaceId) && state.targetGame.requiredRootPlaceId > 0
+          ? state.targetGame.requiredRootPlaceId
+          : (Number.isInteger(state?.requiredRootPlaceId) && state.requiredRootPlaceId > 0
+            ? state.requiredRootPlaceId
+            : 74260430392611)
+      };
+      state.requiredRootPlaceId = state.targetGame.requiredRootPlaceId;
+    });
+  }
 }
 
 function formatLogContent(content) {
@@ -3872,6 +3908,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await updateRobloxMonitorState(interaction.guildId, (state) => {
           state.sessionCookie = trimmedSessionCookie;
+          state.monitoringSession = {
+            sessionCookie: trimmedSessionCookie,
+            updatedAt: new Date().toISOString()
+          };
         });
         await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
 
@@ -5885,6 +5925,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (subcommand === 'clear_session') {
           await updateRobloxMonitorState(interaction.guildId, (state) => {
             state.sessionCookie = null;
+            state.monitoringSession = {
+              sessionCookie: null,
+              updatedAt: new Date().toISOString()
+            };
           });
           await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
 

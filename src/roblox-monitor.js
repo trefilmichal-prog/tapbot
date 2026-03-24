@@ -26,9 +26,25 @@ function getOfflineReminderMinutes(state) {
 }
 
 function getRequiredRootPlaceId(state) {
-  return Number.isInteger(state?.requiredRootPlaceId) && state.requiredRootPlaceId > 0
-    ? state.requiredRootPlaceId
-    : DEFAULT_REQUIRED_ROOT_PLACE_ID;
+  const targetGameRootPlaceId = Number.isInteger(state?.targetGame?.requiredRootPlaceId) && state.targetGame.requiredRootPlaceId > 0
+    ? state.targetGame.requiredRootPlaceId
+    : null;
+  return targetGameRootPlaceId
+    ?? (Number.isInteger(state?.requiredRootPlaceId) && state.requiredRootPlaceId > 0
+      ? state.requiredRootPlaceId
+      : DEFAULT_REQUIRED_ROOT_PLACE_ID);
+}
+
+function getSessionCookie(state) {
+  const nestedSessionCookie = typeof state?.monitoringSession?.sessionCookie === 'string' && state.monitoringSession.sessionCookie.trim()
+    ? state.monitoringSession.sessionCookie.trim()
+    : null;
+  if (nestedSessionCookie) {
+    return nestedSessionCookie;
+  }
+  return typeof state?.sessionCookie === 'string' && state.sessionCookie.trim()
+    ? state.sessionCookie.trim()
+    : null;
 }
 
 function isPresenceOnline(presence) {
@@ -307,7 +323,8 @@ async function runRobloxMonitorTick(client, guildId) {
     });
   }
 
-  if (!state.sessionCookie) {
+  const sessionCookie = getSessionCookie(state);
+  if (!sessionCookie) {
     await updateRobloxMonitorState(guildId, (nextState) => {
       nextState.targetUsername = normalizedTargetUsername;
       nextState.requiredRootPlaceId = getRequiredRootPlaceId(nextState);
@@ -325,7 +342,7 @@ async function runRobloxMonitorTick(client, guildId) {
     return;
   }
 
-  const apiClient = new RobloxSessionClient(state.sessionCookie);
+  const apiClient = new RobloxSessionClient(sessionCookie);
   try {
     const targetResolution = state.targetUserId && normalizeUsername(state.targetUsername) === normalizeUsername(normalizedTargetUsername)
       ? { userId: state.targetUserId, username: normalizedTargetUsername }
