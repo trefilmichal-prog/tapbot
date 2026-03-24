@@ -89,6 +89,7 @@ function getDefaultRobloxMonitorState() {
     lastKnownPresence: null,
     lastOfflineReminderAt: null,
     subscriberUserIds: [],
+    subscriberRobloxAccounts: {},
     lastFriendRequestSweepAt: null
   };
 }
@@ -327,6 +328,40 @@ function normalizeRobloxMonitorSubscriberUserIds(entries) {
   )].sort();
 }
 
+function normalizeRobloxMonitorSubscriberAccounts(entries) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
+    return {};
+  }
+
+  const normalizedEntries = {};
+  for (const [userId, account] of Object.entries(entries)) {
+    if (!isValidDiscordSnowflake(userId)) {
+      continue;
+    }
+
+    if (!account || typeof account !== 'object' || Array.isArray(account)) {
+      continue;
+    }
+
+    const username = typeof account.username === 'string' ? account.username.trim() : '';
+    if (!username || username.length > 32) {
+      continue;
+    }
+
+    const source = account.source === 'guild_nickname' ? 'guild_nickname' : 'ticket_account';
+    const updatedAt = typeof account.updatedAt === 'string' && Number.isFinite(new Date(account.updatedAt).getTime())
+      ? account.updatedAt
+      : null;
+    normalizedEntries[userId.trim()] = {
+      username,
+      source,
+      updatedAt
+    };
+  }
+
+  return normalizedEntries;
+}
+
 function normalizeRobloxMonitorPresence(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
@@ -430,6 +465,7 @@ function normalizeRobloxMonitorState(state) {
     lastKnownPresence: normalizeRobloxMonitorPresence(parsed.lastKnownPresence),
     lastOfflineReminderAt,
     subscriberUserIds: normalizeRobloxMonitorSubscriberUserIds(parsed.subscriberUserIds),
+    subscriberRobloxAccounts: normalizeRobloxMonitorSubscriberAccounts(parsed.subscriberRobloxAccounts),
     lastFriendRequestSweepAt
   };
 }

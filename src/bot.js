@@ -735,12 +735,53 @@ function getAcceptedTicketRobloxIdentity(guildId, userId) {
   return getAcceptedTicketRobloxIdentityFromState(state, userId, CLAN_TICKET_DECISION_ACCEPT);
 }
 
-function getAcceptedTicketRobloxAccessError(identity) {
+function normalizeGuildNicknameAsRobloxCandidate(rawNickname) {
+  if (typeof rawNickname !== 'string') {
+    return null;
+  }
+
+  let candidate = rawNickname.trim();
+  if (!candidate) {
+    return null;
+  }
+
+  candidate = candidate
+    .replace(/^\[[^\]]{1,12}\]\s*/u, '')
+    .replace(/\s*\[[^\]]{1,12}\]$/u, '')
+    .replace(/^[\s|:;•·★☆→«»『』【】(){}<>~`!@#$%^&*=+,./\\-]+/u, '')
+    .replace(/[\s|:;•·★☆→«»『』【】(){}<>~`!@#$%^&*=+,./\\-]+$/u, '')
+    .trim();
+
+  if (!candidate) {
+    return null;
+  }
+
+  if (candidate.length < 3 || candidate.length > 32) {
+    return null;
+  }
+
+  return candidate;
+}
+
+function getGuildMemberRobloxNicknameFallback(member) {
+  if (!(member instanceof GuildMember)) {
+    return null;
+  }
+
+  const primaryNickname = normalizeGuildNicknameAsRobloxCandidate(member.nickname);
+  if (primaryNickname) {
+    return primaryNickname;
+  }
+
+  return normalizeGuildNicknameAsRobloxCandidate(member.displayName);
+}
+
+function getAcceptedTicketRobloxAccessError(identity, fallbackNickname = null) {
   if (!identity) {
     return 'Only members with an accepted ticket in this server can use Roblox monitor alerts.';
   }
 
-  if (!identity.robloxNickname) {
+  if (!identity.robloxNickname && !fallbackNickname) {
     return 'Your accepted ticket has no Roblox account attached yet.';
   }
 
@@ -5951,7 +5992,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (subcommandGroup === 'alerts' && (subcommand === 'opt_in' || subcommand === 'opt_out')) {
         const acceptedIdentity = getAcceptedTicketRobloxIdentity(interaction.guildId, interaction.user.id);
-        const accessError = getAcceptedTicketRobloxAccessError(acceptedIdentity);
+        const fallbackNickname = getGuildMemberRobloxNicknameFallback(interaction.member);
+        const accessError = getAcceptedTicketRobloxAccessError(acceptedIdentity, fallbackNickname);
         if (accessError) {
           await interaction.reply({
             components: buildTextComponents(accessError),
@@ -5961,12 +6003,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const currentMonitorState = getRobloxMonitorState(interaction.guildId);
+        const resolvedRobloxUsername = acceptedIdentity?.robloxNickname || fallbackNickname;
+        const accountSource = acceptedIdentity?.robloxNickname ? 'ticket_account' : 'guild_nickname';
         const updatedState = await updateRobloxMonitorState(interaction.guildId, (state) => {
           const subscriberIds = new Set(Array.isArray(state.subscriberUserIds) ? state.subscriberUserIds : []);
+          if (!state.subscriberRobloxAccounts || typeof state.subscriberRobloxAccounts !== 'object' || Array.isArray(state.subscriberRobloxAccounts)) {
+            state.subscriberRobloxAccounts = {};
+          }
+
           if (subcommand === 'opt_in') {
             subscriberIds.add(interaction.user.id);
+            if (accountSource === 'guild_nickname' && resolvedRobloxUsername) {
+              state.subscriberRobloxAccounts[interaction.user.id] = {
+                username: resolvedRobloxUsername,
+                source: 'guild_nickname',
+                updatedAt: new Date().toISOString()
+              };
+            } else if (state.subscriberRobloxAccounts[interaction.user.id]) {
+              delete state.subscriberRobloxAccounts[interaction.user.id];
+            }
           } else {
             subscriberIds.delete(interaction.user.id);
+            if (state.subscriberRobloxAccounts[interaction.user.id]) {
+              delete state.subscriberRobloxAccounts[interaction.user.id];
+            }
           }
           state.subscriberUserIds = [...subscriberIds].sort();
         });
@@ -5976,13 +6036,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const requiredRootPlaceId = Number.isInteger(updatedState.requiredRootPlaceId)
           ? updatedState.requiredRootPlaceId
           : 74260430392611;
+        const accountInfoLine = accountSource === 'ticket_account'
+          ? `Account source: **ticket account** (**${resolvedRobloxUsername}**).`
+          : `Account source: **guild nickname fallback** (**${resolvedRobloxUsername}**).`;
         const confirmationMessage = subcommand === 'opt_in'
           ? isSubscribed
-            ? `Roblox monitor alerts are now enabled for you in **${interaction.guild.name}**. Ticket account: **${acceptedIdentity.robloxNickname}**. Target: **${targetUsername}**. Monitored game: **Rebirth Champions Ultimate** (${requiredRootPlaceId}).`
+            ? `Roblox monitor alerts are now enabled for you in **${interaction.guild.name}**. ${accountInfoLine} Target: **${targetUsername}**. Monitored game: **Rebirth Champions Ultimate** (${requiredRootPlaceId}).`
             : 'Roblox monitor alerts could not be enabled right now.'
           : isSubscribed
             ? 'Roblox monitor alerts are still enabled for you.'
-            : `Roblox monitor alerts are now disabled for you in **${interaction.guild.name}**. Ticket account: **${acceptedIdentity.robloxNickname}**.`;
+            : `Roblox monitor alerts are now disabled for you in **${interaction.guild.name}**. Last resolved Roblox username: **${resolvedRobloxUsername}** (${accountSource === 'ticket_account' ? 'ticket account' : 'guild nickname fallback'}).`;
 
         await interaction.reply({
           components: buildTextComponents(confirmationMessage),
