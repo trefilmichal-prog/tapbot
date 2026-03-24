@@ -846,6 +846,23 @@ function normalizeGuildNicknameAsRobloxCandidate(rawNickname) {
   return candidate;
 }
 
+function normalizeRobloxUsernameCandidate(rawUsername) {
+  if (typeof rawUsername !== 'string') {
+    return null;
+  }
+
+  const candidate = rawUsername.trim();
+  if (!candidate) {
+    return null;
+  }
+
+  if (!/^[A-Za-z0-9_]{3,20}$/u.test(candidate)) {
+    return null;
+  }
+
+  return candidate;
+}
+
 function getGuildMemberRobloxNicknameFallback(member) {
   if (!(member instanceof GuildMember)) {
     return null;
@@ -6109,6 +6126,41 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
           await interaction.reply({
             components: buildTextComponents('Roblox monitor source was set to `guild_nickname` for this guild. Fixed target override was cleared (target_override = null).'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (subcommand === 'set_target') {
+          const rawUsername = interaction.options.getString('username', true);
+          const targetUsername = normalizeRobloxUsernameCandidate(rawUsername);
+          if (!targetUsername) {
+            await interaction.reply({
+              components: buildTextComponents('Invalid Roblox username format. Use 3-20 characters: letters, numbers, and underscore only.'),
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+            });
+            return;
+          }
+
+          await updateRobloxMonitorState(interaction.guildId, (state) => {
+            if (!state.monitorSource || typeof state.monitorSource !== 'object' || Array.isArray(state.monitorSource)) {
+              state.monitorSource = {};
+            }
+            state.monitorSource.guild_id = interaction.guildId;
+            state.monitorSource.channel_id = interaction.channelId;
+            state.monitorSource.game_id = Number.isInteger(state?.targetGame?.requiredRootPlaceId) && state.targetGame.requiredRootPlaceId > 0
+              ? state.targetGame.requiredRootPlaceId
+              : 74260430392611;
+            state.monitorSource.source_type = 'target_override';
+            state.monitorSource.target_override = targetUsername;
+            state.monitorSource.source_user_id = interaction.user.id;
+            state.monitorSource.updated_at = new Date().toISOString();
+            state.targetUsername = targetUsername;
+            state.targetUserId = null;
+          });
+          await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
+          await interaction.reply({
+            components: buildTextComponents(`Roblox monitor fixed target override was set to **${targetUsername}** for this guild and the scheduler was restarted.`),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
