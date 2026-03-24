@@ -208,6 +208,26 @@ Expected behavior:
 
 - `/config ticket_visibility_sync` resynchronizes ticket channel permissions for stored clan tickets (per guild), reapplies applicant/review-role access, and updates saved `activeReviewRoleId`/`updatedAt` values.
 
+## Roblox monitor source/target behavior (admin)
+
+Roblox monitor configuration is stored **per guild** and restored after restart from JSON persistence.
+
+- `source_type` decides how the monitor resolves the Roblox account each check:
+  - `target_override` = fixed Roblox username
+  - `guild_nickname` = dynamic lookup from a configured guild member nickname
+- `target_override` is nullable.
+  - When source is switched to `guild_nickname`, `target_override` is automatically set to `null` (migration behavior for old fixed-target data).
+- If nickname resolution fails (empty/unmappable nickname), monitor records a safe warning state and continues running without crashing.
+
+### Recommended admin subcommands
+
+- `/roblox_monitor config set_source source_type:guild_nickname`
+  - Enables dynamic nickname source for the current guild.
+- `/roblox_monitor config clear_target`
+  - Clears fixed override (`target_override = null`) for the current guild monitor config.
+- `/roblox_monitor config show`
+  - Shows current persisted monitor source/target state for the current guild.
+
 ## Data persistence and restart behavior
 
 Bot state needed after restart is persisted in the project data layer (JSON-backed storage used by `src/persistence.js`). This allows guild-specific configuration and panels to be restored during startup.

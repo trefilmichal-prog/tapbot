@@ -417,6 +417,13 @@ function buildRobloxMonitorStatusComponents(state) {
     : 'Rebirth Champions Ultimate';
   const targetUsername = state?.targetUsername ?? 'Unknown';
   const targetUserId = Number.isInteger(state?.targetUserId) ? state.targetUserId : null;
+  const monitorSource = state?.monitorSource && typeof state.monitorSource === 'object'
+    ? state.monitorSource
+    : {};
+  const sourceType = monitorSource.source_type === 'guild_nickname' ? 'guild_nickname' : 'target_override';
+  const targetOverride = typeof monitorSource.target_override === 'string' && monitorSource.target_override.trim()
+    ? monitorSource.target_override.trim()
+    : null;
   const lastPresence = state?.lastKnownPresence ?? null;
   const hasLastKnownPresence = Boolean(lastPresence?.checkedAt);
   const monitoringAccountUserId = Number.isInteger(state?.lastKnownPresence?.monitoringAccountUserId)
@@ -452,6 +459,12 @@ function buildRobloxMonitorStatusComponents(state) {
             `Session configured: **${hasSession ? 'Yes' : 'No'}**`,
             `Session persisted after restart: **${hasSession ? 'Yes' : 'No'}**`,
             `Monitoring account user ID: **${monitoringAccountUserId ?? 'Unknown'}**`,
+            `Source type: **${sourceType}**`,
+            `Configured source guild_id: **${monitorSource.guild_id ?? 'N/A'}**`,
+            `Configured source channel_id: **${monitorSource.channel_id ?? 'N/A'}**`,
+            `Configured source game_id: **${monitorSource.game_id ?? requiredRootPlaceId}**`,
+            `Configured source user_id: **${monitorSource.source_user_id ?? 'N/A'}**`,
+            `Target override: **${targetOverride ?? 'null'}**`,
             `Target user: **${targetUsername}**${targetUserId ? ` (ID: ${targetUserId})` : ''}`,
             `Monitored game (persisted): **${monitoredGameName}**`,
             `Required rootPlaceId/placeId: **${requiredRootPlaceId}**`,
@@ -494,6 +507,32 @@ async function warmupRobloxMonitorStateOnStartup(readyClient) {
             : 74260430392611)
       };
       state.requiredRootPlaceId = state.targetGame.requiredRootPlaceId;
+      if (!state.monitorSource || typeof state.monitorSource !== 'object' || Array.isArray(state.monitorSource)) {
+        state.monitorSource = {};
+      }
+      state.monitorSource.guild_id = String(guildId);
+      state.monitorSource.channel_id = typeof state.monitorSource.channel_id === 'string' && state.monitorSource.channel_id.trim()
+        ? state.monitorSource.channel_id.trim()
+        : null;
+      state.monitorSource.game_id = Number.isInteger(state.monitorSource.game_id) && state.monitorSource.game_id > 0
+        ? state.monitorSource.game_id
+        : state.targetGame.requiredRootPlaceId;
+      state.monitorSource.source_type = state.monitorSource.source_type === 'guild_nickname'
+        ? 'guild_nickname'
+        : 'target_override';
+      if (state.monitorSource.source_type === 'guild_nickname') {
+        state.monitorSource.target_override = null;
+      } else if (typeof state.monitorSource.target_override !== 'string' || !state.monitorSource.target_override.trim()) {
+        state.monitorSource.target_override = state.targetUsername;
+      } else {
+        state.monitorSource.target_override = state.monitorSource.target_override.trim();
+      }
+      state.monitorSource.source_user_id = typeof state.monitorSource.source_user_id === 'string' && state.monitorSource.source_user_id.trim()
+        ? state.monitorSource.source_user_id.trim()
+        : null;
+      state.monitorSource.updated_at = typeof state.monitorSource.updated_at === 'string'
+        ? state.monitorSource.updated_at
+        : null;
     });
   }
 }
@@ -5984,6 +6023,69 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const state = getRobloxMonitorState(interaction.guildId);
           await interaction.reply({
             components: buildRobloxMonitorStatusComponents(state),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (subcommand === 'show') {
+          const state = getRobloxMonitorState(interaction.guildId);
+          await interaction.reply({
+            components: buildRobloxMonitorStatusComponents(state),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (subcommand === 'set_source') {
+          const sourceType = interaction.options.getString('source_type', true);
+          if (sourceType !== 'guild_nickname') {
+            await interaction.reply({
+              components: buildTextComponents('Unsupported source type.'),
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+            });
+            return;
+          }
+
+          await updateRobloxMonitorState(interaction.guildId, (state) => {
+            if (!state.monitorSource || typeof state.monitorSource !== 'object' || Array.isArray(state.monitorSource)) {
+              state.monitorSource = {};
+            }
+            state.monitorSource.guild_id = interaction.guildId;
+            state.monitorSource.channel_id = interaction.channelId;
+            state.monitorSource.game_id = Number.isInteger(state?.targetGame?.requiredRootPlaceId) && state.targetGame.requiredRootPlaceId > 0
+              ? state.targetGame.requiredRootPlaceId
+              : 74260430392611;
+            state.monitorSource.source_type = 'guild_nickname';
+            state.monitorSource.target_override = null;
+            state.monitorSource.source_user_id = interaction.user.id;
+            state.monitorSource.updated_at = new Date().toISOString();
+            state.targetUserId = null;
+          });
+          await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
+          await interaction.reply({
+            components: buildTextComponents('Roblox monitor source was set to `guild_nickname` for this guild. Fixed target override was cleared (target_override = null).'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (subcommand === 'clear_target') {
+          await updateRobloxMonitorState(interaction.guildId, (state) => {
+            if (!state.monitorSource || typeof state.monitorSource !== 'object' || Array.isArray(state.monitorSource)) {
+              state.monitorSource = {};
+            }
+            state.monitorSource.guild_id = interaction.guildId;
+            state.monitorSource.channel_id = interaction.channelId;
+            state.monitorSource.game_id = Number.isInteger(state?.targetGame?.requiredRootPlaceId) && state.targetGame.requiredRootPlaceId > 0
+              ? state.targetGame.requiredRootPlaceId
+              : 74260430392611;
+            state.monitorSource.target_override = null;
+            state.monitorSource.updated_at = new Date().toISOString();
+          });
+          await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
+          await interaction.reply({
+            components: buildTextComponents('Roblox monitor target override was cleared for this guild (target_override = null).'),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;

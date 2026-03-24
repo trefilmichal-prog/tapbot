@@ -77,6 +77,15 @@ function getDefaultRobloxMonitorState() {
       updatedAt: null
     },
     sessionCookie: null,
+    monitorSource: {
+      guild_id: null,
+      channel_id: null,
+      game_id: 74260430392611,
+      source_type: 'target_override',
+      target_override: 'altiksenpaicat2',
+      source_user_id: null,
+      updated_at: null
+    },
     targetUsername: 'altiksenpaicat2',
     targetUserId: null,
     targetGame: {
@@ -421,6 +430,9 @@ function normalizeRobloxMonitorState(state) {
   const parsedTargetGame = parsed.targetGame && typeof parsed.targetGame === 'object' && !Array.isArray(parsed.targetGame)
     ? parsed.targetGame
     : {};
+  const parsedMonitorSource = parsed.monitorSource && typeof parsed.monitorSource === 'object' && !Array.isArray(parsed.monitorSource)
+    ? parsed.monitorSource
+    : {};
   const targetUsername = typeof parsed.targetUsername === 'string' && parsed.targetUsername.trim()
     ? parsed.targetUsername.trim()
     : fallback.targetUsername;
@@ -445,6 +457,30 @@ function normalizeRobloxMonitorState(state) {
     && Number.isFinite(new Date(parsed.lastFriendRequestSweepAt).getTime())
     ? parsed.lastFriendRequestSweepAt
     : null;
+  const sourceType = parsedMonitorSource.source_type === 'guild_nickname'
+    ? 'guild_nickname'
+    : 'target_override';
+  const targetOverride = typeof parsedMonitorSource.target_override === 'string' && parsedMonitorSource.target_override.trim()
+    ? parsedMonitorSource.target_override.trim()
+    : (typeof parsed.targetUsername === 'string' && parsed.targetUsername.trim()
+      ? parsed.targetUsername.trim()
+      : fallback.monitorSource.target_override);
+  const monitorSourceUpdatedAt = typeof parsedMonitorSource.updated_at === 'string'
+    && Number.isFinite(new Date(parsedMonitorSource.updated_at).getTime())
+    ? parsedMonitorSource.updated_at
+    : null;
+  const monitorSourceGuildId = typeof parsedMonitorSource.guild_id === 'string' && parsedMonitorSource.guild_id.trim()
+    ? parsedMonitorSource.guild_id.trim()
+    : null;
+  const monitorSourceChannelId = typeof parsedMonitorSource.channel_id === 'string' && parsedMonitorSource.channel_id.trim()
+    ? parsedMonitorSource.channel_id.trim()
+    : null;
+  const monitorSourceSourceUserId = typeof parsedMonitorSource.source_user_id === 'string' && parsedMonitorSource.source_user_id.trim()
+    ? parsedMonitorSource.source_user_id.trim()
+    : null;
+  const monitorSourceGameId = Number.isInteger(parsedMonitorSource.game_id) && parsedMonitorSource.game_id > 0
+    ? parsedMonitorSource.game_id
+    : requiredRootPlaceId;
 
   return {
     schemaVersion: 2,
@@ -453,6 +489,15 @@ function normalizeRobloxMonitorState(state) {
       updatedAt: monitoringSessionUpdatedAt
     },
     sessionCookie,
+    monitorSource: {
+      guild_id: monitorSourceGuildId,
+      channel_id: monitorSourceChannelId,
+      game_id: monitorSourceGameId,
+      source_type: sourceType,
+      target_override: sourceType === 'guild_nickname' ? null : targetOverride,
+      source_user_id: monitorSourceSourceUserId,
+      updated_at: monitorSourceUpdatedAt
+    },
     targetUsername,
     targetUserId,
     targetGame: {
