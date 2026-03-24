@@ -75,6 +75,7 @@ function getDefaultRobloxMonitorState() {
     sessionCookie: null,
     targetUsername: 'altiksenpaicat2',
     targetUserId: null,
+    requiredRootPlaceId: 74260430392611,
     checkIntervalMinutes: 5,
     offlineReminderMinutes: 10,
     lastKnownPresence: null,
@@ -343,6 +344,7 @@ function normalizeRobloxMonitorPresence(value) {
   return {
     checkedAt,
     isOnline: Boolean(value.isOnline),
+    isInTargetGame: Boolean(value.isInTargetGame),
     userPresenceType: Number.isInteger(value.userPresenceType) ? value.userPresenceType : 0,
     targetUsername,
     targetUserId,
@@ -370,6 +372,9 @@ function normalizeRobloxMonitorState(state) {
   const targetUserId = Number.isInteger(parsed.targetUserId) && parsed.targetUserId > 0
     ? parsed.targetUserId
     : null;
+  const requiredRootPlaceId = Number.isInteger(parsed.requiredRootPlaceId) && parsed.requiredRootPlaceId > 0
+    ? parsed.requiredRootPlaceId
+    : fallback.requiredRootPlaceId;
   const checkIntervalMinutes = Math.max(1, Number(parsed.checkIntervalMinutes) || fallback.checkIntervalMinutes);
   const offlineReminderMinutes = Math.max(1, Number(parsed.offlineReminderMinutes) || fallback.offlineReminderMinutes);
   const lastOfflineReminderAt = typeof parsed.lastOfflineReminderAt === 'string'
@@ -386,6 +391,7 @@ function normalizeRobloxMonitorState(state) {
     sessionCookie,
     targetUsername,
     targetUserId,
+    requiredRootPlaceId,
     checkIntervalMinutes,
     offlineReminderMinutes,
     lastKnownPresence: normalizeRobloxMonitorPresence(parsed.lastKnownPresence),

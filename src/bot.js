@@ -405,14 +405,24 @@ function parseRobloxMonitorSessionModalCustomId(customId) {
 
 function buildRobloxMonitorStatusComponents(state) {
   const hasSession = Boolean(state?.sessionCookie);
+  const requiredRootPlaceId = Number.isInteger(state?.requiredRootPlaceId) ? state.requiredRootPlaceId : 74260430392611;
+  const monitoredGameName = 'Rebirth Champions Ultimate';
   const targetUsername = state?.targetUsername ?? 'Unknown';
   const targetUserId = Number.isInteger(state?.targetUserId) ? state.targetUserId : null;
+  const lastPresence = state?.lastKnownPresence ?? null;
   const monitoringAccountUserId = Number.isInteger(state?.lastKnownPresence?.monitoringAccountUserId)
     ? state.lastKnownPresence.monitoringAccountUserId
     : null;
   const lastError = typeof state?.lastKnownPresence?.lastError === 'string' && state.lastKnownPresence.lastError.trim()
     ? state.lastKnownPresence.lastError.trim()
     : null;
+  const presenceLabel = !lastPresence?.checkedAt
+    ? 'Unknown'
+    : !lastPresence.isOnline
+      ? 'Offline'
+      : lastPresence.isInTargetGame
+        ? 'Online in monitored game'
+        : 'Online outside monitored game';
 
   return [
     {
@@ -433,6 +443,9 @@ function buildRobloxMonitorStatusComponents(state) {
             `Session configured: **${hasSession ? 'Yes' : 'No'}**`,
             `Monitoring account user ID: **${monitoringAccountUserId ?? 'Unknown'}**`,
             `Target user: **${targetUsername}**${targetUserId ? ` (ID: ${targetUserId})` : ''}`,
+            `Monitored game: **${monitoredGameName}**`,
+            `Required rootPlaceId/placeId: **${requiredRootPlaceId}**`,
+            `Presence state: **${presenceLabel}**`,
             `Last error: ${lastError ?? 'None'}`
           ].join('\n')
         }
@@ -5916,9 +5929,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const isSubscribed = updatedState.subscriberUserIds.includes(interaction.user.id);
         const targetUsername = updatedState.targetUsername || currentMonitorState.targetUsername;
+        const requiredRootPlaceId = Number.isInteger(updatedState.requiredRootPlaceId)
+          ? updatedState.requiredRootPlaceId
+          : 74260430392611;
         const confirmationMessage = subcommand === 'opt_in'
           ? isSubscribed
-            ? `Roblox monitor alerts are now enabled for you in **${interaction.guild.name}**. Ticket account: **${acceptedIdentity.robloxNickname}**. Target: **${targetUsername}**.`
+            ? `Roblox monitor alerts are now enabled for you in **${interaction.guild.name}**. Ticket account: **${acceptedIdentity.robloxNickname}**. Target: **${targetUsername}**. Monitored game: **Rebirth Champions Ultimate** (${requiredRootPlaceId}).`
             : 'Roblox monitor alerts could not be enabled right now.'
           : isSubscribed
             ? 'Roblox monitor alerts are still enabled for you.'

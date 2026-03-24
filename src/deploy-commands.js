@@ -708,7 +708,7 @@ export const defaultCommands = [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'status',
-            description: 'Show Roblox monitor session and status information'
+            description: 'Show Roblox monitor status for Rebirth Champions Ultimate target game'
           }
         ]
       },
