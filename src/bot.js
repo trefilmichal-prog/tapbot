@@ -6048,7 +6048,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
     }
 
-    if (interaction.commandName === 'roblox_monitor') {
+    if (interaction.commandName === 'roblox_monitor' || interaction.commandName === 'roblox_alerts') {
       if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
         await interaction.reply({
           components: buildTextComponents('This command can only be used in a server.'),
@@ -6060,7 +6060,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const subcommandGroup = interaction.options.getSubcommandGroup(false);
       const subcommand = interaction.options.getSubcommand(true);
 
-      if (subcommandGroup === 'config') {
+      if (interaction.commandName === 'roblox_monitor' && subcommandGroup === 'config') {
         if (!hasAdminPermission(interaction.member)) {
           await interaction.reply({
             components: buildTextComponents('You do not have permission to use this command.'),
@@ -6190,7 +6190,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
-      if (subcommandGroup === 'alerts' && (subcommand === 'opt_in' || subcommand === 'opt_out')) {
+      if ((interaction.commandName === 'roblox_alerts' || subcommandGroup === 'alerts') && (subcommand === 'opt_in' || subcommand === 'opt_out')) {
         const acceptedIdentity = getAcceptedTicketRobloxIdentity(interaction.guildId, interaction.user.id);
         const fallbackNickname = getGuildMemberRobloxNicknameFallback(interaction.member);
         const accessError = getAcceptedTicketRobloxAccessError(acceptedIdentity, fallbackNickname);
