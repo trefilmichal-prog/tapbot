@@ -2,6 +2,7 @@ import { getClanState, getRobloxMonitorState, updateRobloxMonitorState } from '.
 import { collectAcceptedTicketRobloxIdentitiesFromState } from './clan-notification-matching.js';
 
 const DEFAULT_TARGET_USERNAME = 'altiksenpaicat2';
+const DEFAULT_REQUIRED_ROOT_PLACE_ID = 74260430392611;
 const DEFAULT_CHECK_INTERVAL_MINUTES = 5;
 const DEFAULT_OFFLINE_REMINDER_MINUTES = 10;
 const MIN_INTERVAL_MINUTES = 1;
@@ -22,6 +23,41 @@ function getIntervalMinutes(state) {
 
 function getOfflineReminderMinutes(state) {
   return Math.max(MIN_INTERVAL_MINUTES, Number(state?.offlineReminderMinutes) || DEFAULT_OFFLINE_REMINDER_MINUTES);
+}
+
+function getRequiredRootPlaceId(state) {
+  return Number.isInteger(state?.requiredRootPlaceId) && state.requiredRootPlaceId > 0
+    ? state.requiredRootPlaceId
+    : DEFAULT_REQUIRED_ROOT_PLACE_ID;
+}
+
+function isPresenceOnline(presence) {
+  return Number(presence?.userPresenceType) > 0;
+}
+
+function isPresenceInTargetGame(presence, requiredRootPlaceId) {
+  if (!isPresenceOnline(presence)) {
+    return false;
+  }
+
+  const requiredId = Number(requiredRootPlaceId);
+  if (!Number.isInteger(requiredId) || requiredId <= 0) {
+    return false;
+  }
+
+  const rootPlaceId = Number.isInteger(presence?.rootPlaceId) ? presence.rootPlaceId : null;
+  const placeId = Number.isInteger(presence?.placeId) ? presence.placeId : null;
+  return rootPlaceId === requiredId || placeId === requiredId;
+}
+
+function describePresenceForReminder(snapshot) {
+  if (!snapshot?.isOnline) {
+    return 'offline';
+  }
+  if (!snapshot.isInTargetGame) {
+    return 'online, but outside the monitored game';
+  }
+  return 'online in the monitored game';
 }
 
 function createRobloxCookieHeader(sessionCookie) {
@@ -197,13 +233,13 @@ function collectApprovedTicketUsers(guildId) {
   };
 }
 
-async function sendOfflineReminderToSubscribers(client, guild, targetUsername, subscriberUserIds) {
+async function sendOfflineReminderToSubscribers(client, guild, targetUsername, subscriberUserIds, presenceSnapshot) {
   for (const userId of subscriberUserIds) {
     try {
       const user = await client.users.fetch(userId);
       await user.send(
-        `Roblox monitor alert for **${guild.name}**: **${targetUsername}** is still offline. `
-        + `The bot will remind you again after the configured offline interval if the user remains offline.`
+        `Roblox monitor alert for **${guild.name}**: **${targetUsername}** is currently ${describePresenceForReminder(presenceSnapshot)}. `
+        + `The bot will remind you again after the configured interval if they are still not in the monitored game.`
       );
     } catch (error) {
       console.warn(`Failed to send Roblox offline reminder to user ${userId} in guild ${guild.id}:`, error);
@@ -211,13 +247,25 @@ async function sendOfflineReminderToSubscribers(client, guild, targetUsername, s
   }
 }
 
-function buildPresenceSnapshot({ state, targetUsername, targetUserId, monitoringAccountUserId, isFriend, presence, error = null }) {
+function buildPresenceSnapshot({
+  state,
+  targetUsername,
+  targetUserId,
+  monitoringAccountUserId,
+  isFriend,
+  presence,
+  requiredRootPlaceId,
+  error = null
+}) {
   const previousLastOnlineAt = state?.lastKnownPresence?.lastOnlineAt ?? null;
-  const isOnline = Number(presence?.userPresenceType) > 0;
+  const isOnline = isPresenceOnline(presence);
+  const monitoredRootPlaceId = Number.isInteger(requiredRootPlaceId) ? requiredRootPlaceId : getRequiredRootPlaceId(state);
+  const isInTargetGame = isPresenceInTargetGame(presence, monitoredRootPlaceId);
 
   return {
     checkedAt: new Date().toISOString(),
     isOnline,
+    isInTargetGame,
     userPresenceType: Number(presence?.userPresenceType) || 0,
     targetUsername,
     targetUserId: Number.isInteger(targetUserId) && targetUserId > 0 ? targetUserId : null,
@@ -243,6 +291,7 @@ async function runRobloxMonitorTick(client, guildId) {
   const approvedUsers = collectApprovedTicketUsers(guildId);
   let state = getRobloxMonitorState(guildId);
   const normalizedTargetUsername = state.targetUsername || DEFAULT_TARGET_USERNAME;
+  const requiredRootPlaceId = getRequiredRootPlaceId(state);
   const approvedDiscordUserIdSet = new Set(approvedUsers.discordUserIds);
   const filteredSubscriberUserIds = state.subscriberUserIds.filter((userId) => approvedDiscordUserIdSet.has(userId));
 
@@ -252,12 +301,16 @@ async function runRobloxMonitorTick(client, guildId) {
       if (!nextState.targetUsername) {
         nextState.targetUsername = DEFAULT_TARGET_USERNAME;
       }
+      if (!nextState.requiredRootPlaceId) {
+        nextState.requiredRootPlaceId = requiredRootPlaceId;
+      }
     });
   }
 
   if (!state.sessionCookie) {
     await updateRobloxMonitorState(guildId, (nextState) => {
       nextState.targetUsername = normalizedTargetUsername;
+      nextState.requiredRootPlaceId = getRequiredRootPlaceId(nextState);
       nextState.lastKnownPresence = buildPresenceSnapshot({
         state: nextState,
         targetUsername: normalizedTargetUsername,
@@ -265,6 +318,7 @@ async function runRobloxMonitorTick(client, guildId) {
         monitoringAccountUserId: null,
         isFriend: null,
         presence: null,
+        requiredRootPlaceId: getRequiredRootPlaceId(nextState),
         error: 'Roblox monitor skipped because no .ROBLOSECURITY cookie is configured.'
       });
     });
@@ -309,27 +363,29 @@ async function runRobloxMonitorTick(client, guildId) {
       targetUserId,
       monitoringAccountUserId: Number(monitoringUser.id),
       isFriend,
-      presence
+      presence,
+      requiredRootPlaceId
     });
 
     const nowMs = Date.now();
     const reminderIntervalMs = getOfflineReminderMinutes(state) * 60 * 1000;
     const lastReminderMs = state.lastOfflineReminderAt ? new Date(state.lastOfflineReminderAt).getTime() : 0;
-    const shouldSendOfflineReminder = !nextPresence.isOnline
+    const shouldSendOfflineReminder = !nextPresence.isInTargetGame
       && filteredSubscriberUserIds.length > 0
       && (!lastReminderMs || Number.isNaN(lastReminderMs) || (nowMs - lastReminderMs) >= reminderIntervalMs);
 
     if (shouldSendOfflineReminder) {
-      await sendOfflineReminderToSubscribers(client, guild, targetUsername, filteredSubscriberUserIds);
+      await sendOfflineReminderToSubscribers(client, guild, targetUsername, filteredSubscriberUserIds, nextPresence);
     }
 
     await updateRobloxMonitorState(guildId, (nextState) => {
       nextState.targetUsername = targetUsername;
       nextState.targetUserId = targetUserId;
+      nextState.requiredRootPlaceId = requiredRootPlaceId;
       nextState.subscriberUserIds = filteredSubscriberUserIds;
       nextState.lastKnownPresence = nextPresence;
       nextState.lastFriendRequestSweepAt = new Date().toISOString();
-      nextState.lastOfflineReminderAt = nextPresence.isOnline
+      nextState.lastOfflineReminderAt = nextPresence.isInTargetGame
         ? null
         : (shouldSendOfflineReminder ? new Date().toISOString() : nextState.lastOfflineReminderAt);
     });
@@ -341,6 +397,7 @@ async function runRobloxMonitorTick(client, guildId) {
     console.warn(`Roblox monitor tick failed for guild ${guildId}:`, error);
     await updateRobloxMonitorState(guildId, (nextState) => {
       nextState.targetUsername = normalizedTargetUsername;
+      nextState.requiredRootPlaceId = getRequiredRootPlaceId(nextState);
       nextState.lastKnownPresence = buildPresenceSnapshot({
         state: nextState,
         targetUsername: normalizedTargetUsername,
@@ -348,6 +405,7 @@ async function runRobloxMonitorTick(client, guildId) {
         monitoringAccountUserId: nextState.lastKnownPresence?.monitoringAccountUserId ?? null,
         isFriend: nextState.lastKnownPresence?.isFriend ?? null,
         presence: nextState.lastKnownPresence,
+        requiredRootPlaceId: getRequiredRootPlaceId(nextState),
         error: error?.message ?? error
       });
     });
@@ -427,5 +485,6 @@ export const robloxMonitorInternals = {
   acceptFriendRequest,
   collectApprovedTicketUsers,
   buildPresenceSnapshot,
+  isPresenceInTargetGame,
   ROBLOX_API_ORIGIN
 };
