@@ -736,6 +736,19 @@ export const defaultCommands = [
           },
           {
             type: ApplicationCommandOptionType.Subcommand,
+            name: 'set_target',
+            description: 'Set fixed Roblox target username override for this guild monitor',
+            options: [
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'username',
+                description: 'Roblox username for fixed target override',
+                required: true
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
             name: 'clear_target',
             description: 'Clear the fixed Roblox target override for this guild monitor'
           }
