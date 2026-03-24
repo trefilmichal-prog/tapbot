@@ -4,7 +4,16 @@ export function normalizeClanNicknameForMatch(value) {
   }
 
   const trimmed = value.trim().toLowerCase();
-  return trimmed ? trimmed : null;
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalized = trimmed
+    .replace(/^[^\p{L}\p{N}_]+/u, '')
+    .replace(/[^\p{L}\p{N}_]+$/u, '')
+    .trim();
+
+  return normalized ? normalized : null;
 }
 
 const HATCHED_NICKNAME_REGEXES = [
