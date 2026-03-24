@@ -765,6 +765,16 @@ export const defaultCommands = [
             description: 'Disable Roblox monitor alerts for your accepted ticket account'
           }
         ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'opt_in',
+        description: 'Enable Roblox monitor alerts for your accepted ticket account (shortcut)'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'opt_out',
+        description: 'Disable Roblox monitor alerts for your accepted ticket account (shortcut)'
       }
     ]
   }

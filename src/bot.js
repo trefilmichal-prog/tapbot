@@ -6190,7 +6190,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
-      if (subcommandGroup === 'alerts' && (subcommand === 'opt_in' || subcommand === 'opt_out')) {
+      if ((subcommandGroup === 'alerts' || subcommandGroup == null) && (subcommand === 'opt_in' || subcommand === 'opt_out')) {
         const acceptedIdentity = getAcceptedTicketRobloxIdentity(interaction.guildId, interaction.user.id);
         const fallbackNickname = getGuildMemberRobloxNicknameFallback(interaction.member);
         const accessError = getAcceptedTicketRobloxAccessError(acceptedIdentity, fallbackNickname);
