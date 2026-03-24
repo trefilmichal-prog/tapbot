@@ -6311,9 +6311,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             subscriberIds.add(interaction.user.id);
             if (accountSource === 'guild_nickname' && resolvedRobloxUsername) {
               state.subscriberRobloxAccounts[interaction.user.id] = {
-                username: resolvedRobloxUsername,
+                robloxUsername: resolvedRobloxUsername,
+                robloxUserId: Number.isInteger(optInFriendshipStatus?.robloxUserId) ? optInFriendshipStatus.robloxUserId : null,
                 source: 'guild_nickname',
-                updatedAt: new Date().toISOString()
+                optedInAt: new Date().toISOString()
               };
             } else if (state.subscriberRobloxAccounts[interaction.user.id]) {
               delete state.subscriberRobloxAccounts[interaction.user.id];
