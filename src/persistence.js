@@ -71,7 +71,7 @@ function getDefaultPrivateMessageState() {
 
 function getDefaultRobloxMonitorState() {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     monitoringSession: {
       sessionCookie: null,
       updatedAt: null
@@ -99,6 +99,7 @@ function getDefaultRobloxMonitorState() {
     lastOfflineReminderAt: null,
     subscriberUserIds: [],
     subscriberRobloxAccounts: {},
+    subscriberFriendshipStatus: {},
     lastFriendRequestSweepAt: null
   };
 }
@@ -371,6 +372,47 @@ function normalizeRobloxMonitorSubscriberAccounts(entries) {
   return normalizedEntries;
 }
 
+function normalizeRobloxMonitorFriendshipStatuses(entries) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
+    return {};
+  }
+
+  const normalizedEntries = {};
+  for (const [userId, status] of Object.entries(entries)) {
+    if (!isValidDiscordSnowflake(userId)) {
+      continue;
+    }
+
+    if (!status || typeof status !== 'object' || Array.isArray(status)) {
+      continue;
+    }
+
+    const robloxUserId = Number.isInteger(status.robloxUserId) && status.robloxUserId > 0
+      ? status.robloxUserId
+      : null;
+    const isFriend = typeof status.isFriend === 'boolean' ? status.isFriend : null;
+    const lastCheckedAt = typeof status.lastCheckedAt === 'string' && Number.isFinite(new Date(status.lastCheckedAt).getTime())
+      ? status.lastCheckedAt
+      : null;
+    const lastAutoAcceptedAt = typeof status.lastAutoAcceptedAt === 'string' && Number.isFinite(new Date(status.lastAutoAcceptedAt).getTime())
+      ? status.lastAutoAcceptedAt
+      : null;
+    const note = typeof status.note === 'string' && status.note.trim()
+      ? status.note.trim().slice(0, 400)
+      : null;
+
+    normalizedEntries[userId.trim()] = {
+      robloxUserId,
+      isFriend,
+      lastCheckedAt,
+      lastAutoAcceptedAt,
+      note
+    };
+  }
+
+  return normalizedEntries;
+}
+
 function normalizeRobloxMonitorPresence(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
@@ -483,7 +525,7 @@ function normalizeRobloxMonitorState(state) {
     : requiredRootPlaceId;
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     monitoringSession: {
       sessionCookie,
       updatedAt: monitoringSessionUpdatedAt
@@ -511,6 +553,7 @@ function normalizeRobloxMonitorState(state) {
     lastOfflineReminderAt,
     subscriberUserIds: normalizeRobloxMonitorSubscriberUserIds(parsed.subscriberUserIds),
     subscriberRobloxAccounts: normalizeRobloxMonitorSubscriberAccounts(parsed.subscriberRobloxAccounts),
+    subscriberFriendshipStatus: normalizeRobloxMonitorFriendshipStatuses(parsed.subscriberFriendshipStatus),
     lastFriendRequestSweepAt
   };
 }
