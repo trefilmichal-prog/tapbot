@@ -6131,59 +6131,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
-        if (subcommand === 'set_target') {
-          const rawUsername = interaction.options.getString('username', true);
-          const targetUsername = normalizeRobloxUsernameCandidate(rawUsername);
-          if (!targetUsername) {
+        if (subcommand === 'clear_target') {
+          const confirmReset = interaction.options.getBoolean('confirm', false) === true;
+          if (!confirmReset) {
             await interaction.reply({
-              components: buildTextComponents('Invalid Roblox username format. Use 3-20 characters: letters, numbers, and underscore only.'),
+              components: buildTextComponents('This action resets all subscriber-specific Roblox targets in this guild. Re-run with `/roblox_monitor config clear_target confirm:true` to confirm.'),
               flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
           }
 
           await updateRobloxMonitorState(interaction.guildId, (state) => {
-            if (!state.monitorSource || typeof state.monitorSource !== 'object' || Array.isArray(state.monitorSource)) {
-              state.monitorSource = {};
-            }
-            state.monitorSource.guild_id = interaction.guildId;
-            state.monitorSource.channel_id = interaction.channelId;
-            state.monitorSource.game_id = Number.isInteger(state?.targetGame?.requiredRootPlaceId) && state.targetGame.requiredRootPlaceId > 0
-              ? state.targetGame.requiredRootPlaceId
-              : 74260430392611;
-            state.monitorSource.source_type = 'target_override';
-            state.monitorSource.target_override = targetUsername;
-            state.monitorSource.source_user_id = interaction.user.id;
-            state.monitorSource.updated_at = new Date().toISOString();
-            state.targetUsername = targetUsername;
-            state.targetUserId = null;
+            state.subscriberRobloxAccounts = {};
+            state.subscriberFriendshipStatus = {};
+            state.subscriberPresence = {};
+            state.subscriberOfflineReminderAt = {};
           });
           await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
           await interaction.reply({
-            components: buildTextComponents(`Roblox monitor fixed target override was set to **${targetUsername}** for this guild and the scheduler was restarted.`),
-            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          });
-          return;
-        }
-
-        if (subcommand === 'clear_target') {
-          await updateRobloxMonitorState(interaction.guildId, (state) => {
-            if (!state.monitorSource || typeof state.monitorSource !== 'object' || Array.isArray(state.monitorSource)) {
-              state.monitorSource = {};
-            }
-            state.monitorSource.guild_id = interaction.guildId;
-            state.monitorSource.channel_id = interaction.channelId;
-            state.monitorSource.game_id = Number.isInteger(state?.targetGame?.requiredRootPlaceId) && state.targetGame.requiredRootPlaceId > 0
-              ? state.targetGame.requiredRootPlaceId
-              : 74260430392611;
-            state.monitorSource.target_override = null;
-            state.monitorSource.updated_at = new Date().toISOString();
-            state.targetUsername = null;
-            state.targetUserId = null;
-          });
-          await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
-          await interaction.reply({
-            components: buildTextComponents('Roblox monitor fixed target was fully disconnected for this guild (target_override = null, targetUsername = null, targetUserId = null).'),
+            components: buildTextComponents('All subscriber Roblox targets and friendship/presence cache were reset for this guild. Subscribers stay opted-in and will re-bind their target on next `/roblox_monitor alerts opt_in`.'),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
@@ -6309,11 +6275,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
           if (subcommand === 'opt_in') {
             subscriberIds.add(interaction.user.id);
-            if (accountSource === 'guild_nickname' && resolvedRobloxUsername) {
+            if (resolvedRobloxUsername) {
               state.subscriberRobloxAccounts[interaction.user.id] = {
                 robloxUsername: resolvedRobloxUsername,
                 robloxUserId: Number.isInteger(optInFriendshipStatus?.robloxUserId) ? optInFriendshipStatus.robloxUserId : null,
-                source: 'guild_nickname',
+                source: accountSource === 'guild_nickname' ? 'guild_nickname' : 'ticket_account',
                 optedInAt: new Date().toISOString()
               };
             } else if (state.subscriberRobloxAccounts[interaction.user.id]) {
