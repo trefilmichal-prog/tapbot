@@ -440,8 +440,6 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
   const monitoredGameName = typeof state?.targetGame?.name === 'string' && state.targetGame.name.trim()
     ? state.targetGame.name.trim()
     : 'Rebirth Champions Ultimate';
-  const targetUsername = state?.targetUsername ?? 'Unknown';
-  const targetUserId = Number.isInteger(state?.targetUserId) ? state.targetUserId : null;
   const monitorSource = state?.monitorSource && typeof state.monitorSource === 'object'
     ? state.monitorSource
     : {};
@@ -458,8 +456,14 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
     ? state.lastKnownPresence.lastError.trim()
     : null;
   const subscriberUserIds = Array.isArray(state?.subscriberUserIds) ? state.subscriberUserIds : [];
+  const subscriberAccountMap = state?.subscriberRobloxAccounts && typeof state.subscriberRobloxAccounts === 'object' && !Array.isArray(state.subscriberRobloxAccounts)
+    ? state.subscriberRobloxAccounts
+    : {};
   const friendshipStatusMap = state?.subscriberFriendshipStatus && typeof state.subscriberFriendshipStatus === 'object' && !Array.isArray(state.subscriberFriendshipStatus)
     ? state.subscriberFriendshipStatus
+    : {};
+  const subscriberPresenceMap = state?.subscriberPresence && typeof state.subscriberPresence === 'object' && !Array.isArray(state.subscriberPresence)
+    ? state.subscriberPresence
     : {};
   const friendshipReadyCount = subscriberUserIds.reduce((count, userId) => (
     friendshipStatusMap[userId]?.isFriend === true ? count + 1 : count
@@ -474,13 +478,26 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
       : viewerFriendshipStatus?.isFriend === false
         ? 'No'
         : 'Unknown';
-  const presenceLabel = !lastPresence?.checkedAt
-    ? 'Unknown'
-    : !lastPresence.isOnline
-      ? 'Offline'
-      : lastPresence.isInTargetGame
-        ? 'Online in monitored game'
-        : 'Online outside monitored game';
+  const subscriberStatusLines = subscriberUserIds.map((userId) => {
+    const account = subscriberAccountMap[userId];
+    const accountUsername = typeof account?.robloxUsername === 'string' && account.robloxUsername.trim()
+      ? account.robloxUsername.trim()
+      : 'not set';
+    const friendship = friendshipStatusMap[userId];
+    const friendshipLabel = friendship?.isFriend === true ? 'Yes' : (friendship?.isFriend === false ? 'No' : 'Unknown');
+    const presence = subscriberPresenceMap[userId];
+    const presenceLabel = !presence?.checkedAt
+      ? 'Unknown'
+      : !presence.isOnline
+        ? 'Offline'
+        : presence.isInTargetGame
+          ? 'Online in monitored game'
+          : 'Online outside monitored game';
+    const statusNote = typeof friendship?.note === 'string' && friendship.note.trim()
+      ? friendship.note.trim()
+      : (typeof presence?.lastError === 'string' && presence.lastError.trim() ? presence.lastError.trim() : 'None');
+    return `<@${userId}> | Account: **${accountUsername}** | Friend: **${friendshipLabel}** | Presence: **${presenceLabel}** | Note: ${statusNote}`;
+  });
 
   return [
     {
@@ -507,14 +524,15 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
             `Configured source game_id: **${monitorSource.game_id ?? requiredRootPlaceId}**`,
             `Configured source user_id: **${monitorSource.source_user_id ?? 'N/A'}**`,
             `Target override: **${targetOverride ?? 'null'}**`,
-            `Target user: **${targetUsername}**${targetUserId ? ` (ID: ${targetUserId})` : ''}`,
             `Monitored game (persisted): **${monitoredGameName}**`,
             `Required rootPlaceId/placeId: **${requiredRootPlaceId}**`,
             `Friendship-ready subscribers: **${friendshipReadyCount}/${subscriberUserIds.length}**`,
             viewerDiscordUserId ? `Your friendship-ready state: **${viewerReadyLabel}**` : null,
-            `Presence state: **${presenceLabel}**`,
             `Last known monitor state persisted: **${hasLastKnownPresence ? `Yes (${lastPresence.checkedAt})` : 'No'}**`,
-            `Last error: ${lastError ?? 'None'}`
+            `Last error: ${lastError ?? 'None'}`,
+            '',
+            '**Subscriber statuses:**',
+            subscriberStatusLines.length > 0 ? subscriberStatusLines.join('\n') : 'No subscribers are currently opted in.'
           ].filter(Boolean).join('\n')
         }
       ]
@@ -567,7 +585,7 @@ async function warmupRobloxMonitorStateOnStartup(readyClient) {
       if (state.monitorSource.source_type === 'guild_nickname') {
         state.monitorSource.target_override = null;
       } else if (typeof state.monitorSource.target_override !== 'string' || !state.monitorSource.target_override.trim()) {
-        state.monitorSource.target_override = state.targetUsername;
+        state.monitorSource.target_override = null;
       } else {
         state.monitorSource.target_override = state.monitorSource.target_override.trim();
       }
