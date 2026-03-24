@@ -71,10 +71,18 @@ function getDefaultPrivateMessageState() {
 
 function getDefaultRobloxMonitorState() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    monitoringSession: {
+      sessionCookie: null,
+      updatedAt: null
+    },
     sessionCookie: null,
     targetUsername: 'altiksenpaicat2',
     targetUserId: null,
+    targetGame: {
+      name: 'Rebirth Champions Ultimate',
+      requiredRootPlaceId: 74260430392611
+    },
     requiredRootPlaceId: 74260430392611,
     checkIntervalMinutes: 5,
     offlineReminderMinutes: 10,
@@ -363,18 +371,35 @@ function normalizeRobloxMonitorPresence(value) {
 function normalizeRobloxMonitorState(state) {
   const fallback = getDefaultRobloxMonitorState();
   const parsed = state && typeof state === 'object' && !Array.isArray(state) ? state : {};
-  const sessionCookie = typeof parsed.sessionCookie === 'string' && parsed.sessionCookie.trim()
-    ? parsed.sessionCookie.trim()
+  const parsedMonitoringSession = parsed.monitoringSession && typeof parsed.monitoringSession === 'object' && !Array.isArray(parsed.monitoringSession)
+    ? parsed.monitoringSession
+    : {};
+  const sessionCookie = typeof parsedMonitoringSession.sessionCookie === 'string' && parsedMonitoringSession.sessionCookie.trim()
+    ? parsedMonitoringSession.sessionCookie.trim()
+    : typeof parsed.sessionCookie === 'string' && parsed.sessionCookie.trim()
+      ? parsed.sessionCookie.trim()
+      : null;
+  const monitoringSessionUpdatedAt = typeof parsedMonitoringSession.updatedAt === 'string'
+    && Number.isFinite(new Date(parsedMonitoringSession.updatedAt).getTime())
+    ? parsedMonitoringSession.updatedAt
     : null;
+  const parsedTargetGame = parsed.targetGame && typeof parsed.targetGame === 'object' && !Array.isArray(parsed.targetGame)
+    ? parsed.targetGame
+    : {};
   const targetUsername = typeof parsed.targetUsername === 'string' && parsed.targetUsername.trim()
     ? parsed.targetUsername.trim()
     : fallback.targetUsername;
   const targetUserId = Number.isInteger(parsed.targetUserId) && parsed.targetUserId > 0
     ? parsed.targetUserId
     : null;
-  const requiredRootPlaceId = Number.isInteger(parsed.requiredRootPlaceId) && parsed.requiredRootPlaceId > 0
-    ? parsed.requiredRootPlaceId
-    : fallback.requiredRootPlaceId;
+  const requiredRootPlaceId = Number.isInteger(parsedTargetGame.requiredRootPlaceId) && parsedTargetGame.requiredRootPlaceId > 0
+    ? parsedTargetGame.requiredRootPlaceId
+    : Number.isInteger(parsed.requiredRootPlaceId) && parsed.requiredRootPlaceId > 0
+      ? parsed.requiredRootPlaceId
+      : fallback.requiredRootPlaceId;
+  const targetGameName = typeof parsedTargetGame.name === 'string' && parsedTargetGame.name.trim()
+    ? parsedTargetGame.name.trim()
+    : fallback.targetGame.name;
   const checkIntervalMinutes = Math.max(1, Number(parsed.checkIntervalMinutes) || fallback.checkIntervalMinutes);
   const offlineReminderMinutes = Math.max(1, Number(parsed.offlineReminderMinutes) || fallback.offlineReminderMinutes);
   const lastOfflineReminderAt = typeof parsed.lastOfflineReminderAt === 'string'
@@ -387,10 +412,18 @@ function normalizeRobloxMonitorState(state) {
     : null;
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    monitoringSession: {
+      sessionCookie,
+      updatedAt: monitoringSessionUpdatedAt
+    },
     sessionCookie,
     targetUsername,
     targetUserId,
+    targetGame: {
+      name: targetGameName,
+      requiredRootPlaceId
+    },
     requiredRootPlaceId,
     checkIntervalMinutes,
     offlineReminderMinutes,
@@ -1184,6 +1217,18 @@ export function updateRobloxMonitorState(guildId, mutator) {
     state.sessionCookie = trimmedSessionCookie || null;
   } else if (state.sessionCookie === '') {
     state.sessionCookie = null;
+  }
+  if (!state.monitoringSession || typeof state.monitoringSession !== 'object' || Array.isArray(state.monitoringSession)) {
+    state.monitoringSession = { sessionCookie: state.sessionCookie ?? null, updatedAt: null };
+  }
+  if (typeof state.monitoringSession.sessionCookie === 'string') {
+    const trimmedSessionCookie = state.monitoringSession.sessionCookie.trim();
+    state.monitoringSession.sessionCookie = trimmedSessionCookie || null;
+  } else if (state.monitoringSession.sessionCookie === '') {
+    state.monitoringSession.sessionCookie = null;
+  }
+  if (state.sessionCookie !== state.monitoringSession.sessionCookie) {
+    state.sessionCookie = state.monitoringSession.sessionCookie;
   }
   const normalized = normalizeRobloxMonitorState(state);
   cachedRobloxMonitorState.set(key, normalized);
