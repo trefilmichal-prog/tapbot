@@ -256,6 +256,7 @@ function collectApprovedTicketUsers(guildId) {
   const state = getClanState(guildId);
   const discordUserIds = new Set();
   const robloxUsernames = new Set();
+  const discordUserIdToRobloxUsername = {};
 
   for (const identity of collectAcceptedTicketRobloxIdentitiesFromState(state)) {
     if (identity.applicantId) {
@@ -264,12 +265,16 @@ function collectApprovedTicketUsers(guildId) {
 
     if (identity.robloxNickname) {
       robloxUsernames.add(identity.robloxNickname);
+      if (identity.applicantId && !discordUserIdToRobloxUsername[identity.applicantId]) {
+        discordUserIdToRobloxUsername[identity.applicantId] = identity.robloxNickname;
+      }
     }
   }
 
   return {
     discordUserIds: [...discordUserIds].sort(),
-    robloxUsernames: [...robloxUsernames].sort((left, right) => left.localeCompare(right))
+    robloxUsernames: [...robloxUsernames].sort((left, right) => left.localeCompare(right)),
+    discordUserIdToRobloxUsername
   };
 }
 
@@ -350,6 +355,22 @@ async function runRobloxMonitorTick(client, guildId) {
   if (JSON.stringify(state.subscriberUserIds) !== JSON.stringify(filteredSubscriberUserIds)) {
     state = await updateRobloxMonitorState(guildId, (nextState) => {
       nextState.subscriberUserIds = filteredSubscriberUserIds;
+      if (!nextState.subscriberRobloxAccounts || typeof nextState.subscriberRobloxAccounts !== 'object' || Array.isArray(nextState.subscriberRobloxAccounts)) {
+        nextState.subscriberRobloxAccounts = {};
+      }
+      if (!nextState.subscriberFriendshipStatus || typeof nextState.subscriberFriendshipStatus !== 'object' || Array.isArray(nextState.subscriberFriendshipStatus)) {
+        nextState.subscriberFriendshipStatus = {};
+      }
+      for (const userId of Object.keys(nextState.subscriberRobloxAccounts)) {
+        if (!approvedDiscordUserIdSet.has(userId)) {
+          delete nextState.subscriberRobloxAccounts[userId];
+        }
+      }
+      for (const userId of Object.keys(nextState.subscriberFriendshipStatus)) {
+        if (!approvedDiscordUserIdSet.has(userId)) {
+          delete nextState.subscriberFriendshipStatus[userId];
+        }
+      }
       if (!nextState.targetUsername) {
         nextState.targetUsername = DEFAULT_TARGET_USERNAME;
       }
@@ -362,8 +383,22 @@ async function runRobloxMonitorTick(client, guildId) {
   const sessionCookie = getSessionCookie(state);
   if (!sessionCookie) {
     await updateRobloxMonitorState(guildId, (nextState) => {
+      const checkedAt = new Date().toISOString();
       nextState.targetUsername = normalizedTargetUsername ?? nextState.targetUsername ?? DEFAULT_TARGET_USERNAME;
       nextState.requiredRootPlaceId = getRequiredRootPlaceId(nextState);
+      if (!nextState.subscriberFriendshipStatus || typeof nextState.subscriberFriendshipStatus !== 'object' || Array.isArray(nextState.subscriberFriendshipStatus)) {
+        nextState.subscriberFriendshipStatus = {};
+      }
+      for (const subscriberUserId of filteredSubscriberUserIds) {
+        const previous = nextState.subscriberFriendshipStatus[subscriberUserId];
+        nextState.subscriberFriendshipStatus[subscriberUserId] = {
+          robloxUserId: Number.isInteger(previous?.robloxUserId) ? previous.robloxUserId : null,
+          isFriend: false,
+          lastCheckedAt: checkedAt,
+          lastAutoAcceptedAt: previous?.lastAutoAcceptedAt ?? null,
+          note: 'Periodic check skipped: missing monitor session cookie.'
+        };
+      }
       nextState.lastKnownPresence = buildPresenceSnapshot({
         state: nextState,
         targetUsername: normalizedTargetUsername ?? nextState.targetUsername ?? DEFAULT_TARGET_USERNAME,
@@ -430,13 +465,69 @@ async function runRobloxMonitorTick(client, guildId) {
 
     const pendingRequests = await listPendingInboundFriendRequests(apiClient);
     let acceptedCount = 0;
+    const acceptedRequesterIds = new Set();
     for (const request of pendingRequests) {
       const requesterId = Number(request?.id);
       if (!approvedRobloxIds.has(requesterId)) {
         continue;
       }
       await acceptFriendRequest(apiClient, requesterId);
+      acceptedRequesterIds.add(requesterId);
       acceptedCount += 1;
+    }
+
+    const checkedAt = new Date().toISOString();
+    const friendshipStatusBySubscriber = {};
+    const subscriberAccountMap = state?.subscriberRobloxAccounts && typeof state.subscriberRobloxAccounts === 'object' && !Array.isArray(state.subscriberRobloxAccounts)
+      ? state.subscriberRobloxAccounts
+      : {};
+    const resolvedUsernameCache = new Map();
+
+    for (const subscriberUserId of filteredSubscriberUserIds) {
+      const preferredUsername = subscriberAccountMap[subscriberUserId]?.username
+        ?? approvedUsers.discordUserIdToRobloxUsername[subscriberUserId]
+        ?? null;
+
+      if (!preferredUsername) {
+        friendshipStatusBySubscriber[subscriberUserId] = {
+          robloxUserId: null,
+          isFriend: false,
+          lastCheckedAt: checkedAt,
+          lastAutoAcceptedAt: null,
+          note: 'No Roblox username could be resolved for this subscriber.'
+        };
+        continue;
+      }
+
+      const cacheKey = normalizeUsername(preferredUsername);
+      let resolvedRobloxUserId = resolvedUsernameCache.get(cacheKey) ?? null;
+      if (!resolvedRobloxUserId) {
+        try {
+          const resolution = await resolveRobloxUserIdByUsername(apiClient, preferredUsername);
+          resolvedRobloxUserId = Number(resolution.userId);
+          resolvedUsernameCache.set(cacheKey, resolvedRobloxUserId);
+        } catch (error) {
+          friendshipStatusBySubscriber[subscriberUserId] = {
+            robloxUserId: null,
+            isFriend: false,
+            lastCheckedAt: checkedAt,
+            lastAutoAcceptedAt: null,
+            note: `Failed to resolve Roblox user "${preferredUsername}".`
+          };
+          continue;
+        }
+      }
+
+      const subscriberIsFriend = await isMonitoringAccountFriendsWithTarget(apiClient, monitoringUser.id, resolvedRobloxUserId);
+      friendshipStatusBySubscriber[subscriberUserId] = {
+        robloxUserId: resolvedRobloxUserId,
+        isFriend: subscriberIsFriend,
+        lastCheckedAt: checkedAt,
+        lastAutoAcceptedAt: acceptedRequesterIds.has(resolvedRobloxUserId) ? checkedAt : null,
+        note: subscriberIsFriend
+          ? 'Friendship verified during periodic monitor tick.'
+          : 'Friendship not verified during periodic monitor tick.'
+      };
     }
 
     const nextPresence = buildPresenceSnapshot({
@@ -475,6 +566,7 @@ async function runRobloxMonitorTick(client, guildId) {
       nextState.monitorSource.source_user_id = sourceUserId;
       nextState.monitorSource.updated_at = new Date().toISOString();
       nextState.subscriberUserIds = filteredSubscriberUserIds;
+      nextState.subscriberFriendshipStatus = friendshipStatusBySubscriber;
       nextState.lastKnownPresence = nextPresence;
       nextState.lastFriendRequestSweepAt = new Date().toISOString();
       nextState.lastOfflineReminderAt = nextPresence.isInTargetGame
@@ -494,8 +586,22 @@ async function runRobloxMonitorTick(client, guildId) {
       resolution_source: sourceType
     });
     await updateRobloxMonitorState(guildId, (nextState) => {
+      const checkedAt = new Date().toISOString();
       nextState.targetUsername = normalizedTargetUsername ?? nextState.targetUsername ?? DEFAULT_TARGET_USERNAME;
       nextState.requiredRootPlaceId = getRequiredRootPlaceId(nextState);
+      if (!nextState.subscriberFriendshipStatus || typeof nextState.subscriberFriendshipStatus !== 'object' || Array.isArray(nextState.subscriberFriendshipStatus)) {
+        nextState.subscriberFriendshipStatus = {};
+      }
+      for (const subscriberUserId of filteredSubscriberUserIds) {
+        const previous = nextState.subscriberFriendshipStatus[subscriberUserId];
+        nextState.subscriberFriendshipStatus[subscriberUserId] = {
+          robloxUserId: Number.isInteger(previous?.robloxUserId) ? previous.robloxUserId : null,
+          isFriend: typeof previous?.isFriend === 'boolean' ? previous.isFriend : false,
+          lastCheckedAt: checkedAt,
+          lastAutoAcceptedAt: previous?.lastAutoAcceptedAt ?? null,
+          note: `Periodic check failed: ${error?.message ?? error}`
+        };
+      }
       nextState.lastKnownPresence = buildPresenceSnapshot({
         state: nextState,
         targetUsername: normalizedTargetUsername ?? nextState.targetUsername ?? DEFAULT_TARGET_USERNAME,

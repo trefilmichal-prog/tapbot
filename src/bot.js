@@ -429,7 +429,7 @@ function parseRobloxMonitorSessionModalCustomId(customId) {
   return { guildId, userId };
 }
 
-function buildRobloxMonitorStatusComponents(state) {
+function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null } = {}) {
   const monitoringSessionCookie = state?.monitoringSession?.sessionCookie ?? state?.sessionCookie ?? null;
   const hasSession = Boolean(monitoringSessionCookie);
   const requiredRootPlaceId = Number.isInteger(state?.targetGame?.requiredRootPlaceId)
@@ -457,6 +457,23 @@ function buildRobloxMonitorStatusComponents(state) {
   const lastError = typeof state?.lastKnownPresence?.lastError === 'string' && state.lastKnownPresence.lastError.trim()
     ? state.lastKnownPresence.lastError.trim()
     : null;
+  const subscriberUserIds = Array.isArray(state?.subscriberUserIds) ? state.subscriberUserIds : [];
+  const friendshipStatusMap = state?.subscriberFriendshipStatus && typeof state.subscriberFriendshipStatus === 'object' && !Array.isArray(state.subscriberFriendshipStatus)
+    ? state.subscriberFriendshipStatus
+    : {};
+  const friendshipReadyCount = subscriberUserIds.reduce((count, userId) => (
+    friendshipStatusMap[userId]?.isFriend === true ? count + 1 : count
+  ), 0);
+  const viewerFriendshipStatus = viewerDiscordUserId && friendshipStatusMap[viewerDiscordUserId]
+    ? friendshipStatusMap[viewerDiscordUserId]
+    : null;
+  const viewerReadyLabel = !viewerDiscordUserId
+    ? null
+    : viewerFriendshipStatus?.isFriend === true
+      ? 'Yes'
+      : viewerFriendshipStatus?.isFriend === false
+        ? 'No'
+        : 'Unknown';
   const presenceLabel = !lastPresence?.checkedAt
     ? 'Unknown'
     : !lastPresence.isOnline
@@ -493,10 +510,12 @@ function buildRobloxMonitorStatusComponents(state) {
             `Target user: **${targetUsername}**${targetUserId ? ` (ID: ${targetUserId})` : ''}`,
             `Monitored game (persisted): **${monitoredGameName}**`,
             `Required rootPlaceId/placeId: **${requiredRootPlaceId}**`,
+            `Friendship-ready subscribers: **${friendshipReadyCount}/${subscriberUserIds.length}**`,
+            viewerDiscordUserId ? `Your friendship-ready state: **${viewerReadyLabel}**` : null,
             `Presence state: **${presenceLabel}**`,
             `Last known monitor state persisted: **${hasLastKnownPresence ? `Yes (${lastPresence.checkedAt})` : 'No'}**`,
             `Last error: ${lastError ?? 'None'}`
-          ].join('\n')
+          ].filter(Boolean).join('\n')
         }
       ]
     }
@@ -6047,7 +6066,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (subcommand === 'status') {
           const state = getRobloxMonitorState(interaction.guildId);
           await interaction.reply({
-            components: buildRobloxMonitorStatusComponents(state),
+            components: buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId: interaction.user.id }),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
@@ -6056,7 +6075,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (subcommand === 'show') {
           const state = getRobloxMonitorState(interaction.guildId);
           await interaction.reply({
-            components: buildRobloxMonitorStatusComponents(state),
+            components: buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId: interaction.user.id }),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
@@ -6133,6 +6152,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const resolvedRobloxUsername = acceptedIdentity?.robloxNickname || fallbackNickname;
         const accountSource = acceptedIdentity?.robloxNickname ? 'ticket_account' : 'guild_nickname';
         let optInHandshakeStatusLine = null;
+        let optInFriendshipStatus = null;
 
         if (subcommand === 'opt_in') {
           const sessionCookie = getRobloxMonitorSessionCookie(currentMonitorState);
@@ -6145,6 +6165,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
 
           try {
+            const checkedAt = new Date().toISOString();
             const apiClient = new RobloxSessionClient(sessionCookie);
             const monitoringUser = await getAuthenticatedRobloxUser(apiClient);
             const targetUser = await resolveRobloxUserIdByUsername(apiClient, resolvedRobloxUsername);
@@ -6160,8 +6181,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
             }
 
             const isFriend = await isMonitoringAccountFriendsWithTarget(apiClient, monitoringUser.id, targetUser.userId);
+            optInFriendshipStatus = {
+              robloxUserId: Number(targetUser.userId),
+              isFriend,
+              lastCheckedAt: checkedAt,
+              lastAutoAcceptedAt: autoAcceptedFriendRequest ? checkedAt : null,
+              note: isFriend
+                ? (autoAcceptedFriendRequest ? 'Auto-accepted inbound request during opt-in check.' : 'Friendship verified during opt-in check.')
+                : (autoAcceptedFriendRequest ? 'Auto-accepted request but friendship not visible yet.' : 'No active friendship yet.')
+            };
 
             if (!isFriend) {
+              await updateRobloxMonitorState(interaction.guildId, (state) => {
+                if (!state.subscriberFriendshipStatus || typeof state.subscriberFriendshipStatus !== 'object' || Array.isArray(state.subscriberFriendshipStatus)) {
+                  state.subscriberFriendshipStatus = {};
+                }
+                state.subscriberFriendshipStatus[interaction.user.id] = optInFriendshipStatus;
+              });
               const monitoringAccountLabel = monitoringUser?.name
                 ? `${monitoringUser.name} (@${monitoringUser.name})`
                 : `ID ${monitoringUser?.id ?? 'unknown'}`;
@@ -6186,6 +6222,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
             optInHandshakeStatusLine = `✅ ${friendHandshakeStatusLine}`;
           } catch (error) {
             console.warn(`Roblox monitor opt-in friendship check failed for guild ${interaction.guildId} user ${interaction.user.id}:`, error);
+            const checkedAt = new Date().toISOString();
+            optInFriendshipStatus = {
+              robloxUserId: null,
+              isFriend: false,
+              lastCheckedAt: checkedAt,
+              lastAutoAcceptedAt: null,
+              note: `Opt-in check failed: ${error?.message ?? String(error)}`
+            };
+            await updateRobloxMonitorState(interaction.guildId, (state) => {
+              if (!state.subscriberFriendshipStatus || typeof state.subscriberFriendshipStatus !== 'object' || Array.isArray(state.subscriberFriendshipStatus)) {
+                state.subscriberFriendshipStatus = {};
+              }
+              state.subscriberFriendshipStatus[interaction.user.id] = optInFriendshipStatus;
+            });
             await interaction.reply({
               components: buildTextComponents('Nepodařilo se ověřit friendship přes Roblox API. Zkus to prosím za chvíli znovu.'),
               flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
@@ -6199,6 +6249,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (!state.subscriberRobloxAccounts || typeof state.subscriberRobloxAccounts !== 'object' || Array.isArray(state.subscriberRobloxAccounts)) {
             state.subscriberRobloxAccounts = {};
           }
+          if (!state.subscriberFriendshipStatus || typeof state.subscriberFriendshipStatus !== 'object' || Array.isArray(state.subscriberFriendshipStatus)) {
+            state.subscriberFriendshipStatus = {};
+          }
 
           if (subcommand === 'opt_in') {
             subscriberIds.add(interaction.user.id);
@@ -6211,10 +6264,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
             } else if (state.subscriberRobloxAccounts[interaction.user.id]) {
               delete state.subscriberRobloxAccounts[interaction.user.id];
             }
+            if (optInFriendshipStatus) {
+              state.subscriberFriendshipStatus[interaction.user.id] = optInFriendshipStatus;
+            }
           } else {
             subscriberIds.delete(interaction.user.id);
             if (state.subscriberRobloxAccounts[interaction.user.id]) {
               delete state.subscriberRobloxAccounts[interaction.user.id];
+            }
+            if (state.subscriberFriendshipStatus[interaction.user.id]) {
+              delete state.subscriberFriendshipStatus[interaction.user.id];
             }
           }
           state.subscriberUserIds = [...subscriberIds].sort();
