@@ -29,6 +29,21 @@ test('extractNicknameBeforeHatched parses tolerated hatched formats', () => {
   );
 });
 
+test('extractNicknameBeforeHatched normalizes edge separators around nickname', () => {
+  assert.equal(
+    extractNicknameBeforeHatched('senpaicat22, hatched a Huge Dog'),
+    'senpaicat22'
+  );
+  assert.equal(
+    extractNicknameBeforeHatched('senpaicat22 🔥 hatched a Huge Dog'),
+    'senpaicat22'
+  );
+  assert.equal(
+    extractNicknameBeforeHatched('🔥 Congrats! senpaicat22!!! hatched a Huge Dog'),
+    'senpaicat22'
+  );
+});
+
 test('filterNotificationsByClanNicknames matches accepted clan player for hatched notification variants', () => {
   const acceptedClanPlayers = collectAcceptedClanPlayersFromState({
     clan_ticket_decisions: {
