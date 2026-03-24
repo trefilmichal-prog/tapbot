@@ -123,6 +123,8 @@ const {
   RobloxSessionClient,
   getAuthenticatedRobloxUser,
   isMonitoringAccountFriendsWithTarget,
+  listPendingInboundFriendRequests,
+  acceptFriendRequest,
   resolveRobloxUserIdByUsername
 } = robloxMonitorInternals;
 
@@ -6130,6 +6132,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const currentMonitorState = getRobloxMonitorState(interaction.guildId);
         const resolvedRobloxUsername = acceptedIdentity?.robloxNickname || fallbackNickname;
         const accountSource = acceptedIdentity?.robloxNickname ? 'ticket_account' : 'guild_nickname';
+        let optInHandshakeStatusLine = null;
 
         if (subcommand === 'opt_in') {
           const sessionCookie = getRobloxMonitorSessionCookie(currentMonitorState);
@@ -6145,18 +6148,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const apiClient = new RobloxSessionClient(sessionCookie);
             const monitoringUser = await getAuthenticatedRobloxUser(apiClient);
             const targetUser = await resolveRobloxUserIdByUsername(apiClient, resolvedRobloxUsername);
+            const pendingInboundRequests = await listPendingInboundFriendRequests(apiClient);
+            const matchingRequest = pendingInboundRequests.find(
+              (request) => Number(request?.id) === Number(targetUser.userId)
+            );
+            let autoAcceptedFriendRequest = false;
+
+            if (matchingRequest) {
+              await acceptFriendRequest(apiClient, targetUser.userId);
+              autoAcceptedFriendRequest = true;
+            }
+
             const isFriend = await isMonitoringAccountFriendsWithTarget(apiClient, monitoringUser.id, targetUser.userId);
 
             if (!isFriend) {
               const monitoringAccountLabel = monitoringUser?.name
                 ? `${monitoringUser.name} (@${monitoringUser.name})`
                 : `ID ${monitoringUser?.id ?? 'unknown'}`;
+              const handshakeStatusLine = autoAcceptedFriendRequest
+                ? 'Friend handshake: žádost byla přijata automaticky.'
+                : 'Friend handshake: žádná čekající žádost.';
+              const nextStepLine = autoAcceptedFriendRequest
+                ? 'Přátelství se zatím neprojevilo. Zkus to prosím za chvíli znovu; pokud problém přetrvá, zkontroluj přátelství na obou účtech.'
+                : `Pošli žádost monitorovacímu účtu ${monitoringAccountLabel} nebo přijmi jeho žádost na Robloxu a pak spusť opt-in znovu.`;
               await interaction.reply({
-                components: buildTextComponents(`Nejdřív si přidej monitorovací účet ${monitoringAccountLabel} do přátel na Robloxu a pak to zkus znovu.`),
+                components: buildTextComponents(
+                  `${handshakeStatusLine}\n${nextStepLine}`
+                ),
                 flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
               });
               return;
             }
+
+            const friendHandshakeStatusLine = autoAcceptedFriendRequest
+              ? 'Friend handshake: žádost byla přijata automaticky.'
+              : 'Friend handshake: žádná čekající žádost.';
+            optInHandshakeStatusLine = `✅ ${friendHandshakeStatusLine}`;
           } catch (error) {
             console.warn(`Roblox monitor opt-in friendship check failed for guild ${interaction.guildId} user ${interaction.user.id}:`, error);
             await interaction.reply({
@@ -6201,9 +6228,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const accountInfoLine = accountSource === 'ticket_account'
           ? `Account source: **ticket account** (**${resolvedRobloxUsername}**).`
           : `Account source: **guild nickname fallback** (**${resolvedRobloxUsername}**).`;
+        const handshakeStatusPrefix = typeof optInHandshakeStatusLine === 'string'
+          ? `${optInHandshakeStatusLine} `
+          : '';
         const confirmationMessage = subcommand === 'opt_in'
           ? isSubscribed
-            ? `Roblox monitor alerts are now enabled for you in **${interaction.guild.name}**. ${accountInfoLine} Target: **${targetUsername}**. Monitored game: **Rebirth Champions Ultimate** (${requiredRootPlaceId}).`
+            ? `${handshakeStatusPrefix}Roblox monitor alerts are now enabled for you in **${interaction.guild.name}**. ${accountInfoLine} Target: **${targetUsername}**. Monitored game: **Rebirth Champions Ultimate** (${requiredRootPlaceId}).`
             : 'Roblox monitor alerts could not be enabled right now.'
           : isSubscribed
             ? 'Roblox monitor alerts are still enabled for you.'
