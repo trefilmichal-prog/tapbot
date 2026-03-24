@@ -369,9 +369,11 @@ function normalizeRobloxMonitorSubscriberAccounts(entries) {
     const robloxUserId = Number.isInteger(account.robloxUserId) && account.robloxUserId > 0
       ? account.robloxUserId
       : null;
-    const source = account.source === 'guild_nickname'
-      ? 'guild_nickname'
-      : (account.source === 'target_override' ? 'target_override' : 'ticket_account');
+    const source = account.source === 'manual_opt_in_nick'
+      ? 'manual_opt_in_nick'
+      : (account.source === 'guild_nickname'
+        ? 'guild_nickname'
+        : (account.source === 'target_override' ? 'target_override' : 'ticket_account'));
     const optedInAt = typeof account.optedInAt === 'string' && Number.isFinite(new Date(account.optedInAt).getTime())
       ? account.optedInAt
       : (typeof account.updatedAt === 'string' && Number.isFinite(new Date(account.updatedAt).getTime())
