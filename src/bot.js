@@ -55,7 +55,12 @@ import {
 } from './persistence.js';
 import { runUpdate } from './update.js';
 import { syncApplicationCommands } from './deploy-commands.js';
-import { startRobloxMonitorScheduler, startRobloxMonitorSchedulers, stopRobloxMonitorScheduler } from './roblox-monitor.js';
+import {
+  robloxMonitorInternals,
+  startRobloxMonitorScheduler,
+  startRobloxMonitorSchedulers,
+  stopRobloxMonitorScheduler
+} from './roblox-monitor.js';
 import { readWindowsToastNotifications } from './windows-notifications.js';
 import {
   checkWinRtBridgeAvailability,
@@ -114,6 +119,24 @@ const TICKET_STATUS_EMOJI = {
   [CLAN_TICKET_DECISION_ACCEPT]: '🟢',
   [CLAN_TICKET_DECISION_REJECT]: '🔴'
 };
+const {
+  RobloxSessionClient,
+  getAuthenticatedRobloxUser,
+  isMonitoringAccountFriendsWithTarget,
+  resolveRobloxUserIdByUsername
+} = robloxMonitorInternals;
+
+function getRobloxMonitorSessionCookie(state) {
+  const nestedSessionCookie = typeof state?.monitoringSession?.sessionCookie === 'string' && state.monitoringSession.sessionCookie.trim()
+    ? state.monitoringSession.sessionCookie.trim()
+    : null;
+  if (nestedSessionCookie) {
+    return nestedSessionCookie;
+  }
+  return typeof state?.sessionCookie === 'string' && state.sessionCookie.trim()
+    ? state.sessionCookie.trim()
+    : null;
+}
 
 function buildInteractionFlags({ componentsV2 = false, ephemeral = false } = {}) {
   let flags = 0;
@@ -6107,6 +6130,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const currentMonitorState = getRobloxMonitorState(interaction.guildId);
         const resolvedRobloxUsername = acceptedIdentity?.robloxNickname || fallbackNickname;
         const accountSource = acceptedIdentity?.robloxNickname ? 'ticket_account' : 'guild_nickname';
+
+        if (subcommand === 'opt_in') {
+          const sessionCookie = getRobloxMonitorSessionCookie(currentMonitorState);
+          if (!sessionCookie) {
+            await interaction.reply({
+              components: buildTextComponents('Roblox monitor session není nastavená. Požádej admina, aby nejdřív použil `/roblox_monitor config set_session`.'),
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+            });
+            return;
+          }
+
+          try {
+            const apiClient = new RobloxSessionClient(sessionCookie);
+            const monitoringUser = await getAuthenticatedRobloxUser(apiClient);
+            const targetUser = await resolveRobloxUserIdByUsername(apiClient, resolvedRobloxUsername);
+            const isFriend = await isMonitoringAccountFriendsWithTarget(apiClient, monitoringUser.id, targetUser.userId);
+
+            if (!isFriend) {
+              const monitoringAccountLabel = monitoringUser?.name
+                ? `${monitoringUser.name} (@${monitoringUser.name})`
+                : `ID ${monitoringUser?.id ?? 'unknown'}`;
+              await interaction.reply({
+                components: buildTextComponents(`Nejdřív si přidej monitorovací účet ${monitoringAccountLabel} do přátel na Robloxu a pak to zkus znovu.`),
+                flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+              });
+              return;
+            }
+          } catch (error) {
+            console.warn(`Roblox monitor opt-in friendship check failed for guild ${interaction.guildId} user ${interaction.user.id}:`, error);
+            await interaction.reply({
+              components: buildTextComponents('Nepodařilo se ověřit friendship přes Roblox API. Zkus to prosím za chvíli znovu.'),
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+            });
+            return;
+          }
+        }
+
         const updatedState = await updateRobloxMonitorState(interaction.guildId, (state) => {
           const subscriberIds = new Set(Array.isArray(state.subscriberUserIds) ? state.subscriberUserIds : []);
           if (!state.subscriberRobloxAccounts || typeof state.subscriberRobloxAccounts !== 'object' || Array.isArray(state.subscriberRobloxAccounts)) {
