@@ -345,9 +345,15 @@ async function runRobloxMonitorTick(client, guildId) {
   const targetOverride = typeof monitorSource.target_override === 'string' && monitorSource.target_override.trim()
     ? monitorSource.target_override.trim()
     : null;
+  const persistedTargetUsername = typeof state?.targetUsername === 'string' && state.targetUsername.trim()
+    ? state.targetUsername.trim()
+    : null;
+  const persistedTargetUserId = Number.isInteger(state?.targetUserId) && state.targetUserId > 0
+    ? state.targetUserId
+    : null;
   const normalizedTargetUsername = sourceType === 'guild_nickname'
     ? null
-    : (targetOverride || state.targetUsername || DEFAULT_TARGET_USERNAME);
+    : (targetOverride || persistedTargetUsername);
   const requiredRootPlaceId = getRequiredRootPlaceId(state);
   const approvedDiscordUserIdSet = new Set(approvedUsers.discordUserIds);
   const filteredSubscriberUserIds = state.subscriberUserIds.filter((userId) => approvedDiscordUserIdSet.has(userId));
@@ -378,6 +384,43 @@ async function runRobloxMonitorTick(client, guildId) {
         nextState.requiredRootPlaceId = requiredRootPlaceId;
       }
     });
+  }
+
+  const isMissingFixedTarget = sourceType === 'target_override'
+    && !targetOverride
+    && !persistedTargetUsername
+    && !persistedTargetUserId;
+  if (isMissingFixedTarget) {
+    await updateRobloxMonitorState(guildId, (nextState) => {
+      const checkedAt = new Date().toISOString();
+      nextState.targetUsername = null;
+      nextState.targetUserId = null;
+      nextState.requiredRootPlaceId = getRequiredRootPlaceId(nextState);
+      if (!nextState.subscriberFriendshipStatus || typeof nextState.subscriberFriendshipStatus !== 'object' || Array.isArray(nextState.subscriberFriendshipStatus)) {
+        nextState.subscriberFriendshipStatus = {};
+      }
+      for (const subscriberUserId of filteredSubscriberUserIds) {
+        const previous = nextState.subscriberFriendshipStatus[subscriberUserId];
+        nextState.subscriberFriendshipStatus[subscriberUserId] = {
+          robloxUserId: Number.isInteger(previous?.robloxUserId) ? previous.robloxUserId : null,
+          isFriend: false,
+          lastCheckedAt: checkedAt,
+          lastAutoAcceptedAt: previous?.lastAutoAcceptedAt ?? null,
+          note: 'Periodic check skipped: target missing for source_type=target_override.'
+        };
+      }
+      nextState.lastKnownPresence = buildPresenceSnapshot({
+        state: nextState,
+        targetUsername: null,
+        targetUserId: null,
+        monitoringAccountUserId: nextState.lastKnownPresence?.monitoringAccountUserId ?? null,
+        isFriend: null,
+        presence: null,
+        requiredRootPlaceId: getRequiredRootPlaceId(nextState),
+        error: 'Roblox monitor skipped: target missing for source_type=target_override.'
+      });
+    });
+    return;
   }
 
   const sessionCookie = getSessionCookie(state);
@@ -433,7 +476,7 @@ async function runRobloxMonitorTick(client, guildId) {
       }
       targetResolution = await resolveRobloxUserIdByUsername(apiClient, dynamicNickname);
     } else {
-      const staticTarget = normalizedTargetUsername ?? DEFAULT_TARGET_USERNAME;
+      const staticTarget = normalizedTargetUsername;
       targetResolution = state.targetUserId && normalizeUsername(state.targetUsername) === normalizeUsername(staticTarget)
         ? { userId: state.targetUserId, username: staticTarget }
         : await resolveRobloxUserIdByUsername(apiClient, staticTarget);

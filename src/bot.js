@@ -6126,10 +6126,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
               : 74260430392611;
             state.monitorSource.target_override = null;
             state.monitorSource.updated_at = new Date().toISOString();
+            state.targetUsername = null;
+            state.targetUserId = null;
           });
           await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
           await interaction.reply({
-            components: buildTextComponents('Roblox monitor target override was cleared for this guild (target_override = null).'),
+            components: buildTextComponents('Roblox monitor fixed target was fully disconnected for this guild (target_override = null, targetUsername = null, targetUserId = null).'),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;
