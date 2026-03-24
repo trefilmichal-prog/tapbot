@@ -709,6 +709,35 @@ export const defaultCommands = [
             type: ApplicationCommandOptionType.Subcommand,
             name: 'status',
             description: 'Show Roblox monitor status for Rebirth Champions Ultimate target game'
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'show',
+            description: 'Show Roblox monitor source and target configuration for this guild'
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'set_source',
+            description: 'Set monitor source mode',
+            options: [
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'source_type',
+                description: 'Target source mode',
+                required: true,
+                choices: [
+                  {
+                    name: 'guild_nickname',
+                    value: 'guild_nickname'
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'clear_target',
+            description: 'Clear the fixed Roblox target override for this guild monitor'
           }
         ]
       },

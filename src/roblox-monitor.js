@@ -17,6 +17,30 @@ function normalizeUsername(username) {
   return typeof username === 'string' ? username.trim().toLowerCase() : '';
 }
 
+function normalizeGuildNicknameAsRobloxCandidate(rawNickname) {
+  if (typeof rawNickname !== 'string') {
+    return null;
+  }
+
+  let candidate = rawNickname.trim();
+  if (!candidate) {
+    return null;
+  }
+
+  candidate = candidate
+    .replace(/^\[[^\]]{1,12}\]\s*/u, '')
+    .replace(/\s*\[[^\]]{1,12}\]$/u, '')
+    .replace(/^[\s|:;•·★☆→«»『』【】(){}<>~`!@#$%^&*=+,./\\-]+/u, '')
+    .replace(/[\s|:;•·★☆→«»『』【】(){}<>~`!@#$%^&*=+,./\\-]+$/u, '')
+    .trim();
+
+  if (!candidate || candidate.length < 3 || candidate.length > 32) {
+    return null;
+  }
+
+  return candidate;
+}
+
 function getIntervalMinutes(state) {
   return Math.max(MIN_INTERVAL_MINUTES, Number(state?.checkIntervalMinutes) || DEFAULT_CHECK_INTERVAL_MINUTES);
 }
@@ -306,7 +330,19 @@ async function runRobloxMonitorTick(client, guildId) {
 
   const approvedUsers = collectApprovedTicketUsers(guildId);
   let state = getRobloxMonitorState(guildId);
-  const normalizedTargetUsername = state.targetUsername || DEFAULT_TARGET_USERNAME;
+  const monitorSource = state?.monitorSource && typeof state.monitorSource === 'object'
+    ? state.monitorSource
+    : {};
+  const sourceType = monitorSource.source_type === 'guild_nickname' ? 'guild_nickname' : 'target_override';
+  const sourceUserId = typeof monitorSource.source_user_id === 'string' && monitorSource.source_user_id.trim()
+    ? monitorSource.source_user_id.trim()
+    : null;
+  const targetOverride = typeof monitorSource.target_override === 'string' && monitorSource.target_override.trim()
+    ? monitorSource.target_override.trim()
+    : null;
+  const normalizedTargetUsername = sourceType === 'guild_nickname'
+    ? null
+    : (targetOverride || state.targetUsername || DEFAULT_TARGET_USERNAME);
   const requiredRootPlaceId = getRequiredRootPlaceId(state);
   const approvedDiscordUserIdSet = new Set(approvedUsers.discordUserIds);
   const filteredSubscriberUserIds = state.subscriberUserIds.filter((userId) => approvedDiscordUserIdSet.has(userId));
@@ -326,11 +362,11 @@ async function runRobloxMonitorTick(client, guildId) {
   const sessionCookie = getSessionCookie(state);
   if (!sessionCookie) {
     await updateRobloxMonitorState(guildId, (nextState) => {
-      nextState.targetUsername = normalizedTargetUsername;
+      nextState.targetUsername = normalizedTargetUsername ?? nextState.targetUsername ?? DEFAULT_TARGET_USERNAME;
       nextState.requiredRootPlaceId = getRequiredRootPlaceId(nextState);
       nextState.lastKnownPresence = buildPresenceSnapshot({
         state: nextState,
-        targetUsername: normalizedTargetUsername,
+        targetUsername: normalizedTargetUsername ?? nextState.targetUsername ?? DEFAULT_TARGET_USERNAME,
         targetUserId: nextState.targetUserId ?? null,
         monitoringAccountUserId: null,
         isFriend: null,
@@ -344,11 +380,40 @@ async function runRobloxMonitorTick(client, guildId) {
 
   const apiClient = new RobloxSessionClient(sessionCookie);
   try {
-    const targetResolution = state.targetUserId && normalizeUsername(state.targetUsername) === normalizeUsername(normalizedTargetUsername)
-      ? { userId: state.targetUserId, username: normalizedTargetUsername }
-      : await resolveRobloxUserIdByUsername(apiClient, normalizedTargetUsername);
+    let targetResolution = null;
+    let resolutionSource = 'target_override';
+    let resolutionUserId = sourceUserId;
+
+    if (sourceType === 'guild_nickname') {
+      resolutionSource = 'guild_nickname';
+      if (!sourceUserId) {
+        throw new Error('Roblox monitor source_type=guild_nickname requires source_user_id in monitorSource.');
+      }
+
+      const member = await guild.members.fetch(sourceUserId).catch(() => null);
+      const dynamicNickname = normalizeGuildNicknameAsRobloxCandidate(member?.nickname)
+        ?? normalizeGuildNicknameAsRobloxCandidate(member?.displayName);
+      if (!dynamicNickname) {
+        throw new Error(`Unable to resolve Roblox username from guild nickname for user ${sourceUserId}.`);
+      }
+      targetResolution = await resolveRobloxUserIdByUsername(apiClient, dynamicNickname);
+    } else {
+      const staticTarget = normalizedTargetUsername ?? DEFAULT_TARGET_USERNAME;
+      targetResolution = state.targetUserId && normalizeUsername(state.targetUsername) === normalizeUsername(staticTarget)
+        ? { userId: state.targetUserId, username: staticTarget }
+        : await resolveRobloxUserIdByUsername(apiClient, staticTarget);
+    }
+
     const targetUserId = Number(targetResolution.userId);
-    const targetUsername = targetResolution.username ?? normalizedTargetUsername;
+    const targetUsername = targetResolution.username ?? normalizedTargetUsername ?? DEFAULT_TARGET_USERNAME;
+    console.info('Roblox monitor target resolved', {
+      guild_id: guildId,
+      user_id: resolutionUserId,
+      game_id: requiredRootPlaceId,
+      resolution_source: resolutionSource,
+      target_username: targetUsername,
+      target_user_id: targetUserId
+    });
     const monitoringUser = await getAuthenticatedRobloxUser(apiClient);
     const presence = await getRobloxPresence(apiClient, targetUserId);
     const isFriend = await isMonitoringAccountFriendsWithTarget(apiClient, monitoringUser.id, targetUserId);
@@ -399,6 +464,16 @@ async function runRobloxMonitorTick(client, guildId) {
       nextState.targetUsername = targetUsername;
       nextState.targetUserId = targetUserId;
       nextState.requiredRootPlaceId = requiredRootPlaceId;
+      if (!nextState.monitorSource || typeof nextState.monitorSource !== 'object' || Array.isArray(nextState.monitorSource)) {
+        nextState.monitorSource = {};
+      }
+      nextState.monitorSource.guild_id = guildId;
+      nextState.monitorSource.channel_id = nextState.monitorSource.channel_id ?? null;
+      nextState.monitorSource.game_id = requiredRootPlaceId;
+      nextState.monitorSource.source_type = sourceType;
+      nextState.monitorSource.target_override = sourceType === 'guild_nickname' ? null : (targetOverride ?? targetUsername);
+      nextState.monitorSource.source_user_id = sourceUserId;
+      nextState.monitorSource.updated_at = new Date().toISOString();
       nextState.subscriberUserIds = filteredSubscriberUserIds;
       nextState.lastKnownPresence = nextPresence;
       nextState.lastFriendRequestSweepAt = new Date().toISOString();
@@ -412,12 +487,18 @@ async function runRobloxMonitorTick(client, guildId) {
     }
   } catch (error) {
     console.warn(`Roblox monitor tick failed for guild ${guildId}:`, error);
+    console.warn('Roblox monitor target resolution warning', {
+      guild_id: guildId,
+      user_id: sourceUserId,
+      game_id: requiredRootPlaceId,
+      resolution_source: sourceType
+    });
     await updateRobloxMonitorState(guildId, (nextState) => {
-      nextState.targetUsername = normalizedTargetUsername;
+      nextState.targetUsername = normalizedTargetUsername ?? nextState.targetUsername ?? DEFAULT_TARGET_USERNAME;
       nextState.requiredRootPlaceId = getRequiredRootPlaceId(nextState);
       nextState.lastKnownPresence = buildPresenceSnapshot({
         state: nextState,
-        targetUsername: normalizedTargetUsername,
+        targetUsername: normalizedTargetUsername ?? nextState.targetUsername ?? DEFAULT_TARGET_USERNAME,
         targetUserId: nextState.targetUserId ?? null,
         monitoringAccountUserId: nextState.lastKnownPresence?.monitoringAccountUserId ?? null,
         isFriend: nextState.lastKnownPresence?.isFriend ?? null,
