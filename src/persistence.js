@@ -82,7 +82,7 @@ function getDefaultRobloxMonitorState() {
       channel_id: null,
       game_id: 74260430392611,
       source_type: 'target_override',
-      target_override: 'altiksenpaicat2',
+      target_override: null,
       source_user_id: null,
       updated_at: null
     },
@@ -557,9 +557,7 @@ function normalizeRobloxMonitorState(state) {
     : 'target_override';
   const targetOverride = typeof parsedMonitorSource.target_override === 'string' && parsedMonitorSource.target_override.trim()
     ? parsedMonitorSource.target_override.trim()
-    : (typeof parsed.targetUsername === 'string' && parsed.targetUsername.trim()
-      ? parsed.targetUsername.trim()
-      : fallback.monitorSource.target_override);
+    : null;
   const monitorSourceUpdatedAt = typeof parsedMonitorSource.updated_at === 'string'
     && Number.isFinite(new Date(parsedMonitorSource.updated_at).getTime())
     ? parsedMonitorSource.updated_at

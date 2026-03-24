@@ -1,7 +1,6 @@
 import { getClanState, getRobloxMonitorState, updateRobloxMonitorState } from './persistence.js';
 import { collectAcceptedTicketRobloxIdentitiesFromState } from './clan-notification-matching.js';
 
-const DEFAULT_TARGET_USERNAME = 'altiksenpaicat2';
 const DEFAULT_REQUIRED_ROOT_PLACE_ID = 74260430392611;
 const DEFAULT_CHECK_INTERVAL_MINUTES = 5;
 const DEFAULT_OFFLINE_REMINDER_MINUTES = 10;
@@ -343,9 +342,6 @@ async function runRobloxMonitorTick(client, guildId) {
   const targetOverride = typeof monitorSource.target_override === 'string' && monitorSource.target_override.trim()
     ? monitorSource.target_override.trim()
     : null;
-  const persistedTargetUsername = typeof state?.targetUsername === 'string' && state.targetUsername.trim()
-    ? state.targetUsername.trim()
-    : null;
   const requiredRootPlaceId = getRequiredRootPlaceId(state);
   const approvedDiscordUserIdSet = new Set(approvedUsers.discordUserIds);
   const filteredSubscriberUserIds = state.subscriberUserIds.filter((userId) => approvedDiscordUserIdSet.has(userId));
@@ -472,19 +468,41 @@ async function runRobloxMonitorTick(client, guildId) {
 
     for (const subscriberUserId of filteredSubscriberUserIds) {
       const subscriberAccount = subscriberAccountMap[subscriberUserId] ?? null;
+      const storedSubscriberUsername = typeof subscriberAccount?.robloxUsername === 'string' && subscriberAccount.robloxUsername.trim()
+        ? subscriberAccount.robloxUsername.trim()
+        : (typeof subscriberAccount?.username === 'string' && subscriberAccount.username.trim()
+          ? subscriberAccount.username.trim()
+          : null);
       let preferredUsername = null;
       let resolutionSource = sourceType;
+      if (!storedSubscriberUsername) {
+        friendshipStatusBySubscriber[subscriberUserId] = {
+          robloxUserId: null,
+          isFriend: false,
+          lastCheckedAt: checkedAt,
+          lastAutoAcceptedAt: null,
+          note: 'Periodic check skipped: subscriber has no stored Roblox account. Re-run /roblox_monitor alerts opt_in.'
+        };
+        presenceBySubscriber[subscriberUserId] = buildPresenceSnapshot({
+          previousPresence: previousPresenceBySubscriber[subscriberUserId] ?? null,
+          targetUsername: null,
+          targetUserId: null,
+          monitoringAccountUserId: Number(monitoringUser.id),
+          isFriend: null,
+          presence: null,
+          requiredRootPlaceId,
+          error: 'Subscriber skipped: no stored Roblox account.'
+        });
+        continue;
+      }
+
       if (sourceType === 'guild_nickname') {
         const member = await guild.members.fetch(subscriberUserId).catch(() => null);
         preferredUsername = normalizeGuildNicknameAsRobloxCandidate(member?.nickname)
-          ?? normalizeGuildNicknameAsRobloxCandidate(member?.displayName);
+          ?? normalizeGuildNicknameAsRobloxCandidate(member?.displayName)
+          ?? storedSubscriberUsername;
       } else {
-        preferredUsername = subscriberAccount?.robloxUsername
-          ?? subscriberAccount?.username
-          ?? approvedUsers.discordUserIdToRobloxUsername[subscriberUserId]
-          ?? targetOverride
-          ?? persistedTargetUsername
-          ?? null;
+        preferredUsername = storedSubscriberUsername;
         resolutionSource = subscriberAccount?.source ?? 'target_override';
       }
 
@@ -582,7 +600,7 @@ async function runRobloxMonitorTick(client, guildId) {
     }
 
     await updateRobloxMonitorState(guildId, (nextState) => {
-      nextState.targetUsername = targetOverride ?? persistedTargetUsername ?? null;
+      nextState.targetUsername = null;
       nextState.targetUserId = null;
       nextState.requiredRootPlaceId = requiredRootPlaceId;
       if (!nextState.monitorSource || typeof nextState.monitorSource !== 'object' || Array.isArray(nextState.monitorSource)) {
@@ -592,7 +610,7 @@ async function runRobloxMonitorTick(client, guildId) {
       nextState.monitorSource.channel_id = nextState.monitorSource.channel_id ?? null;
       nextState.monitorSource.game_id = requiredRootPlaceId;
       nextState.monitorSource.source_type = sourceType;
-      nextState.monitorSource.target_override = sourceType === 'guild_nickname' ? null : (targetOverride ?? nextState.targetUsername);
+      nextState.monitorSource.target_override = sourceType === 'guild_nickname' ? null : targetOverride;
       nextState.monitorSource.source_user_id = sourceUserId;
       nextState.monitorSource.updated_at = new Date().toISOString();
       nextState.subscriberUserIds = filteredSubscriberUserIds;
@@ -715,10 +733,6 @@ export function startRobloxMonitorSchedulers(client) {
   for (const [guildId] of client.guilds.cache) {
     startRobloxMonitorScheduler(client, guildId);
   }
-}
-
-export function getRobloxMonitorDefaultTargetUsername() {
-  return DEFAULT_TARGET_USERNAME;
 }
 
 export const robloxMonitorInternals = {
