@@ -757,7 +757,15 @@ export const defaultCommands = [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'opt_in',
-            description: 'Enable Roblox monitor alerts for your accepted ticket account'
+            description: 'Enable Roblox monitor alerts for your accepted ticket account',
+            options: [
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'nick',
+                description: 'Optional Roblox nickname override',
+                required: false
+              }
+            ]
           },
           {
             type: ApplicationCommandOptionType.Subcommand,
@@ -769,7 +777,15 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'opt_in',
-        description: 'Enable Roblox monitor alerts for your accepted ticket account (shortcut)'
+        description: 'Enable Roblox monitor alerts for your accepted ticket account (shortcut)',
+        options: [
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'nick',
+            description: 'Optional Roblox nickname override',
+            required: false
+          }
+        ]
       },
       {
         type: ApplicationCommandOptionType.Subcommand,
@@ -785,7 +801,15 @@ export const defaultCommands = [
       {
         type: ApplicationCommandOptionType.Subcommand,
         name: 'opt_in',
-        description: 'Enable Roblox monitor alerts for your accepted ticket account'
+        description: 'Enable Roblox monitor alerts for your accepted ticket account',
+        options: [
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'nick',
+            description: 'Optional Roblox nickname override',
+            required: false
+          }
+        ]
       },
       {
         type: ApplicationCommandOptionType.Subcommand,

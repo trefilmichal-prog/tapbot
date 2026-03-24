@@ -68,6 +68,10 @@ import {
   pingWinRtBridge,
   startWinRtNotificationPush
 } from './winrt-notifications-bridge.js';
+import {
+  getAcceptedTicketRobloxAccessError,
+  resolveRobloxAlertOptInTarget
+} from './roblox-alert-target.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason);
@@ -880,23 +884,6 @@ function normalizeGuildNicknameAsRobloxCandidate(rawNickname) {
   return candidate;
 }
 
-function normalizeRobloxUsernameCandidate(rawUsername) {
-  if (typeof rawUsername !== 'string') {
-    return null;
-  }
-
-  const candidate = rawUsername.trim();
-  if (!candidate) {
-    return null;
-  }
-
-  if (!/^[A-Za-z0-9_]{3,20}$/u.test(candidate)) {
-    return null;
-  }
-
-  return candidate;
-}
-
 function getGuildMemberRobloxNicknameFallback(member) {
   if (!(member instanceof GuildMember)) {
     return null;
@@ -908,18 +895,6 @@ function getGuildMemberRobloxNicknameFallback(member) {
   }
 
   return normalizeGuildNicknameAsRobloxCandidate(member.displayName);
-}
-
-function getAcceptedTicketRobloxAccessError(identity, fallbackNickname = null) {
-  if (!identity) {
-    return 'Only members with an accepted ticket in this server can use Roblox monitor alerts.';
-  }
-
-  if (!identity.robloxNickname && !fallbackNickname) {
-    return 'Your accepted ticket has no Roblox account attached yet.';
-  }
-
-  return null;
 }
 
 function getManualNotificationNicknames(guildId) {
@@ -6193,7 +6168,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if ((interaction.commandName === 'roblox_alerts' || subcommandGroup === 'alerts') && (subcommand === 'opt_in' || subcommand === 'opt_out')) {
         const acceptedIdentity = getAcceptedTicketRobloxIdentity(interaction.guildId, interaction.user.id);
         const fallbackNickname = getGuildMemberRobloxNicknameFallback(interaction.member);
-        const accessError = getAcceptedTicketRobloxAccessError(acceptedIdentity, fallbackNickname);
+        const requestedNickRaw = interaction.options.getString('nick', false);
+        const targetResolution = resolveRobloxAlertOptInTarget({
+          requestedNickRaw,
+          acceptedTicketNickname: acceptedIdentity?.robloxNickname ?? null,
+          fallbackNickname
+        });
+        if (targetResolution.hasInvalidRequestedNick) {
+          await interaction.reply({
+            components: buildTextComponents('Invalid `nick` format. Use 3-20 characters: letters, numbers, and underscores only.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        const accessError = getAcceptedTicketRobloxAccessError(acceptedIdentity, fallbackNickname, {
+          subcommand,
+          hasValidRequestedNick: targetResolution.source === 'manual_opt_in_nick'
+        });
         if (accessError) {
           await interaction.reply({
             components: buildTextComponents(accessError),
@@ -6203,8 +6195,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const currentMonitorState = getRobloxMonitorState(interaction.guildId);
-        const resolvedRobloxUsername = acceptedIdentity?.robloxNickname || fallbackNickname;
-        const accountSource = acceptedIdentity?.robloxNickname ? 'ticket_account' : 'guild_nickname';
+        const resolvedRobloxUsername = targetResolution.resolvedRobloxUsername;
+        const accountSource = targetResolution.source;
         let optInHandshakeStatusLine = null;
         let optInFriendshipStatus = null;
 
@@ -6313,7 +6305,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
               state.subscriberRobloxAccounts[interaction.user.id] = {
                 robloxUsername: resolvedRobloxUsername,
                 robloxUserId: Number.isInteger(optInFriendshipStatus?.robloxUserId) ? optInFriendshipStatus.robloxUserId : null,
-                source: accountSource === 'guild_nickname' ? 'guild_nickname' : 'ticket_account',
+                source: accountSource === 'manual_opt_in_nick'
+                  ? 'manual_opt_in_nick'
+                  : (accountSource === 'guild_nickname' ? 'guild_nickname' : 'ticket_account'),
                 optedInAt: new Date().toISOString()
               };
             } else if (state.subscriberRobloxAccounts[interaction.user.id]) {
@@ -6341,9 +6335,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const requiredRootPlaceId = Number.isInteger(updatedState.requiredRootPlaceId)
           ? updatedState.requiredRootPlaceId
           : 74260430392611;
-        const accountInfoLine = accountSource === 'ticket_account'
-          ? `Account source: **ticket account** (**${resolvedRobloxUsername}**).`
-          : `Account source: **guild nickname fallback** (**${resolvedRobloxUsername}**).`;
+        const accountInfoLine = accountSource === 'manual_opt_in_nick'
+          ? `Account source: **explicit nick override** (**${resolvedRobloxUsername}**).`
+          : (accountSource === 'ticket_account'
+            ? `Account source: **ticket account** (**${resolvedRobloxUsername}**).`
+            : `Account source: **guild nickname fallback** (**${resolvedRobloxUsername}**).`);
+        const accountSourceLabel = accountSource === 'manual_opt_in_nick'
+          ? 'explicit nick override'
+          : (accountSource === 'ticket_account' ? 'ticket account' : 'guild nickname fallback');
         const handshakeStatusPrefix = typeof optInHandshakeStatusLine === 'string'
           ? `${optInHandshakeStatusLine} `
           : '';
@@ -6353,7 +6352,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             : 'Roblox monitor alerts could not be enabled right now.'
           : isSubscribed
             ? 'Roblox monitor alerts are still enabled for you.'
-            : `Roblox monitor alerts are now disabled for you in **${interaction.guild.name}**. Last resolved Roblox username: **${resolvedRobloxUsername}** (${accountSource === 'ticket_account' ? 'ticket account' : 'guild nickname fallback'}).`;
+            : `Roblox monitor alerts are now disabled for you in **${interaction.guild.name}**. Last resolved Roblox username: **${resolvedRobloxUsername}** (${accountSourceLabel}).`;
 
         await interaction.reply({
           components: buildTextComponents(confirmationMessage),
