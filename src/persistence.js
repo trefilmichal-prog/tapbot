@@ -71,7 +71,7 @@ function getDefaultPrivateMessageState() {
 
 function getDefaultRobloxMonitorState() {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     monitoringSession: {
       sessionCookie: null,
       updatedAt: null
@@ -86,7 +86,7 @@ function getDefaultRobloxMonitorState() {
       source_user_id: null,
       updated_at: null
     },
-    targetUsername: 'altiksenpaicat2',
+    targetUsername: null,
     targetUserId: null,
     targetGame: {
       name: 'Rebirth Champions Ultimate',
@@ -96,7 +96,9 @@ function getDefaultRobloxMonitorState() {
     checkIntervalMinutes: 5,
     offlineReminderMinutes: 10,
     lastKnownPresence: null,
+    subscriberPresence: {},
     lastOfflineReminderAt: null,
+    subscriberOfflineReminderAt: {},
     subscriberUserIds: [],
     subscriberRobloxAccounts: {},
     subscriberFriendshipStatus: {},
@@ -353,20 +355,71 @@ function normalizeRobloxMonitorSubscriberAccounts(entries) {
       continue;
     }
 
-    const username = typeof account.username === 'string' ? account.username.trim() : '';
-    if (!username || username.length > 32) {
+    const robloxUsername = typeof account.robloxUsername === 'string'
+      ? account.robloxUsername.trim()
+      : (typeof account.username === 'string' ? account.username.trim() : '');
+    if (!robloxUsername || robloxUsername.length > 32) {
       continue;
     }
 
-    const source = account.source === 'guild_nickname' ? 'guild_nickname' : 'ticket_account';
-    const updatedAt = typeof account.updatedAt === 'string' && Number.isFinite(new Date(account.updatedAt).getTime())
-      ? account.updatedAt
+    const robloxUserId = Number.isInteger(account.robloxUserId) && account.robloxUserId > 0
+      ? account.robloxUserId
       : null;
+    const source = account.source === 'guild_nickname'
+      ? 'guild_nickname'
+      : (account.source === 'target_override' ? 'target_override' : 'ticket_account');
+    const optedInAt = typeof account.optedInAt === 'string' && Number.isFinite(new Date(account.optedInAt).getTime())
+      ? account.optedInAt
+      : (typeof account.updatedAt === 'string' && Number.isFinite(new Date(account.updatedAt).getTime())
+        ? account.updatedAt
+        : null);
     normalizedEntries[userId.trim()] = {
-      username,
+      robloxUsername,
+      robloxUserId,
       source,
-      updatedAt
+      optedInAt
     };
+  }
+
+  return normalizedEntries;
+}
+
+function normalizeRobloxMonitorPresenceBySubscriber(entries) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
+    return {};
+  }
+
+  const normalizedEntries = {};
+  for (const [userId, presence] of Object.entries(entries)) {
+    if (!isValidDiscordSnowflake(userId)) {
+      continue;
+    }
+
+    const normalizedPresence = normalizeRobloxMonitorPresence(presence);
+    if (!normalizedPresence) {
+      continue;
+    }
+
+    normalizedEntries[userId.trim()] = normalizedPresence;
+  }
+
+  return normalizedEntries;
+}
+
+function normalizeRobloxMonitorSubscriberReminderTimestamps(entries) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
+    return {};
+  }
+
+  const normalizedEntries = {};
+  for (const [userId, timestamp] of Object.entries(entries)) {
+    if (!isValidDiscordSnowflake(userId)) {
+      continue;
+    }
+    if (typeof timestamp !== 'string' || !Number.isFinite(new Date(timestamp).getTime())) {
+      continue;
+    }
+    normalizedEntries[userId.trim()] = timestamp;
   }
 
   return normalizedEntries;
@@ -477,7 +530,7 @@ function normalizeRobloxMonitorState(state) {
     : {};
   const targetUsername = typeof parsed.targetUsername === 'string' && parsed.targetUsername.trim()
     ? parsed.targetUsername.trim()
-    : fallback.targetUsername;
+    : null;
   const targetUserId = Number.isInteger(parsed.targetUserId) && parsed.targetUserId > 0
     ? parsed.targetUserId
     : null;
@@ -525,7 +578,7 @@ function normalizeRobloxMonitorState(state) {
     : requiredRootPlaceId;
 
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     monitoringSession: {
       sessionCookie,
       updatedAt: monitoringSessionUpdatedAt
@@ -550,7 +603,9 @@ function normalizeRobloxMonitorState(state) {
     checkIntervalMinutes,
     offlineReminderMinutes,
     lastKnownPresence: normalizeRobloxMonitorPresence(parsed.lastKnownPresence),
+    subscriberPresence: normalizeRobloxMonitorPresenceBySubscriber(parsed.subscriberPresence),
     lastOfflineReminderAt,
+    subscriberOfflineReminderAt: normalizeRobloxMonitorSubscriberReminderTimestamps(parsed.subscriberOfflineReminderAt),
     subscriberUserIds: normalizeRobloxMonitorSubscriberUserIds(parsed.subscriberUserIds),
     subscriberRobloxAccounts: normalizeRobloxMonitorSubscriberAccounts(parsed.subscriberRobloxAccounts),
     subscriberFriendshipStatus: normalizeRobloxMonitorFriendshipStatuses(parsed.subscriberFriendshipStatus),
