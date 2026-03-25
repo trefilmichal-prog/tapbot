@@ -751,13 +751,14 @@ export const defaultCommands = [
           {
             type: ApplicationCommandOptionType.Subcommand,
             name: 'set_clan',
-            description: 'Filter monitor subscribers by clan (leave empty to clear filter)',
+            description: 'Filter monitor subscribers by clan selected from autocomplete list',
             options: [
               {
                 type: ApplicationCommandOptionType.String,
                 name: 'clan_name',
-                description: 'Clan name used in ticket decisions. Empty = all clans',
-                required: false
+                description: 'Clan selected from list. Choose All clans to clear filter',
+                required: false,
+                autocomplete: true
               }
             ]
           },

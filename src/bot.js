@@ -4635,6 +4635,41 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (interaction.isAutocomplete()) {
+      const subcommandGroup = interaction.options.getSubcommandGroup(false);
+      const subcommand = interaction.options.getSubcommand(false);
+      const focusedOption = interaction.options.getFocused(true);
+
+      if (
+        interaction.commandName === 'roblox_monitor'
+        && subcommandGroup === 'config'
+        && subcommand === 'set_clan'
+        && focusedOption?.name === 'clan_name'
+      ) {
+        const state = getClanState(interaction.guildId);
+        const focusedValue = typeof focusedOption.value === 'string' ? focusedOption.value.trim().toLowerCase() : '';
+        const allClanNames = Object.keys(state?.clan_clans ?? {});
+        const filteredClanNames = focusedValue
+          ? allClanNames.filter((name) => name.toLowerCase().includes(focusedValue))
+          : allClanNames;
+
+        const suggestions = [
+          {
+            name: 'All clans',
+            value: '__ALL__'
+          },
+          ...filteredClanNames.map((name) => ({
+            name,
+            value: name
+          }))
+        ].slice(0, 25);
+
+        await interaction.respond(suggestions);
+      }
+
+      return;
+    }
+
     if (!interaction.isChatInputCommand()) return;
 
       if (interaction.commandName === 'rps') {
@@ -6161,7 +6196,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (subcommand === 'set_clan') {
           const clanNameInput = interaction.options.getString('clan_name', false);
-          const clanName = typeof clanNameInput === 'string' && clanNameInput.trim() ? clanNameInput.trim() : null;
+          const normalizedClanNameInput = typeof clanNameInput === 'string' ? clanNameInput.trim() : '';
+          const clanName = normalizedClanNameInput && normalizedClanNameInput !== '__ALL__'
+            ? normalizedClanNameInput
+            : null;
           await updateRobloxMonitorState(interaction.guildId, (state) => {
             if (!state.monitorSource || typeof state.monitorSource !== 'object' || Array.isArray(state.monitorSource)) {
               state.monitorSource = {};
@@ -6174,8 +6212,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction.reply({
             components: buildTextComponents(
               clanName
-                ? `Roblox monitor clan filter was set to **${clanName}**.`
-                : 'Roblox monitor clan filter was cleared. Monitor now uses accepted tickets from all clans.'
+                ? `Roblox monitor clan filter was set to **${clanName}** (selected from the clan list).`
+                : 'Roblox monitor clan filter was cleared via clan list selection (All clans). Monitor now uses accepted tickets from all clans.'
             ),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
