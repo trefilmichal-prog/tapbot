@@ -324,7 +324,9 @@ export function buildRobloxMonitorStatsReportComponents({
       : userId;
     const presenceLabel = presence?.isInTargetGame === true
       ? '🎮 in-game'
-      : (presence?.isOnline === true ? '🟡 online outside the monitored game' : '⚫ offline');
+      : (presence?.isOnline === true
+        ? '🟡 online outside the monitored game (treated as offline by monitor)'
+        : '⚫ offline');
     const baseLine = `• ${robloxName}, 🟢 online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, 🔴 offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, %: ${Math.round(stats.onlinePercentage)}, status: ${presenceLabel}`;
     if (friendship?.isFriend === false) {
       const fallbackMonitoringAccountLabel = presenceBySubscriber?.[userId]?.monitoringAccountUserId
@@ -479,7 +481,7 @@ function describePresenceForReminder(snapshot) {
     return 'offline';
   }
   if (!snapshot.isInTargetGame) {
-    return 'online, but outside the monitored game';
+    return 'online, but outside the monitored game (treated as offline by monitor)';
   }
   return 'online in the monitored game';
 }
@@ -1217,18 +1219,19 @@ async function runRobloxMonitorTick(client, guildId) {
           presence,
           requiredRootPlaceId
         });
+        const isEffectivelyOnline = nextPresence.isInTargetGame === true;
 
         const sampleMinutes = getIntervalMinutes(state);
         subscriberStatsBySubscriber[subscriberUserId] = buildUpdatedSubscriberAggregateStats(
           subscriberStatsBySubscriber[subscriberUserId],
-          { isOnline: nextPresence.isOnline, sampleMinutes }
+          { isOnline: isEffectivelyOnline, sampleMinutes }
         );
         const reminderIntervalMs = getOfflineReminderMinutes(state) * 60 * 1000;
         const lastReminderIso = typeof reminderTimestampBySubscriber[subscriberUserId] === 'string'
           ? reminderTimestampBySubscriber[subscriberUserId]
           : null;
         const lastReminderMs = lastReminderIso ? new Date(lastReminderIso).getTime() : 0;
-        const shouldSendOfflineReminder = !nextPresence.isOnline
+        const shouldSendOfflineReminder = !isEffectivelyOnline
           && (!lastReminderMs || Number.isNaN(lastReminderMs) || (nowMs - lastReminderMs) >= reminderIntervalMs);
         if (shouldSendOfflineReminder) {
           const isOptedIn = isExplicitDmOptInSubscriberSource(subscriberAccount?.source);
@@ -1243,7 +1246,7 @@ async function runRobloxMonitorTick(client, guildId) {
             await sendOfflineReminderToSubscriber(client, guild, subscriberUserId, targetUsername, nextPresence);
           }
           reminderTimestampBySubscriber[subscriberUserId] = new Date().toISOString();
-        } else if (nextPresence.isOnline && reminderTimestampBySubscriber[subscriberUserId]) {
+        } else if (isEffectivelyOnline && reminderTimestampBySubscriber[subscriberUserId]) {
           delete reminderTimestampBySubscriber[subscriberUserId];
         }
 
