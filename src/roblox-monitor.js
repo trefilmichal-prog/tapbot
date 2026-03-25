@@ -314,35 +314,41 @@ export function buildRobloxMonitorStatsReportComponents({
       : b;
     return aRobloxName.localeCompare(bRobloxName);
   });
-  const playerLines = subscriberUserIds.length > 0
-    ? sortedSubscriberUserIds.map((userId) => {
-      const stats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[userId]);
-      const friendship = subscriberFriendshipStatusBySubscriber?.[userId] ?? null;
-      const presence = presenceBySubscriber?.[userId] ?? null;
-      const robloxName = typeof state?.subscriberRobloxAccounts?.[userId]?.robloxUsername === 'string'
-        && state.subscriberRobloxAccounts[userId].robloxUsername.trim()
-        ? state.subscriberRobloxAccounts[userId].robloxUsername.trim()
-        : userId;
-      const presenceLabel = presence?.isInTargetGame === true
-        ? '🎮 in-game'
-        : (presence?.isOnline === true ? '🟡 online outside the monitored game' : '⚫ offline');
-      const baseLine = `• ${robloxName}, 🟢 online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, 🔴 offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, %: ${Math.round(stats.onlinePercentage)}, status: ${presenceLabel}`;
-      if (friendship?.isFriend === false) {
-        const fallbackMonitoringAccountLabel = presenceBySubscriber?.[userId]?.monitoringAccountUserId
-          ? String(presenceBySubscriber[userId].monitoringAccountUserId)
-          : 'monitoring account';
-        const nextMonitoringAccountLabel = typeof monitoringAccountLabel === 'string' && monitoringAccountLabel.trim()
-          ? monitoringAccountLabel.trim()
-          : fallbackMonitoringAccountLabel;
-        return [
-          baseLine,
-          '  Account is not friends with the monitoring session account.',
-          `  Add: **${nextMonitoringAccountLabel}**.`
-        ].join('\n');
-      }
-      return baseLine;
-    }).join('\n')
-    : 'No subscribed players are currently configured.';
+  const buildPlayerLine = (userId) => {
+    const stats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[userId]);
+    const friendship = subscriberFriendshipStatusBySubscriber?.[userId] ?? null;
+    const presence = presenceBySubscriber?.[userId] ?? null;
+    const robloxName = typeof state?.subscriberRobloxAccounts?.[userId]?.robloxUsername === 'string'
+      && state.subscriberRobloxAccounts[userId].robloxUsername.trim()
+      ? state.subscriberRobloxAccounts[userId].robloxUsername.trim()
+      : userId;
+    const presenceLabel = presence?.isInTargetGame === true
+      ? '🎮 in-game'
+      : (presence?.isOnline === true ? '🟡 online outside the monitored game' : '⚫ offline');
+    const baseLine = `• ${robloxName}, 🟢 online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, 🔴 offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, %: ${Math.round(stats.onlinePercentage)}, status: ${presenceLabel}`;
+    if (friendship?.isFriend === false) {
+      const fallbackMonitoringAccountLabel = presenceBySubscriber?.[userId]?.monitoringAccountUserId
+        ? String(presenceBySubscriber[userId].monitoringAccountUserId)
+        : 'monitoring account';
+      const nextMonitoringAccountLabel = typeof monitoringAccountLabel === 'string' && monitoringAccountLabel.trim()
+        ? monitoringAccountLabel.trim()
+        : fallbackMonitoringAccountLabel;
+      return [
+        baseLine,
+        '  Account is not friends with the monitoring session account.',
+        `  Add: **${nextMonitoringAccountLabel}**.`
+      ].join('\n');
+    }
+    return baseLine;
+  };
+  const friendLines = sortedSubscriberUserIds
+    .filter((userId) => subscriberFriendshipStatusBySubscriber?.[userId]?.isFriend === true)
+    .map(buildPlayerLine)
+    .join('\n');
+  const nonFriendLines = sortedSubscriberUserIds
+    .filter((userId) => subscriberFriendshipStatusBySubscriber?.[userId]?.isFriend !== true)
+    .map(buildPlayerLine)
+    .join('\n');
 
   return [
     buildV2Container([
@@ -354,8 +360,11 @@ export function buildRobloxMonitorStatsReportComponents({
         `Report generated at: **${checkedAt}**`,
         `Build: **${BUILD_LABEL}**`,
         '',
-        '**Per player summary**',
-        playerLines
+        '**Friends**',
+        friendLines || 'No friend subscribers in this report.',
+        '',
+        '**Non-friends / unresolved**',
+        nonFriendLines || 'No non-friend or unresolved subscribers in this report.'
       ].join('\n'))
     ])
   ];
