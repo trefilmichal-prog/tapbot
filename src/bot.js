@@ -56,6 +56,7 @@ import {
 import { runUpdate } from './update.js';
 import { syncApplicationCommands } from './deploy-commands.js';
 import {
+  formatRobloxMonitorAggregateStats,
   robloxMonitorInternals,
   startRobloxMonitorScheduler,
   stopRobloxMonitorScheduler
@@ -468,6 +469,9 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
   const subscriberPresenceMap = state?.subscriberPresence && typeof state.subscriberPresence === 'object' && !Array.isArray(state.subscriberPresence)
     ? state.subscriberPresence
     : {};
+  const subscriberStatsMap = state?.subscriberStats && typeof state.subscriberStats === 'object' && !Array.isArray(state.subscriberStats)
+    ? state.subscriberStats
+    : {};
   const friendshipReadyCount = subscriberUserIds.reduce((count, userId) => (
     friendshipStatusMap[userId]?.isFriend === true ? count + 1 : count
   ), 0);
@@ -499,7 +503,7 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
     const statusNote = typeof friendship?.note === 'string' && friendship.note.trim()
       ? friendship.note.trim()
       : (typeof presence?.lastError === 'string' && presence.lastError.trim() ? presence.lastError.trim() : 'None');
-    return `<@${userId}> | Account: **${accountUsername}** | Friend: **${friendshipLabel}** | Presence: **${presenceLabel}** | Note: ${statusNote}`;
+    return `<@${userId}> | Account: **${accountUsername}** | Friend: **${friendshipLabel}** | Presence: **${presenceLabel}** | ${formatRobloxMonitorAggregateStats(subscriberStatsMap[userId])} | Note: ${statusNote}`;
   });
 
   return [
@@ -6154,6 +6158,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             state.subscriberRobloxAccounts = {};
             state.subscriberFriendshipStatus = {};
             state.subscriberPresence = {};
+            state.subscriberStats = {};
             state.subscriberOfflineReminderAt = {};
           });
           await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
