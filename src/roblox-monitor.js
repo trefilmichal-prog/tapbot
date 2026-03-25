@@ -126,17 +126,11 @@ export function buildRobloxMonitorStatsReportComponents({
   const playerLines = subscriberUserIds.length > 0
     ? subscriberUserIds.map((userId) => {
       const stats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[userId]);
-      const presenceSnapshot = presenceBySubscriber[userId];
-      const lastCheckedAt = typeof presenceSnapshot?.checkedAt === 'string' && presenceSnapshot.checkedAt
-        ? presenceSnapshot.checkedAt
-        : checkedAt;
-      return [
-        `• Subscriber ID: ${userId}`,
-        `  - Online time: **${formatDurationMinutes(stats.totalOnlineMinutes)}**`,
-        `  - Offline time: **${formatDurationMinutes(stats.totalOfflineMinutes)}**`,
-        `  - Online %: **${stats.onlinePercentage.toFixed(2)}%**`,
-        `  - Last check timestamp: **${lastCheckedAt}**`
-      ].join('\n');
+      const robloxName = typeof state?.subscriberRobloxAccounts?.[userId]?.robloxUsername === 'string'
+        && state.subscriberRobloxAccounts[userId].robloxUsername.trim()
+        ? state.subscriberRobloxAccounts[userId].robloxUsername.trim()
+        : userId;
+      return `• ${robloxName}, online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, online %: ${stats.onlinePercentage.toFixed(2)}%`;
     }).join('\n')
     : 'No subscribed players are currently configured.';
 
