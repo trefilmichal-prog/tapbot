@@ -736,6 +736,33 @@ export const defaultCommands = [
           },
           {
             type: ApplicationCommandOptionType.Subcommand,
+            name: 'set_alert_room',
+            description: 'Set room/channel where Roblox monitor offline reminders are posted',
+            options: [
+              {
+                type: ApplicationCommandOptionType.Channel,
+                name: 'channel',
+                description: 'Text channel for Roblox monitor reminders',
+                required: true,
+                channel_types: [ChannelType.GuildText]
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'set_clan',
+            description: 'Filter monitor subscribers by clan (leave empty to clear filter)',
+            options: [
+              {
+                type: ApplicationCommandOptionType.String,
+                name: 'clan_name',
+                description: 'Clan name used in ticket decisions. Empty = all clans',
+                required: false
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
             name: 'clear_target',
             description: 'Admin reset of all subscriber-specific Roblox targets for this guild monitor',
             options: [
