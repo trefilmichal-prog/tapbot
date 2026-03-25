@@ -6393,7 +6393,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               const handshakeStatusLine = autoAcceptedFriendRequest
                 ? 'Friend handshake: request was auto-accepted.'
                 : 'Friend handshake: no pending request.';
-              const friendshipReasonLine = 'Account is not in friends with the monitoring session account.';
+              const friendshipReasonLine = 'Account is not friends with the monitoring session account.';
               const nextStepLine = autoAcceptedFriendRequest
                 ? 'Friendship is not visible yet. Please try again in a moment; if the issue persists, verify friendship on both accounts.'
                 : `Send a friend request to the monitoring account ${monitoringAccountLabel} or accept its request on Roblox, then run opt-in again.`;
