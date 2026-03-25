@@ -89,6 +89,77 @@ test('filterNotificationsByClanNicknames matches accepted clan player for hatche
   assert.equal(filteredNotifications[0].notification.body, notifications[0].body);
 });
 
+test('filterNotificationsByClanNicknames matches when hatched text is only in title and body has stats', () => {
+  const acceptedClanPlayers = new Map([
+    ['senpaicat22', { displayNickname: 'SenpaiCat22', applicantId: '123456789012345678' }]
+  ]);
+
+  const notifications = [
+    {
+      title: '🔥 Congrats! :flag_cz: senpaicat22 hatched a Huge Dog',
+      body: 'Coins: +120\nPower: +340\nRank up ready!'
+    }
+  ];
+
+  const filteredNotifications = filterNotificationsByClanNicknames(
+    notifications,
+    acceptedClanPlayers
+  );
+
+  assert.equal(filteredNotifications.length, 1);
+  assert.equal(filteredNotifications[0].matchedNickname, 'senpaicat22');
+  assert.deepEqual(filteredNotifications[0].player, {
+    displayNickname: 'SenpaiCat22',
+    applicantId: '123456789012345678'
+  });
+});
+
+test('filterNotificationsByClanNicknames matches using title and multiline body payload combination', () => {
+  const acceptedClanPlayers = new Map([
+    ['senpaicat22', { displayNickname: 'SenpaiCat22', applicantId: '123456789012345678' }]
+  ]);
+
+  const notifications = [
+    {
+      title: '🔥 Congrats!',
+      body: ':flag_cz:\nsenpaicat22\nhatched a Huge Dog\nwith bonus roll'
+    }
+  ];
+
+  const filteredNotifications = filterNotificationsByClanNicknames(
+    notifications,
+    acceptedClanPlayers
+  );
+
+  assert.equal(filteredNotifications.length, 1);
+  assert.equal(filteredNotifications[0].matchedNickname, 'senpaicat22');
+  assert.deepEqual(filteredNotifications[0].player, {
+    displayNickname: 'SenpaiCat22',
+    applicantId: '123456789012345678'
+  });
+});
+
+test('filterNotificationsByClanNicknames keeps body-only matching behavior (regression)', () => {
+  const acceptedClanPlayers = new Map([
+    ['senpaicat22', { displayNickname: 'SenpaiCat22', applicantId: '123456789012345678' }]
+  ]);
+
+  const notifications = [
+    {
+      title: 'Secret Hatcher',
+      body: '🇨🇿 senpaicat22 hatched a Huge Dog'
+    }
+  ];
+
+  const filteredNotifications = filterNotificationsByClanNicknames(
+    notifications,
+    acceptedClanPlayers
+  );
+
+  assert.equal(filteredNotifications.length, 1);
+  assert.equal(filteredNotifications[0].matchedNickname, 'senpaicat22');
+});
+
 test('accepted ticket identity lookup reuses accepted ticket state and prefers stored Roblox nicknames', () => {
   const state = {
     clan_ticket_decisions: {
