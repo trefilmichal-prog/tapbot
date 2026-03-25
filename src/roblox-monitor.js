@@ -1,9 +1,11 @@
 import { getClanState, getRobloxMonitorState, updateRobloxMonitorState } from './persistence.js';
 import { collectAcceptedTicketRobloxIdentitiesFromState } from './clan-notification-matching.js';
+import { ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
 
 const DEFAULT_REQUIRED_ROOT_PLACE_ID = 74260430392611;
 const DEFAULT_CHECK_INTERVAL_MINUTES = 5;
 const DEFAULT_OFFLINE_REMINDER_MINUTES = 10;
+const DEFAULT_STATS_REPORT_POST_INTERVAL_MINUTES = 30;
 const MIN_INTERVAL_MINUTES = 1;
 const ROBLOX_API_ORIGIN = 'https://www.roblox.com';
 const USERNAME_RESOLVE_URL = 'https://users.roblox.com/v1/usernames/users';
@@ -83,6 +85,142 @@ export function formatRobloxMonitorAggregateStats(stats) {
 
 function getOfflineReminderMinutes(state) {
   return Math.max(MIN_INTERVAL_MINUTES, Number(state?.offlineReminderMinutes) || DEFAULT_OFFLINE_REMINDER_MINUTES);
+}
+
+function getStatsReportPostIntervalMinutes(state) {
+  return Math.max(MIN_INTERVAL_MINUTES, Number(state?.statsReport?.postIntervalMinutes) || DEFAULT_STATS_REPORT_POST_INTERVAL_MINUTES);
+}
+
+function formatDurationMinutes(totalMinutes) {
+  const normalizedMinutes = Math.max(0, Number(totalMinutes) || 0);
+  const hours = Math.floor(normalizedMinutes / 60);
+  const minutes = normalizedMinutes % 60;
+  return hours > 0
+    ? `${hours}h ${minutes}m`
+    : `${minutes}m`;
+}
+
+function resolveMonitoredGameLabel(state, requiredRootPlaceId) {
+  const configuredLabel = typeof state?.targetGame?.name === 'string' && state.targetGame.name.trim()
+    ? state.targetGame.name.trim()
+    : 'Unknown game';
+  return `${configuredLabel} (${requiredRootPlaceId})`;
+}
+
+export function buildRobloxMonitorStatsReportComponents({
+  guild,
+  state,
+  subscriberUserIds,
+  subscriberStatsBySubscriber,
+  presenceBySubscriber,
+  requiredRootPlaceId,
+  checkedAt
+}) {
+  const gameLabel = resolveMonitoredGameLabel(state, requiredRootPlaceId);
+  const guildContext = guild?.name ? `${guild.name} (${guild.id})` : String(guild?.id ?? 'Unknown guild');
+  const playerLines = subscriberUserIds.length > 0
+    ? subscriberUserIds.map((userId) => {
+      const stats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[userId]);
+      const presenceSnapshot = presenceBySubscriber[userId];
+      const lastCheckedAt = typeof presenceSnapshot?.checkedAt === 'string' && presenceSnapshot.checkedAt
+        ? presenceSnapshot.checkedAt
+        : checkedAt;
+      return [
+        `• <@${userId}>`,
+        `  - Online time: **${formatDurationMinutes(stats.totalOnlineMinutes)}**`,
+        `  - Offline time: **${formatDurationMinutes(stats.totalOfflineMinutes)}**`,
+        `  - Online %: **${stats.onlinePercentage.toFixed(2)}%**`,
+        `  - Last check timestamp: **${lastCheckedAt}**`
+      ].join('\n');
+    }).join('\n')
+    : 'No subscribed players are currently configured.';
+
+  return [
+    {
+      type: ComponentType.Container,
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: '📊 **Roblox monitor summary report**'
+        },
+        {
+          type: ComponentType.Separator,
+          divider: true,
+          spacing: SeparatorSpacingSize.Small
+        },
+        {
+          type: ComponentType.TextDisplay,
+          content: [
+            `Guild context: **${guildContext}**`,
+            `Monitored game label: **${gameLabel}**`,
+            `Report generated at: **${checkedAt}**`,
+            '',
+            '**Per player summary**',
+            playerLines
+          ].join('\n')
+        }
+      ]
+    }
+  ];
+}
+
+async function postRobloxMonitorStatsReportIfDue(client, guild, state, {
+  checkedAt,
+  requiredRootPlaceId,
+  subscriberUserIds,
+  subscriberStatsBySubscriber,
+  presenceBySubscriber
+}) {
+  const statsReport = state?.statsReport && typeof state.statsReport === 'object' && !Array.isArray(state.statsReport)
+    ? state.statsReport
+    : {};
+  const channelId = typeof statsReport.channelId === 'string' && statsReport.channelId.trim()
+    ? statsReport.channelId.trim()
+    : null;
+  const postIntervalMinutes = getStatsReportPostIntervalMinutes(state);
+  const postIntervalMs = postIntervalMinutes * 60 * 1000;
+  const isEnabled = Boolean(statsReport.enabled) && Boolean(channelId);
+  if (!isEnabled) {
+    return;
+  }
+
+  const nowMs = new Date(checkedAt).getTime();
+  const lastPostedAt = typeof statsReport.lastPostedAt === 'string' ? statsReport.lastPostedAt : null;
+  const lastPostedAtMs = lastPostedAt ? new Date(lastPostedAt).getTime() : NaN;
+  const isDueToPost = !Number.isFinite(lastPostedAtMs) || (nowMs - lastPostedAtMs) >= postIntervalMs;
+  if (!isDueToPost) {
+    return;
+  }
+
+  const channel = guild.channels.cache.get(channelId) ?? await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel || !channel.isTextBased()) {
+    return;
+  }
+
+  const components = buildRobloxMonitorStatsReportComponents({
+    guild,
+    state,
+    subscriberUserIds,
+    subscriberStatsBySubscriber,
+    presenceBySubscriber,
+    requiredRootPlaceId,
+    checkedAt
+  });
+  await channel.send({
+    flags: MessageFlags.IsComponentsV2,
+    components
+  });
+
+  await updateRobloxMonitorState(guild.id, (nextState) => {
+    if (!nextState.statsReport || typeof nextState.statsReport !== 'object' || Array.isArray(nextState.statsReport)) {
+      nextState.statsReport = {};
+    }
+    nextState.statsReport.channelId = channelId;
+    nextState.statsReport.postIntervalMinutes = postIntervalMinutes;
+    nextState.statsReport.enabled = true;
+    nextState.statsReport.lastPostedAt = checkedAt;
+    nextState.statsReport.updatedAt = nextState.statsReport.updatedAt ?? checkedAt;
+  });
 }
 
 function getRequiredRootPlaceId(state) {
@@ -696,6 +834,15 @@ async function runRobloxMonitorTick(client, guildId) {
     if (acceptedCount > 0) {
       console.log(`Accepted ${acceptedCount} Roblox friend request(s) for guild ${guildId}.`);
     }
+
+    const refreshedState = getRobloxMonitorState(guildId);
+    await postRobloxMonitorStatsReportIfDue(client, guild, refreshedState, {
+      checkedAt: new Date().toISOString(),
+      requiredRootPlaceId,
+      subscriberUserIds: filteredSubscriberUserIds,
+      subscriberStatsBySubscriber,
+      presenceBySubscriber
+    });
   } catch (error) {
     console.warn(`Roblox monitor tick failed for guild ${guildId}:`, error);
     console.warn('Roblox monitor target resolution warning', {
