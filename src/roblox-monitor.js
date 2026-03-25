@@ -6,6 +6,7 @@ import {
   buildV2Separator,
   buildV2TextDisplay
 } from './components-v2.js';
+import packageJson from '../package.json' with { type: 'json' };
 
 const DEFAULT_REQUIRED_ROOT_PLACE_ID = 74260430392611;
 const DEFAULT_CHECK_INTERVAL_MINUTES = 5;
@@ -18,6 +19,20 @@ const AUTHENTICATED_USER_URL = 'https://users.roblox.com/v1/users/authenticated'
 const PRESENCE_URL = 'https://presence.roblox.com/v1/presence/users';
 const USERNAME_RESOLUTION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const USERNAME_RESOLUTION_CACHE_MAX_ENTRIES = 500;
+const BUILD_VERSION = typeof packageJson?.version === 'string' && packageJson.version.trim()
+  ? packageJson.version.trim()
+  : 'unknown';
+const BUILD_COMMIT = (
+  process.env.BUILD_COMMIT
+  ?? process.env.GIT_COMMIT
+  ?? process.env.COMMIT_SHA
+  ?? process.env.VERCEL_GIT_COMMIT_SHA
+  ?? ''
+).trim();
+const BUILD_COMMIT_SHORT = BUILD_COMMIT ? BUILD_COMMIT.slice(0, 7) : null;
+const BUILD_LABEL = BUILD_COMMIT_SHORT
+  ? `${BUILD_VERSION} (commit ${BUILD_COMMIT_SHORT})`
+  : `${BUILD_VERSION}`;
 
 const schedulerStateByGuild = new Map();
 
@@ -308,6 +323,7 @@ export function buildRobloxMonitorStatsReportComponents({
         `Guild context: **${guildContext}**`,
         `Monitored game label: **${gameLabel}**`,
         `Report generated at: **${checkedAt}**`,
+        `Build: **${BUILD_LABEL}**`,
         '',
         '**Per player summary**',
         playerLines
