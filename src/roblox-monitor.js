@@ -797,6 +797,28 @@ async function runRobloxMonitorTick(client, guildId) {
     for (const subscriberUserId of effectiveMonitoredUserIds) {
       subscriberStatsBySubscriber[subscriberUserId] = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[subscriberUserId]);
     }
+
+    if (monitorMode === 'clan') {
+      for (const subscriberUserId of effectiveMonitoredUserIds) {
+        const existingAccount = subscriberAccountMap[subscriberUserId] ?? null;
+        const hasValidStoredUsername = typeof existingAccount?.robloxUsername === 'string'
+          && Boolean(existingAccount.robloxUsername.trim());
+        if (hasValidStoredUsername) {
+          continue;
+        }
+        const ticketRobloxNickname = approvedUsers.discordUserIdToRobloxUsername?.[subscriberUserId];
+        if (typeof ticketRobloxNickname !== 'string' || !ticketRobloxNickname.trim()) {
+          continue;
+        }
+        subscriberAccountMap[subscriberUserId] = {
+          robloxUsername: ticketRobloxNickname.trim(),
+          robloxUserId: null,
+          source: ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.CLAN_AUTO,
+          optedInAt: existingAccount?.optedInAt ?? checkedAt
+        };
+      }
+    }
+
     const resolvedUsernameCache = new Map();
 
     for (const subscriberUserId of effectiveMonitoredUserIds) {
@@ -814,7 +836,7 @@ async function runRobloxMonitorTick(client, guildId) {
           isFriend: false,
           lastCheckedAt: checkedAt,
           lastAutoAcceptedAt: null,
-          note: 'Periodic check skipped: subscriber has no stored Roblox account. Re-run /roblox_monitor alerts opt_in.'
+          note: 'Periodic check skipped: subscriber has no stored Roblox account (manual opt-in or clan_auto from approved ticket nickname required).'
         };
         presenceBySubscriber[subscriberUserId] = buildPresenceSnapshot({
           previousPresence: previousPresenceBySubscriber[subscriberUserId] ?? null,
