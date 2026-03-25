@@ -2,6 +2,22 @@
 
 A Discord bot project using slash commands and Discord Components V2-style message content. This repository includes setup helpers, command deployment, PM2 startup scripts, and restart/update workflows.
 
+## Framework and Components V2 terminology
+
+This repository is implemented with **discord.js** (Node.js), not discord.py.
+
+When reading docs/examples here, treat Python class names as concept equivalents only. For this codebase, use the discord.js payload/component mapping:
+
+- `discord.ui.LayoutView` → top-level message payload with `flags: MessageFlags.IsComponentsV2` and `components`
+- `discord.ui.Container` → `ComponentType.Container`
+- `discord.ui.TextDisplay` → `ComponentType.TextDisplay`
+- `discord.ui.Separator` → `ComponentType.Separator`
+- `discord.ui.ActionRow` → `ComponentType.ActionRow`
+- `discord.ui.Button` / `discord.ui.Select` → `ComponentType.Button` / `ComponentType.StringSelect`
+- `discord.ui.MediaGallery` / `discord.ui.MediaGalleryItem` → `ComponentType.MediaGallery` / gallery `items[]`
+
+`discord.Embed` is intentionally not used for Components V2 UI responses in this repository.
+
 ## Requirements
 
 - Node.js **22.12.0+**
@@ -207,6 +223,7 @@ Expected behavior:
 ## Internal command notes
 
 - `/config ticket_visibility_sync` resynchronizes ticket channel permissions for stored clan tickets (per guild), reapplies applicant/review-role access, and updates saved `activeReviewRoleId`/`updatedAt` values.
+- Components V2 message builders are centralized in `src/components-v2.js`, including payload guards that reject embed usage.
 
 ## Roblox monitor source/target behavior (admin)
 

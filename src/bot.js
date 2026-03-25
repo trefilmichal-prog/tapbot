@@ -73,6 +73,13 @@ import {
   getAcceptedTicketRobloxAccessError,
   resolveRobloxAlertOptInTarget
 } from './roblox-alert-target.js';
+import {
+  buildV2Container,
+  buildV2MessagePayload,
+  buildV2Separator,
+  buildV2TextDisplay,
+  buildV2TextMessageComponents
+} from './components-v2.js';
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason);
@@ -396,17 +403,7 @@ function buildWelcomeComponents(member, welcomeMessage) {
 }
 
 function buildTextComponents(content) {
-  return [
-    {
-      type: ComponentType.Container,
-      components: [
-        {
-          type: ComponentType.TextDisplay,
-          content
-        }
-      ]
-    }
-  ];
+  return buildV2TextMessageComponents(content);
 }
 
 function buildRobloxMonitorSessionModalCustomId({ guildId, userId }) {
@@ -507,43 +504,30 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
   });
 
   return [
-    {
-      type: ComponentType.Container,
-      components: [
-        {
-          type: ComponentType.TextDisplay,
-          content: '🛠️ **Roblox monitor status**'
-        },
-        {
-          type: ComponentType.Separator,
-          divider: true,
-          spacing: SeparatorSpacingSize.Small
-        },
-        {
-          type: ComponentType.TextDisplay,
-          content: [
-            `Session configured: **${hasSession ? 'Yes' : 'No'}**`,
-            `Session persisted after restart: **${hasSession ? 'Yes' : 'No'}**`,
-            `Monitoring account user ID: **${monitoringAccountUserId ?? 'Unknown'}**`,
-            `Source type: **${sourceType}**`,
-            `Configured source guild_id: **${monitorSource.guild_id ?? 'N/A'}**`,
-            `Configured source channel_id: **${monitorSource.channel_id ?? 'N/A'}**`,
-            `Configured source game_id: **${monitorSource.game_id ?? requiredRootPlaceId}**`,
-            `Configured source user_id: **${monitorSource.source_user_id ?? 'N/A'}**`,
-            `Target override: **${targetOverride ?? 'null'}**`,
-            `Monitored game (persisted): **${monitoredGameName}**`,
-            `Required rootPlaceId/placeId: **${requiredRootPlaceId}**`,
-            `Friendship-ready subscribers: **${friendshipReadyCount}/${subscriberUserIds.length}**`,
-            viewerDiscordUserId ? `Your friendship-ready state: **${viewerReadyLabel}**` : null,
-            `Last known monitor state persisted: **${hasLastKnownPresence ? `Yes (${lastPresence.checkedAt})` : 'No'}**`,
-            `Last error: ${lastError ?? 'None'}`,
-            '',
-            '**Subscriber statuses:**',
-            subscriberStatusLines.length > 0 ? subscriberStatusLines.join('\n') : 'No subscribers are currently opted in.'
-          ].filter(Boolean).join('\n')
-        }
-      ]
-    }
+    buildV2Container([
+      buildV2TextDisplay('🛠️ **Roblox monitor status**'),
+      buildV2Separator(),
+      buildV2TextDisplay([
+        `Session configured: **${hasSession ? 'Yes' : 'No'}**`,
+        `Session persisted after restart: **${hasSession ? 'Yes' : 'No'}**`,
+        `Monitoring account user ID: **${monitoringAccountUserId ?? 'Unknown'}**`,
+        `Source type: **${sourceType}**`,
+        `Configured source guild_id: **${monitorSource.guild_id ?? 'N/A'}**`,
+        `Configured source channel_id: **${monitorSource.channel_id ?? 'N/A'}**`,
+        `Configured source game_id: **${monitorSource.game_id ?? requiredRootPlaceId}**`,
+        `Configured source user_id: **${monitorSource.source_user_id ?? 'N/A'}**`,
+        `Target override: **${targetOverride ?? 'null'}**`,
+        `Monitored game (persisted): **${monitoredGameName}**`,
+        `Required rootPlaceId/placeId: **${requiredRootPlaceId}**`,
+        `Friendship-ready subscribers: **${friendshipReadyCount}/${subscriberUserIds.length}**`,
+        viewerDiscordUserId ? `Your friendship-ready state: **${viewerReadyLabel}**` : null,
+        `Last known monitor state persisted: **${hasLastKnownPresence ? `Yes (${lastPresence.checkedAt})` : 'No'}**`,
+        `Last error: ${lastError ?? 'None'}`,
+        '',
+        '**Subscriber statuses:**',
+        subscriberStatusLines.length > 0 ? subscriberStatusLines.join('\n') : 'No subscribers are currently opted in.'
+      ].filter(Boolean).join('\n'))
+    ])
   ];
 }
 
@@ -6095,19 +6079,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (subcommand === 'status') {
           const state = getRobloxMonitorState(interaction.guildId);
-          await interaction.reply({
+          await interaction.reply(buildV2MessagePayload({
             components: buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId: interaction.user.id }),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          });
+          }));
           return;
         }
 
         if (subcommand === 'show') {
           const state = getRobloxMonitorState(interaction.guildId);
-          await interaction.reply({
+          await interaction.reply(buildV2MessagePayload({
             components: buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId: interaction.user.id }),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          });
+          }));
           return;
         }
 
@@ -6223,10 +6207,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
             `Post interval: **${postIntervalMinutes}** minute(s)`,
             `Last updated: ${updatedAt ? updatedAt : 'never'}`
           ];
-          await interaction.reply({
+          await interaction.reply(buildV2MessagePayload({
             components: buildTextComponents(statusLines.join('\n')),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          });
+          }));
           return;
         }
       }

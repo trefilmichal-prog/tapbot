@@ -1,6 +1,11 @@
 import { getClanState, getRobloxMonitorState, updateRobloxMonitorState } from './persistence.js';
 import { collectAcceptedTicketRobloxIdentitiesFromState } from './clan-notification-matching.js';
-import { ComponentType, MessageFlags, SeparatorSpacingSize } from 'discord-api-types/v10';
+import {
+  buildV2Container,
+  buildV2MessagePayload,
+  buildV2Separator,
+  buildV2TextDisplay
+} from './components-v2.js';
 
 const DEFAULT_REQUIRED_ROOT_PLACE_ID = 74260430392611;
 const DEFAULT_CHECK_INTERVAL_MINUTES = 5;
@@ -136,31 +141,18 @@ export function buildRobloxMonitorStatsReportComponents({
     : 'No subscribed players are currently configured.';
 
   return [
-    {
-      type: ComponentType.Container,
-      components: [
-        {
-          type: ComponentType.TextDisplay,
-          content: '📊 **Roblox monitor summary report**'
-        },
-        {
-          type: ComponentType.Separator,
-          divider: true,
-          spacing: SeparatorSpacingSize.Small
-        },
-        {
-          type: ComponentType.TextDisplay,
-          content: [
-            `Guild context: **${guildContext}**`,
-            `Monitored game label: **${gameLabel}**`,
-            `Report generated at: **${checkedAt}**`,
-            '',
-            '**Per player summary**',
-            playerLines
-          ].join('\n')
-        }
-      ]
-    }
+    buildV2Container([
+      buildV2TextDisplay('📊 **Roblox monitor summary report**'),
+      buildV2Separator(),
+      buildV2TextDisplay([
+        `Guild context: **${guildContext}**`,
+        `Monitored game label: **${gameLabel}**`,
+        `Report generated at: **${checkedAt}**`,
+        '',
+        '**Per player summary**',
+        playerLines
+      ].join('\n'))
+    ])
   ];
 }
 
@@ -206,10 +198,9 @@ async function postRobloxMonitorStatsReportIfDue(client, guild, state, {
     requiredRootPlaceId,
     checkedAt
   });
-  await channel.send({
-    flags: MessageFlags.IsComponentsV2,
+  await channel.send(buildV2MessagePayload({
     components
-  });
+  }));
 
   await updateRobloxMonitorState(guild.id, (nextState) => {
     if (!nextState.statsReport || typeof nextState.statsReport !== 'object' || Array.isArray(nextState.statsReport)) {
