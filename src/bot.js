@@ -489,7 +489,9 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
       : viewerFriendshipStatus?.isFriend === false
         ? 'No'
         : 'Unknown';
-  const subscriberStatusLines = subscriberUserIds.map((userId) => {
+  const friendSubscriberStatusLines = [];
+  const nonFriendSubscriberStatusLines = [];
+  for (const userId of subscriberUserIds) {
     const account = subscriberAccountMap[userId];
     const accountUsername = typeof account?.robloxUsername === 'string' && account.robloxUsername.trim()
       ? account.robloxUsername.trim()
@@ -507,8 +509,14 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
     const statusNote = typeof friendship?.note === 'string' && friendship.note.trim()
       ? friendship.note.trim()
       : (typeof presence?.lastError === 'string' && presence.lastError.trim() ? presence.lastError.trim() : 'None');
-    return `<@${userId}> | Account: **${accountUsername}** | Friend: **${friendshipLabel}** | Presence: **${presenceLabel}** | ${formatRobloxMonitorAggregateStats(subscriberStatsMap[userId])} | Note: ${statusNote}`;
-  });
+    const statusLine = `<@${userId}> | Account: **${accountUsername}** | Friend: **${friendshipLabel}** | Presence: **${presenceLabel}** | ${formatRobloxMonitorAggregateStats(subscriberStatsMap[userId])} | Note: ${statusNote}`;
+    if (friendship?.isFriend === true) {
+      friendSubscriberStatusLines.push(statusLine);
+    } else {
+      nonFriendSubscriberStatusLines.push(statusLine);
+    }
+  }
+  const nonFriendOrUnresolvedCount = subscriberUserIds.length - friendshipReadyCount;
 
   const configurationLines = [
     `Session configured: **${hasSession ? 'Yes' : 'No'}**`,
@@ -524,6 +532,7 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
     `Configured source user_id: **${monitorSource.source_user_id ?? 'N/A'}**`,
     `Target override: **${targetOverride ?? 'null'}**`,
     `Friendship-ready subscribers: **${friendshipReadyCount}/${subscriberUserIds.length}**`,
+    `Non-friend / unresolved subscribers: **${nonFriendOrUnresolvedCount}/${subscriberUserIds.length}**`,
     viewerDiscordUserId ? `Your friendship-ready state: **${viewerReadyLabel}**` : null,
     `Last known monitor state persisted: **${hasLastKnownPresence ? `Yes (${lastPresence.checkedAt})` : 'No'}**`,
     `Last error: ${lastError ?? 'None'}`
@@ -536,8 +545,13 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
       buildV2TextDisplay(['**Configuration**', ...configurationLines].join('\n')),
       buildV2Separator(),
       buildV2TextDisplay([
-        '**Subscriber statuses**',
-        subscriberStatusLines.length > 0 ? subscriberStatusLines.join('\n') : 'No subscribers are currently opted in.'
+        '**Friend subscribers**',
+        friendSubscriberStatusLines.length > 0 ? friendSubscriberStatusLines.join('\n') : 'No friend-ready subscribers are currently opted in.'
+      ].join('\n')),
+      buildV2Separator(),
+      buildV2TextDisplay([
+        '**Non-friend / unresolved subscribers**',
+        nonFriendSubscriberStatusLines.length > 0 ? nonFriendSubscriberStatusLines.join('\n') : 'No non-friend or unresolved subscribers are currently opted in.'
       ].join('\n'))
     ])
   ];
