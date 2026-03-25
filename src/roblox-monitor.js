@@ -178,11 +178,15 @@ export function buildRobloxMonitorStatsReportComponents({
     ? subscriberUserIds.map((userId) => {
       const stats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[userId]);
       const friendship = subscriberFriendshipStatusBySubscriber?.[userId] ?? null;
+      const presence = presenceBySubscriber?.[userId] ?? null;
       const robloxName = typeof state?.subscriberRobloxAccounts?.[userId]?.robloxUsername === 'string'
         && state.subscriberRobloxAccounts[userId].robloxUsername.trim()
         ? state.subscriberRobloxAccounts[userId].robloxUsername.trim()
         : userId;
-      const baseLine = `• ${robloxName}, online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, online %: ${stats.onlinePercentage.toFixed(2)}%`;
+      const presenceLabel = presence?.isInTargetGame === true
+        ? '🎮 in-game'
+        : (presence?.isOnline === true ? '🟡 online mimo hru' : '⚫ offline');
+      const baseLine = `• ${robloxName}, 🟢 online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, 🔴 offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, online %: ${stats.onlinePercentage.toFixed(2)}%, stav: ${presenceLabel}`;
       if (friendship?.isFriend === false) {
         const fallbackMonitoringAccountLabel = presenceBySubscriber?.[userId]?.monitoringAccountUserId
           ? String(presenceBySubscriber[userId].monitoringAccountUserId)
