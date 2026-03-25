@@ -669,3 +669,124 @@ test('monitor username resolution cache avoids second usernames resolve call wit
     await fs.rm(guildDir, { recursive: true, force: true });
   }
 });
+
+test('clan monitor removes subscriber record when ticket nickname can no longer be resolved on Roblox', async () => {
+  const guildId = `test-guild-clan-prune-missing-nickname-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const guildDir = path.join(process.cwd(), 'data', 'guilds', guildId);
+  const subscriberUserId = '444444444444444444';
+  const selectedClanName = 'Raiders';
+  const originalFetch = global.fetch;
+
+  global.fetch = async (url, options = {}) => {
+    const resolvedUrl = String(url);
+    const method = (options?.method ?? 'GET').toUpperCase();
+
+    if (resolvedUrl.includes('/v1/users/authenticated') && method === 'GET') {
+      return Response.json({ id: 999, name: 'MonitorAccount' });
+    }
+    if (resolvedUrl.includes('/v1/my/friends/requests') && method === 'GET') {
+      return Response.json({ data: [], nextPageCursor: null });
+    }
+    if (resolvedUrl.includes('/v1/users/999/friends') && method === 'GET') {
+      return Response.json({ data: [], nextPageCursor: null });
+    }
+    if (resolvedUrl.includes('/v1/usernames/users') && method === 'POST') {
+      return Response.json({
+        data: []
+      });
+    }
+
+    throw new Error(`Unexpected fetch call in test: ${resolvedUrl}`);
+  };
+
+  try {
+    await updateRobloxMonitorState(guildId, (state) => {
+      state.monitoringSession = { sessionCookie: 'test-cookie' };
+      state.monitorSource = {
+        source_type: 'target_override',
+        clan_name: selectedClanName,
+        channel_id: null
+      };
+      state.subscriberUserIds = [];
+      state.subscriberRobloxAccounts = {
+        [subscriberUserId]: {
+          robloxUsername: 'MissingOnRoblox',
+          robloxUserId: null,
+          source: 'clan_auto',
+          optedInAt: '2026-03-24T00:00:00.000Z'
+        }
+      };
+      state.subscriberOfflineReminderAt = {
+        [subscriberUserId]: '2026-03-24T01:00:00.000Z'
+      };
+      state.subscriberPresence = {
+        [subscriberUserId]: {
+          checkedAt: '2026-03-24T02:00:00.000Z',
+          isOnline: false,
+          isInTargetGame: false
+        }
+      };
+      state.subscriberFriendshipStatus = {
+        [subscriberUserId]: {
+          robloxUserId: null,
+          isFriend: false,
+          lastCheckedAt: '2026-03-24T02:00:00.000Z',
+          lastAutoAcceptedAt: null,
+          note: 'seed'
+        }
+      };
+      state.subscriberStats = {
+        [subscriberUserId]: {
+          totalOnlineMinutes: 0,
+          totalOfflineMinutes: 10,
+          onlinePercentage: 0
+        }
+      };
+      state.usernameResolutionCache = {};
+    });
+
+    await updateClanState(guildId, (state) => {
+      state.clan_ticket_decisions = {
+        missing: {
+          applicantId: subscriberUserId,
+          status: 'accept',
+          clanName: selectedClanName,
+          answers: { robloxNick: 'MissingOnRoblox' }
+        }
+      };
+    });
+
+    const fakeGuild = {
+      id: guildId,
+      name: 'Clan prune missing nickname guild',
+      channels: {
+        cache: new Map(),
+        fetch: async () => null
+      },
+      members: {
+        fetch: async () => null
+      }
+    };
+    const fakeClient = {
+      guilds: {
+        cache: new Map([[guildId, fakeGuild]]),
+        fetch: async (requestedGuildId) => (requestedGuildId === guildId ? fakeGuild : null)
+      },
+      users: {
+        fetch: async () => ({ send: async () => {} })
+      }
+    };
+
+    await robloxMonitorInternals.runRobloxMonitorTick(fakeClient, guildId);
+
+    const stateAfterTick = getRobloxMonitorState(guildId);
+    assert.equal(stateAfterTick.subscriberRobloxAccounts?.[subscriberUserId], undefined);
+    assert.equal(stateAfterTick.subscriberPresence?.[subscriberUserId], undefined);
+    assert.equal(stateAfterTick.subscriberFriendshipStatus?.[subscriberUserId], undefined);
+    assert.equal(stateAfterTick.subscriberOfflineReminderAt?.[subscriberUserId], undefined);
+    assert.equal(stateAfterTick.subscriberStats?.[subscriberUserId], undefined);
+  } finally {
+    global.fetch = originalFetch;
+    await fs.rm(guildDir, { recursive: true, force: true });
+  }
+});

@@ -57,6 +57,14 @@ function resolveSubscriberAccountSourceForTick({ existingSource, sourceClanName 
   return ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.CLAN_AUTO;
 }
 
+function isRobloxUsernameNotFoundError(error) {
+  if (!error) {
+    return false;
+  }
+  const message = typeof error?.message === 'string' ? error.message : String(error);
+  return message.includes('Unable to resolve Roblox user id for username');
+}
+
 function shouldRetainSubscriberRecord(userId, account, mode, approvedSet) {
   if (mode !== 'clan') {
     return false;
@@ -273,8 +281,8 @@ export function buildRobloxMonitorStatsReportComponents({
         : userId;
       const presenceLabel = presence?.isInTargetGame === true
         ? '🎮 in-game'
-        : (presence?.isOnline === true ? '🟡 online mimo hru' : '⚫ offline');
-      const baseLine = `• ${robloxName}, 🟢 online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, 🔴 offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, online %: ${stats.onlinePercentage.toFixed(2)}%, stav: ${presenceLabel}`;
+        : (presence?.isOnline === true ? '🟡 online outside the monitored game' : '⚫ offline');
+      const baseLine = `• ${robloxName}, 🟢 online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, 🔴 offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, online %: ${stats.onlinePercentage.toFixed(2)}%, status: ${presenceLabel}`;
       if (friendship?.isFriend === false) {
         const fallbackMonitoringAccountLabel = presenceBySubscriber?.[userId]?.monitoringAccountUserId
           ? String(presenceBySubscriber[userId].monitoringAccountUserId)
@@ -284,8 +292,8 @@ export function buildRobloxMonitorStatsReportComponents({
           : fallbackMonitoringAccountLabel;
         return [
           baseLine,
-          '  Není v přátelích se session účtem.',
-          `  Přidej: **${nextMonitoringAccountLabel}**.`
+          '  Not friends with the monitoring session account.',
+          `  Add: **${nextMonitoringAccountLabel}**.`
         ].join('\n');
       }
       return baseLine;
@@ -1182,6 +1190,28 @@ async function runRobloxMonitorTick(client, guildId) {
         };
       } catch (error) {
         try {
+          if (
+            monitorMode === 'clan'
+            && isRobloxUsernameNotFoundError(error)
+            && (
+              subscriberAccount?.source === ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.CLAN_AUTO
+              || subscriberAccount?.source === ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.LEGACY_TICKET_ACCOUNT
+              || subscriberAccount?.source === 'target_override'
+            )
+          ) {
+            delete subscriberAccountMap[subscriberUserId];
+            delete friendshipStatusBySubscriber[subscriberUserId];
+            delete presenceBySubscriber[subscriberUserId];
+            delete reminderTimestampBySubscriber[subscriberUserId];
+            delete subscriberStatsBySubscriber[subscriberUserId];
+            console.info('Removed Roblox monitor subscriber due to unresolved ticket nickname in clan mode', {
+              guild_id: guildId,
+              subscriber_user_id: subscriberUserId,
+              preferred_username: preferredUsername
+            });
+            continue;
+          }
+
           friendshipStatusBySubscriber[subscriberUserId] = {
             robloxUserId: Number.isInteger(subscriberAccount?.robloxUserId) ? subscriberAccount.robloxUserId : null,
             isFriend: false,
