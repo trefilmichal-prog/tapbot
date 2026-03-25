@@ -6213,8 +6213,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction.reply({
             components: buildTextComponents(
               clanName
-                ? `Roblox monitor clan filter was set to **${clanName}** (selected from the clan list).`
-                : 'Roblox monitor clan filter was cleared via clan list selection (All clans). Monitor now uses accepted tickets from all clans.'
+                ? `Roblox monitor clan filter was set to **${clanName}** (selected from the clan list). Monitor now tracks all accepted members of this clan automatically, even without manual \`/roblox_monitor alerts opt_in\`.`
+                : 'Roblox monitor clan filter was cleared via clan list selection (All clans). The monitored set now follows manual subscribers from `/roblox_monitor alerts opt_in`; accepted clan members are no longer auto-included by clan filter.'
             ),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
