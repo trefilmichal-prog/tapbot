@@ -1219,7 +1219,7 @@ async function runRobloxMonitorTick(client, guildId) {
           ? reminderTimestampBySubscriber[subscriberUserId]
           : null;
         const lastReminderMs = lastReminderIso ? new Date(lastReminderIso).getTime() : 0;
-        const shouldSendOfflineReminder = !nextPresence.isInTargetGame
+        const shouldSendOfflineReminder = !nextPresence.isOnline
           && (!lastReminderMs || Number.isNaN(lastReminderMs) || (nowMs - lastReminderMs) >= reminderIntervalMs);
         if (shouldSendOfflineReminder) {
           const isOptedIn = isExplicitDmOptInSubscriberSource(subscriberAccount?.source);
@@ -1234,7 +1234,7 @@ async function runRobloxMonitorTick(client, guildId) {
             await sendOfflineReminderToSubscriber(client, guild, subscriberUserId, targetUsername, nextPresence);
           }
           reminderTimestampBySubscriber[subscriberUserId] = new Date().toISOString();
-        } else if (nextPresence.isInTargetGame && reminderTimestampBySubscriber[subscriberUserId]) {
+        } else if (nextPresence.isOnline && reminderTimestampBySubscriber[subscriberUserId]) {
           delete reminderTimestampBySubscriber[subscriberUserId];
         }
 
