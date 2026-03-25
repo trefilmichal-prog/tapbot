@@ -166,7 +166,9 @@ export function buildRobloxMonitorStatsReportComponents({
   state,
   subscriberUserIds,
   subscriberStatsBySubscriber,
+  subscriberFriendshipStatusBySubscriber,
   presenceBySubscriber,
+  monitoringAccountLabel,
   requiredRootPlaceId,
   checkedAt
 }) {
@@ -175,11 +177,26 @@ export function buildRobloxMonitorStatsReportComponents({
   const playerLines = subscriberUserIds.length > 0
     ? subscriberUserIds.map((userId) => {
       const stats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[userId]);
+      const friendship = subscriberFriendshipStatusBySubscriber?.[userId] ?? null;
       const robloxName = typeof state?.subscriberRobloxAccounts?.[userId]?.robloxUsername === 'string'
         && state.subscriberRobloxAccounts[userId].robloxUsername.trim()
         ? state.subscriberRobloxAccounts[userId].robloxUsername.trim()
         : userId;
-      return `• ${robloxName}, online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, online %: ${stats.onlinePercentage.toFixed(2)}%`;
+      const baseLine = `• ${robloxName}, online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, online %: ${stats.onlinePercentage.toFixed(2)}%`;
+      if (friendship?.isFriend === false) {
+        const fallbackMonitoringAccountLabel = presenceBySubscriber?.[userId]?.monitoringAccountUserId
+          ? String(presenceBySubscriber[userId].monitoringAccountUserId)
+          : 'monitoring account';
+        const nextMonitoringAccountLabel = typeof monitoringAccountLabel === 'string' && monitoringAccountLabel.trim()
+          ? monitoringAccountLabel.trim()
+          : fallbackMonitoringAccountLabel;
+        return [
+          baseLine,
+          '  Není v přátelích se session účtem.',
+          `  Přidej: **${nextMonitoringAccountLabel}**.`
+        ].join('\n');
+      }
+      return baseLine;
     }).join('\n')
     : 'No subscribed players are currently configured.';
 
@@ -204,7 +221,9 @@ async function postRobloxMonitorStatsReportIfDue(client, guild, state, {
   requiredRootPlaceId,
   subscriberUserIds,
   subscriberStatsBySubscriber,
-  presenceBySubscriber
+  subscriberFriendshipStatusBySubscriber,
+  presenceBySubscriber,
+  monitoringAccountLabel
 }) {
   const statsReport = state?.statsReport && typeof state.statsReport === 'object' && !Array.isArray(state.statsReport)
     ? state.statsReport
@@ -237,7 +256,9 @@ async function postRobloxMonitorStatsReportIfDue(client, guild, state, {
     state,
     subscriberUserIds,
     subscriberStatsBySubscriber,
+    subscriberFriendshipStatusBySubscriber,
     presenceBySubscriber,
+    monitoringAccountLabel,
     requiredRootPlaceId,
     checkedAt
   });
@@ -741,6 +762,17 @@ async function runRobloxMonitorTick(client, guildId) {
   const apiClient = new RobloxSessionClient(sessionCookie);
   try {
     const monitoringUser = await getAuthenticatedRobloxUser(apiClient);
+    const monitoringAccountRuntime = {
+      monitoringAccountLabel: [
+        typeof monitoringUser?.name === 'string' && monitoringUser.name.trim()
+          ? monitoringUser.name.trim()
+          : (typeof monitoringUser?.username === 'string' && monitoringUser.username.trim()
+            ? monitoringUser.username.trim()
+            : null),
+        Number.isInteger(Number(monitoringUser?.id)) ? `(${Number(monitoringUser.id)})` : null
+      ].filter(Boolean).join(' '),
+      monitoringAccountUserId: Number.isInteger(Number(monitoringUser?.id)) ? Number(monitoringUser.id) : null
+    };
 
     const approvedRobloxIds = new Set();
     for (const username of approvedUsers.robloxUsernames) {
@@ -1052,7 +1084,9 @@ async function runRobloxMonitorTick(client, guildId) {
       requiredRootPlaceId,
       subscriberUserIds: effectiveMonitoredUserIds,
       subscriberStatsBySubscriber,
-      presenceBySubscriber
+      subscriberFriendshipStatusBySubscriber: friendshipStatusBySubscriber,
+      presenceBySubscriber,
+      monitoringAccountLabel: monitoringAccountRuntime.monitoringAccountLabel
     });
   } catch (error) {
     console.warn(`Roblox monitor tick failed for guild ${guildId}:`, error);
