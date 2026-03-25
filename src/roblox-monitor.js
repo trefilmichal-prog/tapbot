@@ -245,7 +245,7 @@ function buildUpdatedSubscriberAggregateStats(previousStats, { isOnline, sampleM
 
 export function formatRobloxMonitorAggregateStats(stats) {
   const normalized = normalizeSubscriberAggregateStats(stats);
-  return `Uptime: **${normalized.onlinePercentage.toFixed(2)}%** (Online: **${normalized.totalOnlineMinutes}m**, Offline: **${normalized.totalOfflineMinutes}m**, Sampled: **${normalized.totalSampledMinutes}m**)`;
+  return `Uptime %: **${Math.round(normalized.onlinePercentage)}** (Online: **${normalized.totalOnlineMinutes}m**, Offline: **${normalized.totalOfflineMinutes}m**, Sampled: **${normalized.totalSampledMinutes}m**)`;
 }
 
 function getOfflineReminderMinutes(state) {
@@ -326,7 +326,7 @@ export function buildRobloxMonitorStatsReportComponents({
       const presenceLabel = presence?.isInTargetGame === true
         ? '🎮 in-game'
         : (presence?.isOnline === true ? '🟡 online outside the monitored game' : '⚫ offline');
-      const baseLine = `• ${robloxName}, 🟢 online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, 🔴 offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, online %: ${stats.onlinePercentage.toFixed(2)}%, status: ${presenceLabel}`;
+      const baseLine = `• ${robloxName}, 🟢 online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, 🔴 offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, %: ${Math.round(stats.onlinePercentage)}, status: ${presenceLabel}`;
       if (friendship?.isFriend === false) {
         const fallbackMonitoringAccountLabel = presenceBySubscriber?.[userId]?.monitoringAccountUserId
           ? String(presenceBySubscriber[userId].monitoringAccountUserId)
