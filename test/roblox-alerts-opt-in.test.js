@@ -253,3 +253,128 @@ test('without monitorSource.clan_name the monitor keeps explicit opt-in subscrib
   stopRobloxMonitorScheduler(guildId);
   await fs.rm(guildDir, { recursive: true, force: true });
 });
+
+test('clan auto subscriber without explicit opt-in does not receive DM fallback reminders', async () => {
+  const guildId = `test-guild-clan-auto-no-dm-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const guildDir = path.join(process.cwd(), 'data', 'guilds', guildId);
+  const subscriberUserId = '777777777777777777';
+  const selectedClanName = 'Raiders';
+  const originalFetch = global.fetch;
+  let dmFetchCount = 0;
+
+  global.fetch = async (url, options = {}) => {
+    const resolvedUrl = String(url);
+    const method = (options?.method ?? 'GET').toUpperCase();
+
+    if (resolvedUrl.includes('/v1/users/authenticated') && method === 'GET') {
+      return Response.json({ id: 999, name: 'MonitorAccount' });
+    }
+    if (resolvedUrl.includes('/v1/usernames/users') && method === 'POST') {
+      return Response.json({
+        data: [
+          {
+            requestedUsername: 'AlphaMember',
+            name: 'AlphaMember',
+            displayName: 'Alpha Member',
+            id: 123
+          }
+        ]
+      });
+    }
+    if (resolvedUrl.includes('/v1/presence/users') && method === 'POST') {
+      return Response.json({
+        userPresences: [
+          {
+            userId: 123,
+            userPresenceType: 1,
+            rootPlaceId: 111,
+            placeId: 111,
+            lastLocation: 'Somewhere else'
+          }
+        ]
+      });
+    }
+    if (resolvedUrl.includes('/v1/users/999/friends') && method === 'GET') {
+      return Response.json({ data: [{ id: 123 }] });
+    }
+    if (resolvedUrl.includes('/v1/my/friends/requests') && method === 'GET') {
+      return Response.json({ data: [], nextPageCursor: null });
+    }
+
+    throw new Error(`Unexpected fetch call in test: ${resolvedUrl}`);
+  };
+
+  try {
+    await updateRobloxMonitorState(guildId, (state) => {
+      state.monitoringSession = { sessionCookie: 'test-cookie' };
+      state.monitorSource = {
+        source_type: 'target_override',
+        clan_name: selectedClanName,
+        channel_id: null
+      };
+      state.subscriberUserIds = [];
+      state.subscriberRobloxAccounts = {
+        [subscriberUserId]: {
+          robloxUsername: 'AlphaMember',
+          robloxUserId: 123,
+          source: 'clan_auto',
+          optedInAt: '2026-03-24T00:00:00.000Z'
+        }
+      };
+      state.subscriberOfflineReminderAt = {};
+      state.subscriberPresence = {};
+      state.subscriberFriendshipStatus = {};
+      state.subscriberStats = {};
+    });
+
+    await updateClanState(guildId, (state) => {
+      state.clan_ticket_decisions = {
+        acceptedInSelectedClan: {
+          status: 'accept',
+          applicantId: subscriberUserId,
+          clanName: selectedClanName,
+          answers: { robloxNick: 'AlphaMember' }
+        }
+      };
+    });
+
+    const fakeGuild = {
+      id: guildId,
+      name: 'Clan auto DM gate test guild',
+      channels: {
+        cache: new Map(),
+        fetch: async () => null
+      },
+      members: {
+        fetch: async () => null
+      }
+    };
+    const fakeClient = {
+      guilds: {
+        cache: new Map([[guildId, fakeGuild]]),
+        fetch: async (requestedGuildId) => (requestedGuildId === guildId ? fakeGuild : null)
+      },
+      users: {
+        fetch: async () => {
+          dmFetchCount += 1;
+          return {
+            send: async () => {}
+          };
+        }
+      }
+    };
+
+    startRobloxMonitorScheduler(fakeClient, guildId);
+
+    await waitForCondition(() => {
+      const state = getRobloxMonitorState(guildId);
+      return typeof state?.subscriberOfflineReminderAt?.[subscriberUserId] === 'string';
+    });
+
+    assert.equal(dmFetchCount, 0);
+  } finally {
+    stopRobloxMonitorScheduler(guildId);
+    global.fetch = originalFetch;
+    await fs.rm(guildDir, { recursive: true, force: true });
+  }
+});

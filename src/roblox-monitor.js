@@ -40,6 +40,11 @@ function isOptInPreferredSubscriberSource(source) {
   return LEGACY_OPT_IN_SOURCES.has(source);
 }
 
+function isExplicitDmOptInSubscriberSource(source) {
+  return source === ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.OPT_IN
+    || source === ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.LEGACY_MANUAL_OPT_IN_NICK;
+}
+
 function resolveSubscriberAccountSourceForTick({ existingSource, sourceClanName }) {
   if (!sourceClanName) {
     return existingSource ?? ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.LEGACY_TICKET_ACCOUNT;
@@ -885,6 +890,7 @@ async function runRobloxMonitorTick(client, guildId) {
         const shouldSendOfflineReminder = !nextPresence.isInTargetGame
           && (!lastReminderMs || Number.isNaN(lastReminderMs) || (nowMs - lastReminderMs) >= reminderIntervalMs);
         if (shouldSendOfflineReminder) {
+          const isOptedIn = isExplicitDmOptInSubscriberSource(subscriberAccount?.source);
           const sentToRoom = await sendOfflineReminderToMonitorRoom(
             guild,
             sourceChannelId,
@@ -892,7 +898,7 @@ async function runRobloxMonitorTick(client, guildId) {
             targetUsername,
             nextPresence
           );
-          if (!sentToRoom) {
+          if (!sentToRoom && isOptedIn) {
             await sendOfflineReminderToSubscriber(client, guild, subscriberUserId, targetUsername, nextPresence);
           }
           reminderTimestampBySubscriber[subscriberUserId] = new Date().toISOString();
