@@ -317,10 +317,14 @@ export function buildRobloxMonitorStatsReportComponents({
     const friendship = subscriberFriendshipStatusBySubscriber?.[userId] ?? null;
     const presence = presenceBySubscriber?.[userId] ?? null;
     const robloxName = state.subscriberRobloxAccounts[userId].robloxUsername.trim();
-    const statusLabel = presence?.isInTargetGame === true
+    const isEffectivelyOnline = friendship?.isFriend === true && presence?.isInTargetGame === true;
+    const statusEmoji = isEffectivelyOnline ? '🟢' : '🔴';
+    const statusLabel = isEffectivelyOnline
       ? 'in-game'
-      : (presence?.isOnline === true ? 'online outside game' : 'offline');
-    const baseLine = `• ${robloxName} | ${statusLabel} | ${Math.round(stats.onlinePercentage)}% | online ${formatDurationMinutes(stats.totalOnlineMinutes)} | offline ${formatDurationMinutes(stats.totalOfflineMinutes)}`;
+      : (friendship?.isFriend === false
+        ? 'offline (not friend)'
+        : (presence?.isOnline === true ? 'offline (outside monitored game)' : 'offline'));
+    const baseLine = `${statusEmoji} • ${robloxName} | ${statusLabel} | ${Math.round(stats.onlinePercentage)}% | online ${formatDurationMinutes(stats.totalOnlineMinutes)} | offline ${formatDurationMinutes(stats.totalOfflineMinutes)}`;
     if (friendship?.isFriend === false) {
       const fallbackMonitoringAccountLabel = presenceBySubscriber?.[userId]?.monitoringAccountUserId
         ? String(presenceBySubscriber[userId].monitoringAccountUserId)
