@@ -322,7 +322,11 @@ export function buildRobloxMonitorStatsReportComponents({
       : (presence?.isOnline === true
         ? '🟡 online outside the monitored game (treated as offline by monitor)'
         : '⚫ offline');
-    const baseLine = `• ${robloxName}, 🟢 online: ${formatDurationMinutes(stats.totalOnlineMinutes)}, 🔴 offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}, %: ${Math.round(stats.onlinePercentage)}, status: ${presenceLabel}`;
+    const baseLine = [
+      `• ${robloxName}, %: ${Math.round(stats.onlinePercentage)}, status: ${presenceLabel}`,
+      `🟢 online: ${formatDurationMinutes(stats.totalOnlineMinutes)}`,
+      `🔴 offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}`
+    ].join('\n');
     if (friendship?.isFriend === false) {
       const fallbackMonitoringAccountLabel = presenceBySubscriber?.[userId]?.monitoringAccountUserId
         ? String(presenceBySubscriber[userId].monitoringAccountUserId)
