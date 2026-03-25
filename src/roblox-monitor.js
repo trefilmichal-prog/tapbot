@@ -285,7 +285,11 @@ export function buildRobloxMonitorStatsReportComponents({
 }) {
   const gameLabel = resolveMonitoredGameLabel(state, requiredRootPlaceId);
   const guildContext = guild?.name ? `${guild.name} (${guild.id})` : String(guild?.id ?? 'Unknown guild');
-  const sortedSubscriberUserIds = subscriberUserIds.slice().sort((a, b) => {
+  const hasStoredRobloxUsername = (userId) => typeof state?.subscriberRobloxAccounts?.[userId]?.robloxUsername === 'string'
+    && Boolean(state.subscriberRobloxAccounts[userId].robloxUsername.trim());
+  const reportableSubscriberUserIds = subscriberUserIds.filter(hasStoredRobloxUsername);
+  const noReportableSubscribersMessage = 'No subscribers with Roblox username in this report.';
+  const sortedSubscriberUserIds = reportableSubscriberUserIds.slice().sort((a, b) => {
     const aIsFriend = subscriberFriendshipStatusBySubscriber?.[a]?.isFriend === true;
     const bIsFriend = subscriberFriendshipStatusBySubscriber?.[b]?.isFriend === true;
     if (aIsFriend !== bIsFriend) {
@@ -304,24 +308,15 @@ export function buildRobloxMonitorStatsReportComponents({
       return byTotalOnlineMinutesDesc;
     }
 
-    const aRobloxName = typeof state?.subscriberRobloxAccounts?.[a]?.robloxUsername === 'string'
-      && state.subscriberRobloxAccounts[a].robloxUsername.trim()
-      ? state.subscriberRobloxAccounts[a].robloxUsername.trim()
-      : a;
-    const bRobloxName = typeof state?.subscriberRobloxAccounts?.[b]?.robloxUsername === 'string'
-      && state.subscriberRobloxAccounts[b].robloxUsername.trim()
-      ? state.subscriberRobloxAccounts[b].robloxUsername.trim()
-      : b;
+    const aRobloxName = state.subscriberRobloxAccounts[a].robloxUsername.trim();
+    const bRobloxName = state.subscriberRobloxAccounts[b].robloxUsername.trim();
     return aRobloxName.localeCompare(bRobloxName);
   });
   const buildPlayerLine = (userId) => {
     const stats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[userId]);
     const friendship = subscriberFriendshipStatusBySubscriber?.[userId] ?? null;
     const presence = presenceBySubscriber?.[userId] ?? null;
-    const robloxName = typeof state?.subscriberRobloxAccounts?.[userId]?.robloxUsername === 'string'
-      && state.subscriberRobloxAccounts[userId].robloxUsername.trim()
-      ? state.subscriberRobloxAccounts[userId].robloxUsername.trim()
-      : userId;
+    const robloxName = state.subscriberRobloxAccounts[userId].robloxUsername.trim();
     const presenceLabel = presence?.isInTargetGame === true
       ? '🎮 in-game'
       : (presence?.isOnline === true
@@ -351,6 +346,12 @@ export function buildRobloxMonitorStatsReportComponents({
     .filter((userId) => subscriberFriendshipStatusBySubscriber?.[userId]?.isFriend !== true)
     .map(buildPlayerLine)
     .join('\n');
+  const friendSectionBody = reportableSubscriberUserIds.length === 0
+    ? noReportableSubscribersMessage
+    : (friendLines || 'No friend subscribers in this report.');
+  const nonFriendSectionBody = reportableSubscriberUserIds.length === 0
+    ? noReportableSubscribersMessage
+    : (nonFriendLines || 'No non-friend or unresolved subscribers in this report.');
 
   return [
     buildV2Container([
@@ -363,10 +364,10 @@ export function buildRobloxMonitorStatsReportComponents({
         `Build: **${BUILD_LABEL}**`,
         '',
         '**Friends**',
-        friendLines || 'No friend subscribers in this report.',
+        friendSectionBody,
         '',
         '**Non-friends / unresolved**',
-        nonFriendLines || 'No non-friend or unresolved subscribers in this report.'
+        nonFriendSectionBody
       ].join('\n'))
     ])
   ];
