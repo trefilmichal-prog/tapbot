@@ -57,6 +57,7 @@ import { runUpdate } from './update.js';
 import { syncApplicationCommands } from './deploy-commands.js';
 import {
   formatRobloxMonitorAggregateStats,
+  ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE,
   robloxMonitorInternals,
   startRobloxMonitorScheduler,
   stopRobloxMonitorScheduler
@@ -6448,9 +6449,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               state.subscriberRobloxAccounts[interaction.user.id] = {
                 robloxUsername: resolvedRobloxUsername,
                 robloxUserId: Number.isInteger(optInFriendshipStatus?.robloxUserId) ? optInFriendshipStatus.robloxUserId : null,
-                source: accountSource === 'manual_opt_in_nick'
-                  ? 'manual_opt_in_nick'
-                  : (accountSource === 'guild_nickname' ? 'guild_nickname' : 'ticket_account'),
+                source: ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.OPT_IN,
                 optedInAt: new Date().toISOString()
               };
             } else if (state.subscriberRobloxAccounts[interaction.user.id]) {
