@@ -16,6 +16,8 @@ const ROBLOX_API_ORIGIN = 'https://www.roblox.com';
 const USERNAME_RESOLVE_URL = 'https://users.roblox.com/v1/usernames/users';
 const AUTHENTICATED_USER_URL = 'https://users.roblox.com/v1/users/authenticated';
 const PRESENCE_URL = 'https://presence.roblox.com/v1/presence/users';
+const USERNAME_RESOLUTION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const USERNAME_RESOLUTION_CACHE_MAX_ENTRIES = 500;
 
 const schedulerStateByGuild = new Map();
 
@@ -70,6 +72,92 @@ function shouldRetainSubscriberRecord(userId, account, mode, approvedSet) {
 
 function normalizeUsername(username) {
   return typeof username === 'string' ? username.trim().toLowerCase() : '';
+}
+
+function getCachedUsernameResolution(cache, username, nowMs = Date.now()) {
+  if (!cache || typeof cache !== 'object' || Array.isArray(cache)) {
+    return null;
+  }
+  const normalized = normalizeUsername(username);
+  if (!normalized) {
+    return null;
+  }
+  const entry = cache[normalized];
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return null;
+  }
+  const resolvedAtMs = new Date(entry.resolvedAt).getTime();
+  const isFresh = Number.isFinite(resolvedAtMs) && (nowMs - resolvedAtMs) <= USERNAME_RESOLUTION_CACHE_TTL_MS;
+  if (!isFresh || !Number.isInteger(entry.userId) || entry.userId <= 0) {
+    return null;
+  }
+  return {
+    normalizedUsername: normalized,
+    userId: entry.userId,
+    username: typeof entry.username === 'string' && entry.username.trim() ? entry.username.trim() : normalized,
+    resolvedAt: entry.resolvedAt
+  };
+}
+
+function upsertUsernameResolutionCacheEntry(cache, resolution, nowIso = new Date().toISOString()) {
+  if (!cache || typeof cache !== 'object' || Array.isArray(cache)) {
+    return;
+  }
+
+  const normalizedUsername = normalizeUsername(resolution?.normalizedUsername ?? resolution?.username);
+  const userId = Number(resolution?.userId);
+  if (!normalizedUsername || !Number.isInteger(userId) || userId <= 0) {
+    return;
+  }
+
+  cache[normalizedUsername] = {
+    normalizedUsername,
+    userId,
+    username: typeof resolution?.username === 'string' && resolution.username.trim()
+      ? resolution.username.trim()
+      : normalizedUsername,
+    resolvedAt: nowIso
+  };
+}
+
+function pruneUsernameResolutionCache(cache, nowMs = Date.now()) {
+  if (!cache || typeof cache !== 'object' || Array.isArray(cache)) {
+    return {};
+  }
+
+  const entries = Object.entries(cache)
+    .filter(([, entry]) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return false;
+      }
+      const normalizedUsername = normalizeUsername(entry.normalizedUsername);
+      const userId = Number(entry.userId);
+      const resolvedAtMs = new Date(entry.resolvedAt).getTime();
+      return Boolean(normalizedUsername)
+        && Number.isInteger(userId)
+        && userId > 0
+        && Number.isFinite(resolvedAtMs)
+        && (nowMs - resolvedAtMs) <= USERNAME_RESOLUTION_CACHE_TTL_MS;
+    })
+    .sort((a, b) => new Date(b[1].resolvedAt).getTime() - new Date(a[1].resolvedAt).getTime())
+    .slice(0, USERNAME_RESOLUTION_CACHE_MAX_ENTRIES);
+
+  const pruned = {};
+  for (const [key, entry] of entries) {
+    const normalizedKey = normalizeUsername(key);
+    if (!normalizedKey) {
+      continue;
+    }
+    pruned[normalizedKey] = {
+      normalizedUsername: normalizedKey,
+      userId: Number(entry.userId),
+      username: typeof entry.username === 'string' && entry.username.trim()
+        ? entry.username.trim()
+        : normalizedKey,
+      resolvedAt: entry.resolvedAt
+    };
+  }
+  return pruned;
 }
 
 function normalizeGuildNicknameAsRobloxCandidate(rawNickname) {
@@ -947,6 +1035,11 @@ async function runRobloxMonitorTick(client, guildId) {
     }
 
     const resolvedUsernameCache = new Map();
+    const usernameResolutionCache = state?.usernameResolutionCache
+      && typeof state.usernameResolutionCache === 'object'
+      && !Array.isArray(state.usernameResolutionCache)
+      ? { ...state.usernameResolutionCache }
+      : {};
 
     for (const subscriberUserId of effectiveMonitoredUserIds) {
       const subscriberAccount = subscriberAccountMap[subscriberUserId] ?? null;
@@ -994,13 +1087,27 @@ async function runRobloxMonitorTick(client, guildId) {
         }
         const cacheKey = normalizeUsername(preferredUsername);
         let targetResolution = null;
+        const nowMs = Date.now();
         if (subscriberAccount?.robloxUserId && normalizeUsername(subscriberAccount?.robloxUsername ?? subscriberAccount?.username) === cacheKey) {
           targetResolution = { userId: subscriberAccount.robloxUserId, username: preferredUsername };
         } else if (resolvedUsernameCache.has(cacheKey)) {
           targetResolution = resolvedUsernameCache.get(cacheKey);
         } else {
+          const cachedResolution = getCachedUsernameResolution(usernameResolutionCache, preferredUsername, nowMs);
+          if (cachedResolution) {
+            targetResolution = { userId: cachedResolution.userId, username: cachedResolution.username };
+            resolvedUsernameCache.set(cacheKey, targetResolution);
+          }
+        }
+
+        if (!targetResolution) {
           targetResolution = await resolveRobloxUserIdByUsername(apiClient, preferredUsername);
           resolvedUsernameCache.set(cacheKey, targetResolution);
+          upsertUsernameResolutionCacheEntry(usernameResolutionCache, {
+            normalizedUsername: cacheKey,
+            userId: Number(targetResolution.userId),
+            username: targetResolution.username ?? preferredUsername
+          });
         }
 
         const targetUserId = Number(targetResolution.userId);
@@ -1025,7 +1132,6 @@ async function runRobloxMonitorTick(client, guildId) {
           requiredRootPlaceId
         });
 
-        const nowMs = Date.now();
         const sampleMinutes = getIntervalMinutes(state);
         subscriberStatsBySubscriber[subscriberUserId] = buildUpdatedSubscriberAggregateStats(
           subscriberStatsBySubscriber[subscriberUserId],
@@ -1151,6 +1257,7 @@ async function runRobloxMonitorTick(client, guildId) {
       nextState.monitorSource.updated_at = new Date().toISOString();
       nextState.subscriberUserIds = effectiveMonitoredUserIds;
       nextState.subscriberRobloxAccounts = subscriberAccountMap;
+      nextState.usernameResolutionCache = pruneUsernameResolutionCache(usernameResolutionCache);
       nextState.subscriberFriendshipStatus = friendshipStatusBySubscriber;
       nextState.subscriberPresence = presenceBySubscriber;
       nextState.subscriberStats = subscriberStatsBySubscriber;
@@ -1299,5 +1406,6 @@ export const robloxMonitorInternals = {
   collectApprovedTicketUsers,
   buildPresenceSnapshot,
   isPresenceInTargetGame,
+  runRobloxMonitorTick,
   ROBLOX_API_ORIGIN
 };
