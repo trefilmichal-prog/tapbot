@@ -108,7 +108,8 @@ function getDefaultRobloxMonitorState() {
       channelId: null,
       postIntervalMinutes: 30,
       enabled: false,
-      updatedAt: null
+      updatedAt: null,
+      lastPostedAt: null
     }
   };
 }
@@ -630,6 +631,10 @@ function normalizeRobloxMonitorState(state) {
     && Number.isFinite(new Date(parsedStatsReport.updatedAt).getTime())
     ? parsedStatsReport.updatedAt
     : null;
+  const statsReportLastPostedAt = typeof parsedStatsReport.lastPostedAt === 'string'
+    && Number.isFinite(new Date(parsedStatsReport.lastPostedAt).getTime())
+    ? parsedStatsReport.lastPostedAt
+    : null;
 
   const normalizedSubscriberUserIds = normalizeRobloxMonitorSubscriberUserIds(parsed.subscriberUserIds);
   const normalizedSubscriberRobloxAccounts = normalizeRobloxMonitorSubscriberAccounts(parsed.subscriberRobloxAccounts);
@@ -698,7 +703,8 @@ function normalizeRobloxMonitorState(state) {
       channelId: statsReportChannelId,
       postIntervalMinutes: statsReportPostIntervalMinutes,
       enabled: statsReportEnabled,
-      updatedAt: statsReportUpdatedAt
+      updatedAt: statsReportUpdatedAt,
+      lastPostedAt: statsReportLastPostedAt
     }
   };
 }
