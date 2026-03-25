@@ -512,9 +512,37 @@ async function getRobloxPresence(apiClient, targetUserId) {
   return presence;
 }
 
+async function getMonitoringFriendsSet(apiClient, monitoringUserId) {
+  const friends = new Set();
+  let cursor = null;
+
+  do {
+    const url = new URL(`https://friends.roblox.com/v1/users/${monitoringUserId}/friends`);
+    url.searchParams.set('limit', '100');
+    if (cursor) {
+      url.searchParams.set('cursor', cursor);
+    }
+
+    const payload = await apiClient.request(url.toString());
+    const entries = Array.isArray(payload?.data) ? payload.data : [];
+    for (const entry of entries) {
+      const friendId = Number(entry?.id);
+      if (Number.isInteger(friendId) && friendId > 0) {
+        friends.add(friendId);
+      }
+    }
+
+    cursor = typeof payload?.nextPageCursor === 'string' && payload.nextPageCursor
+      ? payload.nextPageCursor
+      : null;
+  } while (cursor);
+
+  return friends;
+}
+
 async function isMonitoringAccountFriendsWithTarget(apiClient, monitoringUserId, targetUserId) {
-  const payload = await apiClient.request(`https://friends.roblox.com/v1/users/${monitoringUserId}/friends`);
-  return Boolean(payload?.data?.some((entry) => Number(entry?.id) === Number(targetUserId)));
+  const friends = await getMonitoringFriendsSet(apiClient, monitoringUserId);
+  return friends.has(Number(targetUserId));
 }
 
 async function listPendingInboundFriendRequests(apiClient) {
@@ -825,6 +853,7 @@ async function runRobloxMonitorTick(client, guildId) {
   const apiClient = new RobloxSessionClient(sessionCookie);
   try {
     const monitoringUser = await getAuthenticatedRobloxUser(apiClient);
+    const monitoringFriendsSet = await getMonitoringFriendsSet(apiClient, monitoringUser.id);
     const monitoringAccountRuntime = {
       monitoringAccountLabel: [
         typeof monitoringUser?.name === 'string' && monitoringUser.name.trim()
@@ -985,7 +1014,7 @@ async function runRobloxMonitorTick(client, guildId) {
           target_user_id: targetUserId
         });
         const presence = await getRobloxPresence(apiClient, targetUserId);
-        const isFriend = await isMonitoringAccountFriendsWithTarget(apiClient, monitoringUser.id, targetUserId);
+        const isFriend = monitoringFriendsSet.has(targetUserId);
         const nextPresence = buildPresenceSnapshot({
           previousPresence: previousPresenceBySubscriber[subscriberUserId] ?? null,
           targetUsername,
@@ -1263,6 +1292,7 @@ export const robloxMonitorInternals = {
   resolveRobloxUserIdByUsername,
   getAuthenticatedRobloxUser,
   getRobloxPresence,
+  getMonitoringFriendsSet,
   isMonitoringAccountFriendsWithTarget,
   listPendingInboundFriendRequests,
   acceptFriendRequest,

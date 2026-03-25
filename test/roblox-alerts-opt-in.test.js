@@ -442,3 +442,128 @@ test('clan auto subscriber without explicit opt-in does not receive DM fallback 
     await fs.rm(guildDir, { recursive: true, force: true });
   }
 });
+
+test('monitor tick fetches friends list once per tick even with multiple subscribers', async () => {
+  const guildId = `test-guild-friends-cached-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const guildDir = path.join(process.cwd(), 'data', 'guilds', guildId);
+  const originalFetch = global.fetch;
+  let friendsCalls = 0;
+
+  global.fetch = async (url, options = {}) => {
+    const resolvedUrl = String(url);
+    const method = (options?.method ?? 'GET').toUpperCase();
+    const parsedBody = typeof options?.body === 'string' ? JSON.parse(options.body) : null;
+
+    if (resolvedUrl.includes('/v1/users/authenticated') && method === 'GET') {
+      return Response.json({ id: 999, name: 'MonitorAccount' });
+    }
+    if (resolvedUrl.includes('/v1/my/friends/requests') && method === 'GET') {
+      return Response.json({ data: [], nextPageCursor: null });
+    }
+    if (resolvedUrl.includes('/v1/users/999/friends') && method === 'GET') {
+      friendsCalls += 1;
+      return Response.json({
+        data: [{ id: 123 }, { id: 456 }],
+        nextPageCursor: null
+      });
+    }
+    if (resolvedUrl.includes('/v1/usernames/users') && method === 'POST') {
+      return Response.json({
+        data: [
+          {
+            requestedUsername: 'AlphaMember',
+            name: 'AlphaMember',
+            displayName: 'Alpha Member',
+            id: 123
+          },
+          {
+            requestedUsername: 'BetaMember',
+            name: 'BetaMember',
+            displayName: 'Beta Member',
+            id: 456
+          }
+        ]
+      });
+    }
+    if (resolvedUrl.includes('/v1/presence/users') && method === 'POST') {
+      const requestedId = Number(parsedBody?.userIds?.[0]);
+      return Response.json({
+        userPresences: [
+          {
+            userId: requestedId,
+            userPresenceType: 2,
+            rootPlaceId: 74260430392611,
+            placeId: 74260430392611,
+            lastLocation: 'In game'
+          }
+        ]
+      });
+    }
+
+    throw new Error(`Unexpected fetch call in test: ${resolvedUrl}`);
+  };
+
+  try {
+    await updateRobloxMonitorState(guildId, (state) => {
+      state.monitoringSession = { sessionCookie: 'test-cookie' };
+      state.monitorSource = { source_type: 'target_override' };
+      state.subscriberUserIds = ['111111111111111111', '222222222222222222'];
+      state.subscriberRobloxAccounts = {
+        '111111111111111111': {
+          robloxUsername: 'AlphaMember',
+          robloxUserId: 123,
+          source: 'opt_in',
+          optedInAt: '2026-03-24T00:00:00.000Z'
+        },
+        '222222222222222222': {
+          robloxUsername: 'BetaMember',
+          robloxUserId: 456,
+          source: 'opt_in',
+          optedInAt: '2026-03-24T00:00:00.000Z'
+        }
+      };
+      state.subscriberOfflineReminderAt = {};
+      state.subscriberPresence = {};
+      state.subscriberFriendshipStatus = {};
+      state.subscriberStats = {};
+    });
+
+    const fakeGuild = {
+      id: guildId,
+      name: 'Friends cache guild',
+      channels: {
+        cache: new Map(),
+        fetch: async () => null
+      },
+      members: {
+        fetch: async () => null
+      }
+    };
+    const fakeClient = {
+      guilds: {
+        cache: new Map([[guildId, fakeGuild]]),
+        fetch: async (requestedGuildId) => (requestedGuildId === guildId ? fakeGuild : null)
+      },
+      users: {
+        fetch: async () => ({
+          send: async () => {}
+        })
+      }
+    };
+
+    startRobloxMonitorScheduler(fakeClient, guildId);
+
+    await waitForCondition(() => {
+      const state = getRobloxMonitorState(guildId);
+      const firstChecked = typeof state?.subscriberFriendshipStatus?.['111111111111111111']?.lastCheckedAt === 'string';
+      const secondChecked = typeof state?.subscriberFriendshipStatus?.['222222222222222222']?.lastCheckedAt === 'string';
+      return firstChecked && secondChecked;
+    });
+
+    assert.equal(friendsCalls, 1);
+  } finally {
+    stopRobloxMonitorScheduler(guildId);
+    global.fetch = originalFetch;
+    await fs.rm(guildDir, { recursive: true, force: true });
+  }
+});
