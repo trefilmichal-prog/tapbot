@@ -317,13 +317,14 @@ export function buildRobloxMonitorStatsReportComponents({
     const friendship = subscriberFriendshipStatusBySubscriber?.[userId] ?? null;
     const presence = presenceBySubscriber?.[userId] ?? null;
     const robloxName = state.subscriberRobloxAccounts[userId].robloxUsername.trim();
-    const presenceLabel = presence?.isInTargetGame === true
-      ? '🎮 in-game'
+    const statusLine = presence?.isInTargetGame === true
+      ? `Status: 🎮 in-game`
       : (presence?.isOnline === true
         ? '🟡 online outside the monitored game (treated as offline by monitor)'
         : '⚫ offline');
     const baseLine = [
-      `• ${robloxName}, %: ${Math.round(stats.onlinePercentage)}, status: ${presenceLabel}`,
+      `• ${robloxName}, %: ${Math.round(stats.onlinePercentage)}`,
+      statusLine,
       `🟢 online: ${formatDurationMinutes(stats.totalOnlineMinutes)}`,
       `🔴 offline: ${formatDurationMinutes(stats.totalOfflineMinutes)}`
     ].join('\n');
