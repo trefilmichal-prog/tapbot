@@ -131,7 +131,7 @@ export function buildRobloxMonitorStatsReportComponents({
         ? presenceSnapshot.checkedAt
         : checkedAt;
       return [
-        `• <@${userId}>`,
+        `• Subscriber ID: ${userId}`,
         `  - Online time: **${formatDurationMinutes(stats.totalOnlineMinutes)}**`,
         `  - Offline time: **${formatDurationMinutes(stats.totalOfflineMinutes)}**`,
         `  - Online %: **${stats.onlinePercentage.toFixed(2)}%**`,
@@ -199,7 +199,8 @@ async function postRobloxMonitorStatsReportIfDue(client, guild, state, {
     checkedAt
   });
   await channel.send(buildV2MessagePayload({
-    components
+    components,
+    allowedMentions: { parse: [], users: [], roles: [], repliedUser: false }
   }));
 
   await updateRobloxMonitorState(guild.id, (nextState) => {
@@ -481,13 +482,14 @@ async function sendOfflineReminderToMonitorRoom(guild, channelId, subscriberUser
     components: [
       buildV2Container([
         buildV2TextDisplay([
-          `🔔 <@${subscriberUserId}>`,
+          `🔔 Subscriber ID: ${subscriberUserId}`,
           `Target: **${targetUsername}**`,
           `Status: **${describePresenceForReminder(presenceSnapshot)}**`,
           'Reminder: target is not in the monitored game.'
         ].join('\n'))
       ])
-    ]
+    ],
+    allowedMentions: { parse: [], users: [], roles: [], repliedUser: false }
   }));
 
   return true;
