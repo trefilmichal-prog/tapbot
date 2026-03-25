@@ -285,8 +285,31 @@ export function buildRobloxMonitorStatsReportComponents({
 }) {
   const gameLabel = resolveMonitoredGameLabel(state, requiredRootPlaceId);
   const guildContext = guild?.name ? `${guild.name} (${guild.id})` : String(guild?.id ?? 'Unknown guild');
+  const sortedSubscriberUserIds = subscriberUserIds.slice().sort((a, b) => {
+    const aStats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[a]);
+    const bStats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[b]);
+    const byOnlinePercentageDesc = bStats.onlinePercentage - aStats.onlinePercentage;
+    if (byOnlinePercentageDesc !== 0) {
+      return byOnlinePercentageDesc;
+    }
+
+    const byTotalOnlineMinutesDesc = bStats.totalOnlineMinutes - aStats.totalOnlineMinutes;
+    if (byTotalOnlineMinutesDesc !== 0) {
+      return byTotalOnlineMinutesDesc;
+    }
+
+    const aRobloxName = typeof state?.subscriberRobloxAccounts?.[a]?.robloxUsername === 'string'
+      && state.subscriberRobloxAccounts[a].robloxUsername.trim()
+      ? state.subscriberRobloxAccounts[a].robloxUsername.trim()
+      : a;
+    const bRobloxName = typeof state?.subscriberRobloxAccounts?.[b]?.robloxUsername === 'string'
+      && state.subscriberRobloxAccounts[b].robloxUsername.trim()
+      ? state.subscriberRobloxAccounts[b].robloxUsername.trim()
+      : b;
+    return aRobloxName.localeCompare(bRobloxName);
+  });
   const playerLines = subscriberUserIds.length > 0
-    ? subscriberUserIds.map((userId) => {
+    ? sortedSubscriberUserIds.map((userId) => {
       const stats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[userId]);
       const friendship = subscriberFriendshipStatusBySubscriber?.[userId] ?? null;
       const presence = presenceBySubscriber?.[userId] ?? null;
