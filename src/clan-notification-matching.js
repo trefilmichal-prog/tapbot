@@ -170,13 +170,28 @@ export function collectAcceptedClanPlayersFromState(state, acceptedStatus = 'acc
   return players;
 }
 
+function buildNotificationParsingCandidates(notification) {
+  const title = typeof notification?.title === 'string' ? notification.title : null;
+  const body = typeof notification?.body === 'string' ? notification.body : null;
+  const titleAndBody = title && body ? `${title}\n${body}` : null;
+
+  return [body, title, titleAndBody];
+}
+
 export function filterNotificationsByClanNicknames(notifications, acceptedClanPlayers) {
   if (!(acceptedClanPlayers instanceof Map) || !acceptedClanPlayers.size) {
     return [];
   }
 
   return notifications.flatMap((notification) => {
-    const matchedNickname = extractNicknameBeforeHatched(notification?.body);
+    let matchedNickname = null;
+    for (const candidateText of buildNotificationParsingCandidates(notification)) {
+      matchedNickname = extractNicknameBeforeHatched(candidateText);
+      if (matchedNickname) {
+        break;
+      }
+    }
+
     if (!matchedNickname) {
       return [];
     }
