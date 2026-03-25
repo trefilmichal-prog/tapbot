@@ -593,7 +593,7 @@ async function runRobloxMonitorTick(client, guildId) {
           isFriend: false,
           lastCheckedAt: checkedAt,
           lastAutoAcceptedAt: previous?.lastAutoAcceptedAt ?? null,
-          note: 'Periodic check skipped: missing monitor session cookie.'
+          note: 'Periodic check skipped: monitoring session cookie is missing.'
         };
         nextState.subscriberPresence[subscriberUserId] = buildPresenceSnapshot({
           previousPresence: nextState.subscriberPresence[subscriberUserId] ?? null,
@@ -766,7 +766,7 @@ async function runRobloxMonitorTick(client, guildId) {
           lastAutoAcceptedAt: acceptedRequesterIds.has(targetUserId) ? checkedAt : null,
           note: isFriend
             ? 'Friendship verified during periodic monitor tick.'
-            : 'Friendship not verified during periodic monitor tick.'
+            : 'Periodic check result: Account is not in friends with the monitoring session account.'
         };
         presenceBySubscriber[subscriberUserId] = nextPresence;
         subscriberAccountMap[subscriberUserId] = {
