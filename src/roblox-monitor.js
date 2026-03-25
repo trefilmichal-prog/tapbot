@@ -898,6 +898,18 @@ async function runRobloxMonitorTick(client, guildId) {
     ? [...new Set(approvedUsers.discordUserIds)].sort()
     : explicitSubscriberUserIds;
   const effectiveMonitoredUserIdSet = new Set(effectiveMonitoredUserIds);
+  const currentSubscriberAccountMap = state?.subscriberRobloxAccounts
+    && typeof state.subscriberRobloxAccounts === 'object'
+    && !Array.isArray(state.subscriberRobloxAccounts)
+    ? state.subscriberRobloxAccounts
+    : {};
+  const hasStoredRobloxUsername = (subscriberUserId) => {
+    const subscriberAccount = currentSubscriberAccountMap[subscriberUserId] ?? null;
+    return typeof subscriberAccount?.robloxUsername === 'string'
+      && Boolean(subscriberAccount.robloxUsername.trim());
+  };
+  const apiEligibleSubscriberUserIds = effectiveMonitoredUserIds.filter((subscriberUserId) => hasStoredRobloxUsername(subscriberUserId));
+  const apiEligibleSubscriberUserIdSet = new Set(apiEligibleSubscriberUserIds);
 
   if (JSON.stringify(state.subscriberUserIds) !== JSON.stringify(effectiveMonitoredUserIds)) {
     state = await updateRobloxMonitorState(guildId, (nextState) => {
@@ -1027,6 +1039,53 @@ async function runRobloxMonitorTick(client, guildId) {
     return;
   }
 
+  if (apiEligibleSubscriberUserIds.length === 0) {
+    await updateRobloxMonitorState(guildId, (nextState) => {
+      const checkedAt = new Date().toISOString();
+      nextState.requiredRootPlaceId = getRequiredRootPlaceId(nextState);
+      nextState.subscriberUserIds = effectiveMonitoredUserIds;
+      if (!nextState.subscriberFriendshipStatus || typeof nextState.subscriberFriendshipStatus !== 'object' || Array.isArray(nextState.subscriberFriendshipStatus)) {
+        nextState.subscriberFriendshipStatus = {};
+      }
+      if (!nextState.subscriberPresence || typeof nextState.subscriberPresence !== 'object' || Array.isArray(nextState.subscriberPresence)) {
+        nextState.subscriberPresence = {};
+      }
+      if (!nextState.subscriberStats || typeof nextState.subscriberStats !== 'object' || Array.isArray(nextState.subscriberStats)) {
+        nextState.subscriberStats = {};
+      }
+      for (const subscriberUserId of effectiveMonitoredUserIds) {
+        const hasUsername = typeof nextState?.subscriberRobloxAccounts?.[subscriberUserId]?.robloxUsername === 'string'
+          && Boolean(nextState.subscriberRobloxAccounts[subscriberUserId].robloxUsername.trim());
+        if (hasUsername) {
+          continue;
+        }
+        const previousFriendship = nextState.subscriberFriendshipStatus[subscriberUserId];
+        nextState.subscriberFriendshipStatus[subscriberUserId] = {
+          robloxUserId: Number.isInteger(previousFriendship?.robloxUserId) ? previousFriendship.robloxUserId : null,
+          isFriend: typeof previousFriendship?.isFriend === 'boolean' ? previousFriendship.isFriend : false,
+          lastCheckedAt: checkedAt,
+          lastAutoAcceptedAt: previousFriendship?.lastAutoAcceptedAt ?? null,
+          note: 'Periodic check skipped: subscriber has no stored Roblox account (manual opt-in or clan_auto from ticket nickname required).'
+        };
+        nextState.subscriberPresence[subscriberUserId] = buildPresenceSnapshot({
+          previousPresence: nextState.subscriberPresence[subscriberUserId] ?? null,
+          targetUsername: nextState.subscriberPresence[subscriberUserId]?.targetUsername ?? null,
+          targetUserId: nextState.subscriberPresence[subscriberUserId]?.targetUserId ?? null,
+          monitoringAccountUserId: nextState.subscriberPresence[subscriberUserId]?.monitoringAccountUserId ?? null,
+          isFriend: nextState.subscriberPresence[subscriberUserId]?.isFriend ?? null,
+          presence: nextState.subscriberPresence[subscriberUserId],
+          requiredRootPlaceId: getRequiredRootPlaceId(nextState),
+          error: 'Subscriber skipped: no stored Roblox account.'
+        });
+        nextState.subscriberStats[subscriberUserId] = normalizeSubscriberAggregateStats(nextState.subscriberStats[subscriberUserId]);
+      }
+      nextState.lastKnownPresence = effectiveMonitoredUserIds.length > 0
+        ? (nextState.subscriberPresence[effectiveMonitoredUserIds[0]] ?? null)
+        : null;
+    });
+    return;
+  }
+
   const apiClient = new RobloxSessionClient(sessionCookie);
   try {
     const monitoringUser = await getAuthenticatedRobloxUser(apiClient);
@@ -1131,6 +1190,30 @@ async function runRobloxMonitorTick(client, guildId) {
       : {};
 
     for (const subscriberUserId of effectiveMonitoredUserIds) {
+      if (apiEligibleSubscriberUserIdSet.has(subscriberUserId)) {
+        continue;
+      }
+      const previousFriendship = friendshipStatusBySubscriber[subscriberUserId];
+      friendshipStatusBySubscriber[subscriberUserId] = {
+        robloxUserId: Number.isInteger(previousFriendship?.robloxUserId) ? previousFriendship.robloxUserId : null,
+        isFriend: typeof previousFriendship?.isFriend === 'boolean' ? previousFriendship.isFriend : false,
+        lastCheckedAt: checkedAt,
+        lastAutoAcceptedAt: previousFriendship?.lastAutoAcceptedAt ?? null,
+        note: 'Periodic check skipped: subscriber has no stored Roblox account (manual opt-in or clan_auto from ticket nickname required).'
+      };
+      presenceBySubscriber[subscriberUserId] = buildPresenceSnapshot({
+        previousPresence: previousPresenceBySubscriber[subscriberUserId] ?? null,
+        targetUsername: previousPresenceBySubscriber[subscriberUserId]?.targetUsername ?? null,
+        targetUserId: previousPresenceBySubscriber[subscriberUserId]?.targetUserId ?? null,
+        monitoringAccountUserId: Number(monitoringUser.id),
+        isFriend: previousPresenceBySubscriber[subscriberUserId]?.isFriend ?? null,
+        presence: previousPresenceBySubscriber[subscriberUserId] ?? null,
+        requiredRootPlaceId,
+        error: 'Subscriber skipped: no stored Roblox account.'
+      });
+    }
+
+    for (const subscriberUserId of apiEligibleSubscriberUserIds) {
       const subscriberAccount = subscriberAccountMap[subscriberUserId] ?? null;
       const storedSubscriberUsername = typeof subscriberAccount?.robloxUsername === 'string' && subscriberAccount.robloxUsername.trim()
         ? subscriberAccount.robloxUsername.trim()
