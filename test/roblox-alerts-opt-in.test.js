@@ -9,9 +9,27 @@ import {
   resolveRobloxAlertOptInTarget
 } from '../src/roblox-alert-target.js';
 import {
+  getClanState,
   getRobloxMonitorState,
+  updateClanState,
   updateRobloxMonitorState
 } from '../src/persistence.js';
+import {
+  startRobloxMonitorScheduler,
+  stopRobloxMonitorScheduler
+} from '../src/roblox-monitor.js';
+
+async function waitForCondition(predicate, { timeoutMs = 2500, intervalMs = 25 } = {}) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  throw new Error('Timed out waiting for condition');
+}
 
 function findSubcommand(commandName, subcommandName, subcommandGroup = null) {
   const command = defaultCommands.find((entry) => entry.name === commandName);
@@ -113,5 +131,125 @@ test('subscriber roblox account source and target persist across module reload (
   assert.equal(stateAfterReload.subscriberRobloxAccounts[userId].robloxUsername, 'Custom_123');
   assert.equal(stateAfterReload.subscriberRobloxAccounts[userId].source, 'manual_opt_in_nick');
 
+  await fs.rm(guildDir, { recursive: true, force: true });
+});
+
+test('clan monitor mode derives effective monitored users from accepted clan members without explicit opt-ins', async () => {
+  const guildId = `test-guild-clan-mode-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const guildDir = path.join(process.cwd(), 'data', 'guilds', guildId);
+  const selectedClanName = 'Raiders';
+
+  await updateRobloxMonitorState(guildId, (state) => {
+    state.monitorSource = {
+      ...state.monitorSource,
+      clan_name: selectedClanName
+    };
+    state.subscriberUserIds = [];
+  });
+
+  await updateClanState(guildId, (state) => {
+    state.clan_ticket_decisions = {
+      acceptedInSelectedClanA: {
+        status: 'accept',
+        applicantId: '111111111111111111',
+        clanName: selectedClanName,
+        answers: { robloxNick: 'AlphaMember' }
+      },
+      acceptedInSelectedClanB: {
+        status: 'accept',
+        applicantId: '222222222222222222',
+        clanName: selectedClanName,
+        answers: { robloxNick: 'BravoMember' }
+      },
+      acceptedOtherClan: {
+        status: 'accept',
+        applicantId: '333333333333333333',
+        clanName: 'OtherClan',
+        answers: { robloxNick: 'OtherClanMember' }
+      },
+      rejectedInSelectedClan: {
+        status: 'reject',
+        applicantId: '444444444444444444',
+        clanName: selectedClanName,
+        answers: { robloxNick: 'RejectedMember' }
+      }
+    };
+  });
+
+  const expectedAcceptedSelectedClanIds = ['111111111111111111', '222222222222222222'];
+  const clanState = getClanState(guildId);
+  const derivedAcceptedSelectedClanIds = Object.values(clanState.clan_ticket_decisions)
+    .filter((entry) => entry.status === 'accept' && entry.clanName === selectedClanName)
+    .map((entry) => entry.applicantId)
+    .sort();
+  assert.deepEqual(derivedAcceptedSelectedClanIds, expectedAcceptedSelectedClanIds);
+
+  const fakeClient = {
+    guilds: {
+      cache: new Map([[guildId, { id: guildId, name: 'Clan mode test guild' }]]),
+      fetch: async () => null
+    }
+  };
+
+  startRobloxMonitorScheduler(fakeClient, guildId);
+
+  await waitForCondition(() => {
+    const updatedState = getRobloxMonitorState(guildId);
+    return JSON.stringify(updatedState.subscriberUserIds) === JSON.stringify(expectedAcceptedSelectedClanIds)
+      && JSON.stringify(Object.keys(updatedState.subscriberFriendshipStatus).sort()) === JSON.stringify(expectedAcceptedSelectedClanIds)
+      && JSON.stringify(Object.keys(updatedState.subscriberPresence).sort()) === JSON.stringify(expectedAcceptedSelectedClanIds);
+  });
+
+  const updatedState = getRobloxMonitorState(guildId);
+  assert.deepEqual(updatedState.subscriberUserIds, expectedAcceptedSelectedClanIds);
+  assert.deepEqual(Object.keys(updatedState.subscriberFriendshipStatus).sort(), expectedAcceptedSelectedClanIds);
+  assert.deepEqual(Object.keys(updatedState.subscriberPresence).sort(), expectedAcceptedSelectedClanIds);
+
+  stopRobloxMonitorScheduler(guildId);
+  await fs.rm(guildDir, { recursive: true, force: true });
+});
+
+test('without monitorSource.clan_name the monitor keeps explicit opt-in subscriber IDs', async () => {
+  const guildId = `test-guild-explicit-optin-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const guildDir = path.join(process.cwd(), 'data', 'guilds', guildId);
+  const explicitSubscriberIds = ['888888888888888888'];
+
+  await updateRobloxMonitorState(guildId, (state) => {
+    state.monitorSource = {
+      ...state.monitorSource,
+      clan_name: null
+    };
+    state.subscriberUserIds = [...explicitSubscriberIds];
+  });
+
+  await updateClanState(guildId, (state) => {
+    state.clan_ticket_decisions = {
+      acceptedWouldBeIgnoredInNonClanMode: {
+        status: 'accept',
+        applicantId: '999999999999999999',
+        clanName: 'Raiders',
+        answers: { robloxNick: 'IgnoredMember' }
+      }
+    };
+  });
+
+  const fakeClient = {
+    guilds: {
+      cache: new Map([[guildId, { id: guildId, name: 'Non clan mode test guild' }]]),
+      fetch: async () => null
+    }
+  };
+
+  startRobloxMonitorScheduler(fakeClient, guildId);
+
+  await waitForCondition(() => {
+    const updatedState = getRobloxMonitorState(guildId);
+    return JSON.stringify(updatedState.subscriberUserIds) === JSON.stringify(explicitSubscriberIds);
+  });
+
+  const updatedState = getRobloxMonitorState(guildId);
+  assert.deepEqual(updatedState.subscriberUserIds, explicitSubscriberIds);
+
+  stopRobloxMonitorScheduler(guildId);
   await fs.rm(guildDir, { recursive: true, force: true });
 });
