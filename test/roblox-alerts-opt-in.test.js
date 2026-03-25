@@ -68,6 +68,17 @@ test('opt_in command payload exposes optional nick override for all relevant com
   }
 });
 
+test('roblox_monitor config reset_hours subcommand exists with required confirm option', () => {
+  const subcommand = findSubcommand('roblox_monitor', 'reset_hours', 'config');
+  const confirmOption = (subcommand.options ?? []).find((entry) => entry.name === 'confirm');
+  assert.deepEqual(confirmOption, {
+    type: 5,
+    name: 'confirm',
+    description: 'Must be true to confirm resetting subscriber stats/hour reminders',
+    required: true
+  });
+});
+
 test('opt_in target resolution prioritizes explicit valid nick', () => {
   const resolution = resolveRobloxAlertOptInTarget({
     requestedNickRaw: '  Custom_123  ',
@@ -197,6 +208,89 @@ test('subscriber roblox account source and target persist across module reload (
   assert.equal(stateAfterReload.subscriberRobloxAccounts[userId].source, 'manual_opt_in_nick');
 
   await fs.rm(guildDir, { recursive: true, force: true });
+});
+
+test('reset_hours clears only stats-related monitor fields for target guild and preserves subscriber account bindings', async () => {
+  const guildIdTarget = `test-guild-reset-hours-target-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const guildIdOther = `test-guild-reset-hours-other-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const targetGuildDir = path.join(process.cwd(), 'data', 'guilds', guildIdTarget);
+  const otherGuildDir = path.join(process.cwd(), 'data', 'guilds', guildIdOther);
+  const subscriberId = '555555555555555555';
+  const otherSubscriberId = '666666666666666666';
+
+  await updateRobloxMonitorState(guildIdTarget, (state) => {
+    state.subscriberRobloxAccounts = {
+      [subscriberId]: {
+        robloxUsername: 'TargetGuildUser',
+        robloxUserId: 555001,
+        source: 'manual_opt_in_nick',
+        optedInAt: '2026-03-24T10:00:00.000Z'
+      }
+    };
+    state.subscriberFriendshipStatus = {
+      [subscriberId]: {
+        robloxUserId: 555001,
+        isFriend: true,
+        lastCheckedAt: '2026-03-24T11:30:00.000Z'
+      }
+    };
+    state.subscriberPresence = {
+      [subscriberId]: {
+        checkedAt: '2026-03-24T11:31:00.000Z',
+        userPresenceType: 2,
+        isOnline: true
+      }
+    };
+    state.subscriberStats = { [subscriberId]: { totalMinutes: 120 } };
+    state.subscriberOfflineReminderAt = { [subscriberId]: '2026-03-24T11:00:00.000Z' };
+  });
+
+  await updateRobloxMonitorState(guildIdOther, (state) => {
+    state.subscriberRobloxAccounts = {
+      [otherSubscriberId]: {
+        robloxUsername: 'OtherGuildUser',
+        robloxUserId: 666001,
+        source: 'manual_opt_in_nick',
+        optedInAt: '2026-03-24T12:00:00.000Z'
+      }
+    };
+    state.subscriberFriendshipStatus = {
+      [otherSubscriberId]: {
+        robloxUserId: 666001,
+        isFriend: true,
+        lastCheckedAt: '2026-03-24T13:30:00.000Z'
+      }
+    };
+    state.subscriberPresence = {
+      [otherSubscriberId]: {
+        checkedAt: '2026-03-24T13:31:00.000Z',
+        userPresenceType: 1,
+        isOnline: false
+      }
+    };
+    state.subscriberStats = { [otherSubscriberId]: { totalMinutes: 45 } };
+    state.subscriberOfflineReminderAt = { [otherSubscriberId]: '2026-03-24T13:00:00.000Z' };
+  });
+
+  await updateRobloxMonitorState(guildIdTarget, (state) => {
+    state.subscriberStats = {};
+    state.subscriberOfflineReminderAt = {};
+  });
+
+  const targetState = getRobloxMonitorState(guildIdTarget);
+  assert.deepEqual(targetState.subscriberStats, {});
+  assert.deepEqual(targetState.subscriberOfflineReminderAt, {});
+  assert.equal(targetState.subscriberRobloxAccounts[subscriberId].robloxUsername, 'TargetGuildUser');
+  assert.equal(targetState.subscriberFriendshipStatus[subscriberId]?.isFriend, true);
+  assert.equal(targetState.subscriberPresence[subscriberId]?.userPresenceType, 2);
+
+  const otherState = getRobloxMonitorState(guildIdOther);
+  assert.ok(otherState.subscriberStats[otherSubscriberId]);
+  assert.deepEqual(otherState.subscriberOfflineReminderAt, { [otherSubscriberId]: '2026-03-24T13:00:00.000Z' });
+  assert.equal(otherState.subscriberRobloxAccounts[otherSubscriberId].robloxUsername, 'OtherGuildUser');
+
+  await fs.rm(targetGuildDir, { recursive: true, force: true });
+  await fs.rm(otherGuildDir, { recursive: true, force: true });
 });
 
 test('clan monitor mode derives effective monitored users from accepted clan members without explicit opt-ins', async () => {

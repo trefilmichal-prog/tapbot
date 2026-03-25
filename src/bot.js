@@ -6260,6 +6260,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return;
         }
 
+        if (subcommand === 'reset_hours') {
+          const confirmReset = interaction.options.getBoolean('confirm', false) === true;
+          if (!confirmReset) {
+            await interaction.reply({
+              components: buildTextComponents('This action resets all subscriber stats/hour reminders in this guild. Re-run with `/roblox_monitor config reset_hours confirm:true` to confirm.'),
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+            });
+            return;
+          }
+
+          await updateRobloxMonitorState(interaction.guildId, (state) => {
+            state.subscriberStats = {};
+            state.subscriberOfflineReminderAt = {};
+          });
+          await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
+          await interaction.reply({
+            components: buildTextComponents('Subscriber stats/hour reminders were reset for this guild. Subscriber Roblox targets, friendship status, and presence cache were preserved.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
         if (subcommand === 'set_stats_room') {
           const channel = interaction.options.getChannel('channel', true);
           await updateRobloxMonitorState(interaction.guildId, (state) => {
