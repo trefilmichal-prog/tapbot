@@ -6270,7 +6270,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           const sessionCookie = getRobloxMonitorSessionCookie(currentMonitorState);
           if (!sessionCookie) {
             await interaction.reply({
-              components: buildTextComponents('Roblox monitor session is not configured. Ask an admin to run `/roblox_monitor config set_session` first.'),
+              components: buildTextComponents('Roblox monitor session cookie is missing. Ask an admin to run `/roblox_monitor config set_session` first.'),
               flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             });
             return;
@@ -6316,12 +6316,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
               const handshakeStatusLine = autoAcceptedFriendRequest
                 ? 'Friend handshake: request was auto-accepted.'
                 : 'Friend handshake: no pending request.';
+              const friendshipReasonLine = 'Account is not in friends with the monitoring session account.';
               const nextStepLine = autoAcceptedFriendRequest
                 ? 'Friendship is not visible yet. Please try again in a moment; if the issue persists, verify friendship on both accounts.'
                 : `Send a friend request to the monitoring account ${monitoringAccountLabel} or accept its request on Roblox, then run opt-in again.`;
               await interaction.reply({
                 components: buildTextComponents(
-                  `${handshakeStatusLine}\n${nextStepLine}`
+                  `${handshakeStatusLine}\n${friendshipReasonLine}\n${nextStepLine}`
                 ),
                 flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
               });
