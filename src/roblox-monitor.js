@@ -292,7 +292,7 @@ export function buildRobloxMonitorStatsReportComponents({
           : fallbackMonitoringAccountLabel;
         return [
           baseLine,
-          '  Not friends with the monitoring session account.',
+          '  Account is not friends with the monitoring session account.',
           `  Add: **${nextMonitoringAccountLabel}**.`
         ].join('\n');
       }
@@ -1200,7 +1200,7 @@ async function runRobloxMonitorTick(client, guildId) {
           lastAutoAcceptedAt: acceptedRequesterIds.has(targetUserId) ? checkedAt : null,
           note: isFriend
             ? 'Friendship verified during periodic monitor tick.'
-            : 'Periodic check result: Account is not in friends with the monitoring session account.'
+            : 'Periodic check result: Account is not friends with the monitoring session account.'
         };
         presenceBySubscriber[subscriberUserId] = nextPresence;
         subscriberAccountMap[subscriberUserId] = {
