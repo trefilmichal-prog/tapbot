@@ -84,6 +84,7 @@ function getDefaultRobloxMonitorState() {
       source_type: 'target_override',
       target_override: null,
       source_user_id: null,
+      clan_name: null,
       updated_at: null
     },
     targetUsername: null,
@@ -616,6 +617,9 @@ function normalizeRobloxMonitorState(state) {
   const monitorSourceSourceUserId = typeof parsedMonitorSource.source_user_id === 'string' && parsedMonitorSource.source_user_id.trim()
     ? parsedMonitorSource.source_user_id.trim()
     : null;
+  const monitorSourceClanName = typeof parsedMonitorSource.clan_name === 'string' && parsedMonitorSource.clan_name.trim()
+    ? parsedMonitorSource.clan_name.trim()
+    : null;
   const monitorSourceGameId = Number.isInteger(parsedMonitorSource.game_id) && parsedMonitorSource.game_id > 0
     ? parsedMonitorSource.game_id
     : requiredRootPlaceId;
@@ -679,6 +683,7 @@ function normalizeRobloxMonitorState(state) {
       source_type: sourceType,
       target_override: sourceType === 'guild_nickname' ? null : targetOverride,
       source_user_id: monitorSourceSourceUserId,
+      clan_name: monitorSourceClanName,
       updated_at: monitorSourceUpdatedAt
     },
     targetUsername,

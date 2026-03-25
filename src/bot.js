@@ -445,6 +445,12 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
     ? state.monitorSource
     : {};
   const sourceType = monitorSource.source_type === 'guild_nickname' ? 'guild_nickname' : 'target_override';
+  const sourceClanName = typeof monitorSource.clan_name === 'string' && monitorSource.clan_name.trim()
+    ? monitorSource.clan_name.trim()
+    : null;
+  const sourceAlertChannelId = typeof monitorSource.channel_id === 'string' && monitorSource.channel_id.trim()
+    ? monitorSource.channel_id.trim()
+    : null;
   const targetOverride = typeof monitorSource.target_override === 'string' && monitorSource.target_override.trim()
     ? monitorSource.target_override.trim()
     : null;
@@ -503,30 +509,35 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
     return `<@${userId}> | Account: **${accountUsername}** | Friend: **${friendshipLabel}** | Presence: **${presenceLabel}** | ${formatRobloxMonitorAggregateStats(subscriberStatsMap[userId])} | Note: ${statusNote}`;
   });
 
+  const configurationLines = [
+    `Session configured: **${hasSession ? 'Yes' : 'No'}**`,
+    `Session persisted after restart: **${hasSession ? 'Yes' : 'No'}**`,
+    `Monitoring account user ID: **${monitoringAccountUserId ?? 'Unknown'}**`,
+    `Monitored game (persisted): **${monitoredGameName}**`,
+    `Required rootPlaceId/placeId: **${requiredRootPlaceId}**`,
+    `Source type: **${sourceType}**`,
+    `Source clan filter: **${sourceClanName ?? 'all clans'}**`,
+    `Alert room: ${sourceAlertChannelId ? `<#${sourceAlertChannelId}>` : '**DM fallback**'}`,
+    `Configured source guild_id: **${monitorSource.guild_id ?? 'N/A'}**`,
+    `Configured source game_id: **${monitorSource.game_id ?? requiredRootPlaceId}**`,
+    `Configured source user_id: **${monitorSource.source_user_id ?? 'N/A'}**`,
+    `Target override: **${targetOverride ?? 'null'}**`,
+    `Friendship-ready subscribers: **${friendshipReadyCount}/${subscriberUserIds.length}**`,
+    viewerDiscordUserId ? `Your friendship-ready state: **${viewerReadyLabel}**` : null,
+    `Last known monitor state persisted: **${hasLastKnownPresence ? `Yes (${lastPresence.checkedAt})` : 'No'}**`,
+    `Last error: ${lastError ?? 'None'}`
+  ].filter(Boolean);
+
   return [
     buildV2Container([
       buildV2TextDisplay('🛠️ **Roblox monitor status**'),
       buildV2Separator(),
+      buildV2TextDisplay(['**Configuration**', ...configurationLines].join('\n')),
+      buildV2Separator(),
       buildV2TextDisplay([
-        `Session configured: **${hasSession ? 'Yes' : 'No'}**`,
-        `Session persisted after restart: **${hasSession ? 'Yes' : 'No'}**`,
-        `Monitoring account user ID: **${monitoringAccountUserId ?? 'Unknown'}**`,
-        `Source type: **${sourceType}**`,
-        `Configured source guild_id: **${monitorSource.guild_id ?? 'N/A'}**`,
-        `Configured source channel_id: **${monitorSource.channel_id ?? 'N/A'}**`,
-        `Configured source game_id: **${monitorSource.game_id ?? requiredRootPlaceId}**`,
-        `Configured source user_id: **${monitorSource.source_user_id ?? 'N/A'}**`,
-        `Target override: **${targetOverride ?? 'null'}**`,
-        `Monitored game (persisted): **${monitoredGameName}**`,
-        `Required rootPlaceId/placeId: **${requiredRootPlaceId}**`,
-        `Friendship-ready subscribers: **${friendshipReadyCount}/${subscriberUserIds.length}**`,
-        viewerDiscordUserId ? `Your friendship-ready state: **${viewerReadyLabel}**` : null,
-        `Last known monitor state persisted: **${hasLastKnownPresence ? `Yes (${lastPresence.checkedAt})` : 'No'}**`,
-        `Last error: ${lastError ?? 'None'}`,
-        '',
-        '**Subscriber statuses:**',
+        '**Subscriber statuses**',
         subscriberStatusLines.length > 0 ? subscriberStatusLines.join('\n') : 'No subscribers are currently opted in.'
-      ].filter(Boolean).join('\n'))
+      ].join('\n'))
     ])
   ];
 }
@@ -582,6 +593,9 @@ async function warmupRobloxMonitorStateOnStartup(readyClient) {
       }
       state.monitorSource.source_user_id = typeof state.monitorSource.source_user_id === 'string' && state.monitorSource.source_user_id.trim()
         ? state.monitorSource.source_user_id.trim()
+        : null;
+      state.monitorSource.clan_name = typeof state.monitorSource.clan_name === 'string' && state.monitorSource.clan_name.trim()
+        ? state.monitorSource.clan_name.trim()
         : null;
       state.monitorSource.updated_at = typeof state.monitorSource.updated_at === 'string'
         ? state.monitorSource.updated_at
@@ -6123,6 +6137,46 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
           await interaction.reply({
             components: buildTextComponents('Roblox monitor source was set to `guild_nickname` for this guild. Fixed target override was cleared (target_override = null).'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (subcommand === 'set_alert_room') {
+          const channel = interaction.options.getChannel('channel', true);
+          await updateRobloxMonitorState(interaction.guildId, (state) => {
+            if (!state.monitorSource || typeof state.monitorSource !== 'object' || Array.isArray(state.monitorSource)) {
+              state.monitorSource = {};
+            }
+            state.monitorSource.guild_id = interaction.guildId;
+            state.monitorSource.channel_id = channel.id;
+            state.monitorSource.updated_at = new Date().toISOString();
+          });
+          await interaction.reply({
+            components: buildTextComponents(`Roblox monitor alert room was set to <#${channel.id}>. Offline reminders will be posted there; if unavailable, DM fallback is used.`),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (subcommand === 'set_clan') {
+          const clanNameInput = interaction.options.getString('clan_name', false);
+          const clanName = typeof clanNameInput === 'string' && clanNameInput.trim() ? clanNameInput.trim() : null;
+          await updateRobloxMonitorState(interaction.guildId, (state) => {
+            if (!state.monitorSource || typeof state.monitorSource !== 'object' || Array.isArray(state.monitorSource)) {
+              state.monitorSource = {};
+            }
+            state.monitorSource.guild_id = interaction.guildId;
+            state.monitorSource.clan_name = clanName;
+            state.monitorSource.updated_at = new Date().toISOString();
+          });
+          await restartRobloxMonitorSchedulerForGuild(client, interaction.guildId);
+          await interaction.reply({
+            components: buildTextComponents(
+              clanName
+                ? `Roblox monitor clan filter was set to **${clanName}**.`
+                : 'Roblox monitor clan filter was cleared. Monitor now uses accepted tickets from all clans.'
+            ),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
           return;

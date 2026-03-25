@@ -417,13 +417,25 @@ async function acceptFriendRequest(apiClient, requesterUserId) {
   });
 }
 
-function collectApprovedTicketUsers(guildId) {
+function collectApprovedTicketUsers(guildId, { clanName = null } = {}) {
   const state = getClanState(guildId);
   const discordUserIds = new Set();
   const robloxUsernames = new Set();
   const discordUserIdToRobloxUsername = {};
+  const normalizedClanName = typeof clanName === 'string' && clanName.trim()
+    ? clanName.trim().toLowerCase()
+    : null;
 
   for (const identity of collectAcceptedTicketRobloxIdentitiesFromState(state)) {
+    if (normalizedClanName) {
+      const identityClanName = typeof identity?.entry?.clanName === 'string'
+        ? identity.entry.clanName.trim().toLowerCase()
+        : null;
+      if (!identityClanName || identityClanName !== normalizedClanName) {
+        continue;
+      }
+    }
+
     if (identity.applicantId) {
       discordUserIds.add(identity.applicantId);
     }
@@ -453,6 +465,32 @@ async function sendOfflineReminderToSubscriber(client, guild, subscriberUserId, 
   } catch (error) {
     console.warn(`Failed to send Roblox offline reminder to user ${subscriberUserId} in guild ${guild.id}:`, error);
   }
+}
+
+async function sendOfflineReminderToMonitorRoom(guild, channelId, subscriberUserId, targetUsername, presenceSnapshot) {
+  if (!channelId || typeof channelId !== 'string') {
+    return false;
+  }
+
+  const channel = guild.channels.cache.get(channelId) ?? await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel || !channel.isTextBased()) {
+    return false;
+  }
+
+  await channel.send(buildV2MessagePayload({
+    components: [
+      buildV2Container([
+        buildV2TextDisplay([
+          `🔔 <@${subscriberUserId}>`,
+          `Target: **${targetUsername}**`,
+          `Status: **${describePresenceForReminder(presenceSnapshot)}**`,
+          'Reminder: target is not in the monitored game.'
+        ].join('\n'))
+      ])
+    ]
+  }));
+
+  return true;
 }
 
 function buildPresenceSnapshot({
@@ -496,14 +534,22 @@ async function runRobloxMonitorTick(client, guildId) {
     return;
   }
 
-  const approvedUsers = collectApprovedTicketUsers(guildId);
   let state = getRobloxMonitorState(guildId);
   const monitorSource = state?.monitorSource && typeof state.monitorSource === 'object'
     ? state.monitorSource
     : {};
+  const approvedUsers = collectApprovedTicketUsers(guildId, {
+    clanName: typeof monitorSource?.clan_name === 'string' ? monitorSource.clan_name : null
+  });
   const sourceType = monitorSource.source_type === 'guild_nickname' ? 'guild_nickname' : 'target_override';
   const sourceUserId = typeof monitorSource.source_user_id === 'string' && monitorSource.source_user_id.trim()
     ? monitorSource.source_user_id.trim()
+    : null;
+  const sourceClanName = typeof monitorSource.clan_name === 'string' && monitorSource.clan_name.trim()
+    ? monitorSource.clan_name.trim()
+    : null;
+  const sourceChannelId = typeof monitorSource.channel_id === 'string' && monitorSource.channel_id.trim()
+    ? monitorSource.channel_id.trim()
     : null;
   const targetOverride = typeof monitorSource.target_override === 'string' && monitorSource.target_override.trim()
     ? monitorSource.target_override.trim()
@@ -744,7 +790,16 @@ async function runRobloxMonitorTick(client, guildId) {
         const shouldSendOfflineReminder = !nextPresence.isInTargetGame
           && (!lastReminderMs || Number.isNaN(lastReminderMs) || (nowMs - lastReminderMs) >= reminderIntervalMs);
         if (shouldSendOfflineReminder) {
-          await sendOfflineReminderToSubscriber(client, guild, subscriberUserId, targetUsername, nextPresence);
+          const sentToRoom = await sendOfflineReminderToMonitorRoom(
+            guild,
+            sourceChannelId,
+            subscriberUserId,
+            targetUsername,
+            nextPresence
+          );
+          if (!sentToRoom) {
+            await sendOfflineReminderToSubscriber(client, guild, subscriberUserId, targetUsername, nextPresence);
+          }
           reminderTimestampBySubscriber[subscriberUserId] = new Date().toISOString();
         } else if (nextPresence.isInTargetGame && reminderTimestampBySubscriber[subscriberUserId]) {
           delete reminderTimestampBySubscriber[subscriberUserId];
@@ -804,6 +859,7 @@ async function runRobloxMonitorTick(client, guildId) {
       nextState.monitorSource.source_type = sourceType;
       nextState.monitorSource.target_override = sourceType === 'guild_nickname' ? null : targetOverride;
       nextState.monitorSource.source_user_id = sourceUserId;
+      nextState.monitorSource.clan_name = sourceClanName;
       nextState.monitorSource.updated_at = new Date().toISOString();
       nextState.subscriberUserIds = filteredSubscriberUserIds;
       nextState.subscriberRobloxAccounts = subscriberAccountMap;
