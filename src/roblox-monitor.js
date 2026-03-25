@@ -44,6 +44,43 @@ function getIntervalMinutes(state) {
   return Math.max(MIN_INTERVAL_MINUTES, Number(state?.checkIntervalMinutes) || DEFAULT_CHECK_INTERVAL_MINUTES);
 }
 
+function normalizeSubscriberAggregateStats(stats) {
+  const totalOnlineMinutes = Math.max(0, Number(stats?.totalOnlineMinutes) || 0);
+  const totalOfflineMinutes = Math.max(0, Number(stats?.totalOfflineMinutes) || 0);
+  const totalSampledMinutes = Math.max(0, Number(stats?.totalSampledMinutes) || 0);
+  const onlinePercentage = totalSampledMinutes > 0
+    ? (totalOnlineMinutes / totalSampledMinutes) * 100
+    : 0;
+  return {
+    totalOnlineMinutes,
+    totalOfflineMinutes,
+    totalSampledMinutes,
+    onlinePercentage
+  };
+}
+
+function buildUpdatedSubscriberAggregateStats(previousStats, { isOnline, sampleMinutes }) {
+  const normalized = normalizeSubscriberAggregateStats(previousStats);
+  const sampledIncrement = Math.max(0, Number(sampleMinutes) || 0);
+  if (sampledIncrement <= 0) {
+    return normalized;
+  }
+
+  const nextOnlineMinutes = normalized.totalOnlineMinutes + (isOnline ? sampledIncrement : 0);
+  const nextOfflineMinutes = normalized.totalOfflineMinutes + (isOnline ? 0 : sampledIncrement);
+  const nextSampledMinutes = normalized.totalSampledMinutes + sampledIncrement;
+  return normalizeSubscriberAggregateStats({
+    totalOnlineMinutes: nextOnlineMinutes,
+    totalOfflineMinutes: nextOfflineMinutes,
+    totalSampledMinutes: nextSampledMinutes
+  });
+}
+
+export function formatRobloxMonitorAggregateStats(stats) {
+  const normalized = normalizeSubscriberAggregateStats(stats);
+  return `Uptime: **${normalized.onlinePercentage.toFixed(2)}%** (Online: **${normalized.totalOnlineMinutes}m**, Offline: **${normalized.totalOfflineMinutes}m**, Sampled: **${normalized.totalSampledMinutes}m**)`;
+}
+
 function getOfflineReminderMinutes(state) {
   return Math.max(MIN_INTERVAL_MINUTES, Number(state?.offlineReminderMinutes) || DEFAULT_OFFLINE_REMINDER_MINUTES);
 }
@@ -361,6 +398,9 @@ async function runRobloxMonitorTick(client, guildId) {
       if (!nextState.subscriberOfflineReminderAt || typeof nextState.subscriberOfflineReminderAt !== 'object' || Array.isArray(nextState.subscriberOfflineReminderAt)) {
         nextState.subscriberOfflineReminderAt = {};
       }
+      if (!nextState.subscriberStats || typeof nextState.subscriberStats !== 'object' || Array.isArray(nextState.subscriberStats)) {
+        nextState.subscriberStats = {};
+      }
       for (const userId of Object.keys(nextState.subscriberRobloxAccounts)) {
         if (!approvedDiscordUserIdSet.has(userId)) {
           delete nextState.subscriberRobloxAccounts[userId];
@@ -381,6 +421,13 @@ async function runRobloxMonitorTick(client, guildId) {
           delete nextState.subscriberOfflineReminderAt[userId];
         }
       }
+      for (const userId of Object.keys(nextState.subscriberStats)) {
+        if (!approvedDiscordUserIdSet.has(userId)) {
+          delete nextState.subscriberStats[userId];
+        } else {
+          nextState.subscriberStats[userId] = normalizeSubscriberAggregateStats(nextState.subscriberStats[userId]);
+        }
+      }
       if (!nextState.requiredRootPlaceId) {
         nextState.requiredRootPlaceId = requiredRootPlaceId;
       }
@@ -397,6 +444,9 @@ async function runRobloxMonitorTick(client, guildId) {
       }
       if (!nextState.subscriberPresence || typeof nextState.subscriberPresence !== 'object' || Array.isArray(nextState.subscriberPresence)) {
         nextState.subscriberPresence = {};
+      }
+      if (!nextState.subscriberStats || typeof nextState.subscriberStats !== 'object' || Array.isArray(nextState.subscriberStats)) {
+        nextState.subscriberStats = {};
       }
       for (const subscriberUserId of filteredSubscriberUserIds) {
         const previous = nextState.subscriberFriendshipStatus[subscriberUserId];
@@ -417,6 +467,7 @@ async function runRobloxMonitorTick(client, guildId) {
           requiredRootPlaceId: getRequiredRootPlaceId(nextState),
           error: 'Roblox monitor skipped because no .ROBLOSECURITY cookie is configured.'
         });
+        nextState.subscriberStats[subscriberUserId] = normalizeSubscriberAggregateStats(nextState.subscriberStats[subscriberUserId]);
       }
       nextState.lastKnownPresence = filteredSubscriberUserIds.length > 0
         ? (nextState.subscriberPresence[filteredSubscriberUserIds[0]] ?? null)
@@ -464,6 +515,13 @@ async function runRobloxMonitorTick(client, guildId) {
     const previousPresenceBySubscriber = state?.subscriberPresence && typeof state.subscriberPresence === 'object' && !Array.isArray(state.subscriberPresence)
       ? state.subscriberPresence
       : {};
+    const previousSubscriberStats = state?.subscriberStats && typeof state.subscriberStats === 'object' && !Array.isArray(state.subscriberStats)
+      ? state.subscriberStats
+      : {};
+    const subscriberStatsBySubscriber = {};
+    for (const subscriberUserId of filteredSubscriberUserIds) {
+      subscriberStatsBySubscriber[subscriberUserId] = normalizeSubscriberAggregateStats(previousSubscriberStats[subscriberUserId]);
+    }
     const resolvedUsernameCache = new Map();
 
     for (const subscriberUserId of filteredSubscriberUserIds) {
@@ -544,6 +602,11 @@ async function runRobloxMonitorTick(client, guildId) {
         });
 
         const nowMs = Date.now();
+        const sampleMinutes = getIntervalMinutes(state);
+        subscriberStatsBySubscriber[subscriberUserId] = buildUpdatedSubscriberAggregateStats(
+          subscriberStatsBySubscriber[subscriberUserId],
+          { isOnline: nextPresence.isOnline, sampleMinutes }
+        );
         const reminderIntervalMs = getOfflineReminderMinutes(state) * 60 * 1000;
         const lastReminderIso = typeof reminderTimestampBySubscriber[subscriberUserId] === 'string'
           ? reminderTimestampBySubscriber[subscriberUserId]
@@ -617,6 +680,7 @@ async function runRobloxMonitorTick(client, guildId) {
       nextState.subscriberRobloxAccounts = subscriberAccountMap;
       nextState.subscriberFriendshipStatus = friendshipStatusBySubscriber;
       nextState.subscriberPresence = presenceBySubscriber;
+      nextState.subscriberStats = subscriberStatsBySubscriber;
       nextState.lastKnownPresence = filteredSubscriberUserIds.length > 0
         ? (presenceBySubscriber[filteredSubscriberUserIds[0]] ?? null)
         : null;
@@ -649,6 +713,9 @@ async function runRobloxMonitorTick(client, guildId) {
       if (!nextState.subscriberPresence || typeof nextState.subscriberPresence !== 'object' || Array.isArray(nextState.subscriberPresence)) {
         nextState.subscriberPresence = {};
       }
+      if (!nextState.subscriberStats || typeof nextState.subscriberStats !== 'object' || Array.isArray(nextState.subscriberStats)) {
+        nextState.subscriberStats = {};
+      }
       for (const subscriberUserId of filteredSubscriberUserIds) {
         const previous = nextState.subscriberFriendshipStatus[subscriberUserId];
         nextState.subscriberFriendshipStatus[subscriberUserId] = {
@@ -668,6 +735,7 @@ async function runRobloxMonitorTick(client, guildId) {
           requiredRootPlaceId: getRequiredRootPlaceId(nextState),
           error: error?.message ?? error
         });
+        nextState.subscriberStats[subscriberUserId] = normalizeSubscriberAggregateStats(nextState.subscriberStats[subscriberUserId]);
       }
       nextState.lastKnownPresence = filteredSubscriberUserIds.length > 0
         ? (nextState.subscriberPresence[filteredSubscriberUserIds[0]] ?? null)

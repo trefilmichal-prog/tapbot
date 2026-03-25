@@ -71,7 +71,7 @@ function getDefaultPrivateMessageState() {
 
 function getDefaultRobloxMonitorState() {
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     monitoringSession: {
       sessionCookie: null,
       updatedAt: null
@@ -101,6 +101,7 @@ function getDefaultRobloxMonitorState() {
     subscriberOfflineReminderAt: {},
     subscriberUserIds: [],
     subscriberRobloxAccounts: {},
+    subscriberStats: {},
     subscriberFriendshipStatus: {},
     lastFriendRequestSweepAt: null,
     statsReport: {
@@ -418,6 +419,36 @@ function normalizeRobloxMonitorPresenceBySubscriber(entries) {
   return normalizedEntries;
 }
 
+function normalizeRobloxMonitorSubscriberStatsEntry(stats) {
+  const totalOnlineMinutes = Math.max(0, Number(stats?.totalOnlineMinutes) || 0);
+  const totalOfflineMinutes = Math.max(0, Number(stats?.totalOfflineMinutes) || 0);
+  const totalSampledMinutes = Math.max(0, Number(stats?.totalSampledMinutes) || 0);
+  const onlinePercentage = totalSampledMinutes > 0
+    ? (totalOnlineMinutes / totalSampledMinutes) * 100
+    : 0;
+  return {
+    totalOnlineMinutes,
+    totalOfflineMinutes,
+    totalSampledMinutes,
+    onlinePercentage
+  };
+}
+
+function normalizeRobloxMonitorSubscriberStats(entries) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
+    return {};
+  }
+
+  const normalizedEntries = {};
+  for (const [userId, stats] of Object.entries(entries)) {
+    if (!isValidDiscordSnowflake(userId)) {
+      continue;
+    }
+    normalizedEntries[userId.trim()] = normalizeRobloxMonitorSubscriberStatsEntry(stats);
+  }
+  return normalizedEntries;
+}
+
 function normalizeRobloxMonitorSubscriberReminderTimestamps(entries) {
   if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
     return {};
@@ -602,6 +633,7 @@ function normalizeRobloxMonitorState(state) {
 
   const normalizedSubscriberUserIds = normalizeRobloxMonitorSubscriberUserIds(parsed.subscriberUserIds);
   const normalizedSubscriberRobloxAccounts = normalizeRobloxMonitorSubscriberAccounts(parsed.subscriberRobloxAccounts);
+  const normalizedSubscriberStats = normalizeRobloxMonitorSubscriberStats(parsed.subscriberStats);
   const migratedGlobalTargetUsername = typeof parsed.targetUsername === 'string' && parsed.targetUsername.trim()
     ? parsed.targetUsername.trim()
     : (typeof parsedMonitorSource.target_override === 'string' && parsedMonitorSource.target_override.trim()
@@ -629,7 +661,7 @@ function normalizeRobloxMonitorState(state) {
   }
 
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     monitoringSession: {
       sessionCookie,
       updatedAt: monitoringSessionUpdatedAt
@@ -659,6 +691,7 @@ function normalizeRobloxMonitorState(state) {
     subscriberOfflineReminderAt: normalizeRobloxMonitorSubscriberReminderTimestamps(parsed.subscriberOfflineReminderAt),
     subscriberUserIds: normalizedSubscriberUserIds,
     subscriberRobloxAccounts: normalizedSubscriberRobloxAccounts,
+    subscriberStats: normalizedSubscriberStats,
     subscriberFriendshipStatus: normalizeRobloxMonitorFriendshipStatuses(parsed.subscriberFriendshipStatus),
     lastFriendRequestSweepAt,
     statsReport: {
