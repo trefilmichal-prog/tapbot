@@ -15,6 +15,7 @@ import {
   updateRobloxMonitorState
 } from '../src/persistence.js';
 import {
+  buildRobloxMonitorStatsReportComponents,
   robloxMonitorInternals,
   startRobloxMonitorScheduler,
   stopRobloxMonitorScheduler
@@ -789,4 +790,44 @@ test('clan monitor removes subscriber record when ticket nickname can no longer 
     global.fetch = originalFetch;
     await fs.rm(guildDir, { recursive: true, force: true });
   }
+});
+
+test('stats report renders subscribers sorted by online percentage desc with tie-breakers', () => {
+  const state = {
+    targetGame: { name: 'Raid Game' },
+    subscriberRobloxAccounts: {
+      userA: { robloxUsername: 'Zulu' },
+      userB: { robloxUsername: 'Alpha' },
+      userC: { robloxUsername: 'Charlie' }
+    }
+  };
+  const subscriberUserIds = ['userA', 'userB', 'userC'];
+  const subscriberStatsBySubscriber = {
+    userA: { totalOnlineMinutes: 30, totalOfflineMinutes: 30, totalSampledMinutes: 60 }, // 50%
+    userB: { totalOnlineMinutes: 50, totalOfflineMinutes: 50, totalSampledMinutes: 100 }, // 50%
+    userC: { totalOnlineMinutes: 70, totalOfflineMinutes: 30, totalSampledMinutes: 100 } // 70%
+  };
+
+  const components = buildRobloxMonitorStatsReportComponents({
+    guild: { id: 'guild-1', name: 'Guild One' },
+    state,
+    subscriberUserIds,
+    subscriberStatsBySubscriber,
+    subscriberFriendshipStatusBySubscriber: {},
+    presenceBySubscriber: {},
+    monitoringAccountLabel: 'MonitorAccount',
+    requiredRootPlaceId: 123,
+    checkedAt: '2026-03-25T00:00:00.000Z'
+  });
+
+  const reportText = components[0].components[2].content;
+  const charlieIndex = reportText.indexOf('• Charlie');
+  const alphaIndex = reportText.indexOf('• Alpha');
+  const zuluIndex = reportText.indexOf('• Zulu');
+
+  assert.ok(charlieIndex >= 0, 'Charlie line should be present');
+  assert.ok(alphaIndex >= 0, 'Alpha line should be present');
+  assert.ok(zuluIndex >= 0, 'Zulu line should be present');
+  assert.ok(charlieIndex < alphaIndex, 'Higher online percentage should render first');
+  assert.ok(alphaIndex < zuluIndex, 'Tie should use total online minutes desc');
 });
