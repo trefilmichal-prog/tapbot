@@ -286,6 +286,12 @@ export function buildRobloxMonitorStatsReportComponents({
   const gameLabel = resolveMonitoredGameLabel(state, requiredRootPlaceId);
   const guildContext = guild?.name ? `${guild.name} (${guild.id})` : String(guild?.id ?? 'Unknown guild');
   const sortedSubscriberUserIds = subscriberUserIds.slice().sort((a, b) => {
+    const aIsFriend = subscriberFriendshipStatusBySubscriber?.[a]?.isFriend === true;
+    const bIsFriend = subscriberFriendshipStatusBySubscriber?.[b]?.isFriend === true;
+    if (aIsFriend !== bIsFriend) {
+      return aIsFriend ? -1 : 1;
+    }
+
     const aStats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[a]);
     const bStats = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[b]);
     const byOnlinePercentageDesc = bStats.onlinePercentage - aStats.onlinePercentage;
