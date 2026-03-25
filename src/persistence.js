@@ -71,7 +71,7 @@ function getDefaultPrivateMessageState() {
 
 function getDefaultRobloxMonitorState() {
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     monitoringSession: {
       sessionCookie: null,
       updatedAt: null
@@ -102,6 +102,7 @@ function getDefaultRobloxMonitorState() {
     subscriberOfflineReminderAt: {},
     subscriberUserIds: [],
     subscriberRobloxAccounts: {},
+    usernameResolutionCache: {},
     subscriberStats: {},
     subscriberFriendshipStatus: {},
     lastFriendRequestSweepAt: null,
@@ -403,6 +404,48 @@ function normalizeRobloxMonitorSubscriberAccounts(entries) {
   return normalizedEntries;
 }
 
+function normalizeRobloxMonitorUsernameResolutionCache(entries) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
+    return {};
+  }
+
+  const normalizedEntries = {};
+  for (const [cacheKey, entry] of Object.entries(entries)) {
+    const normalizedUsername = typeof entry?.normalizedUsername === 'string'
+      ? entry.normalizedUsername.trim().toLowerCase()
+      : (typeof cacheKey === 'string' ? cacheKey.trim().toLowerCase() : '');
+    if (!normalizedUsername || normalizedUsername.length > 32) {
+      continue;
+    }
+
+    const userId = Number.isInteger(entry?.userId) && entry.userId > 0
+      ? entry.userId
+      : null;
+    if (!userId) {
+      continue;
+    }
+
+    const canonicalUsername = typeof entry?.username === 'string' && entry.username.trim()
+      ? entry.username.trim()
+      : null;
+    const resolvedAt = typeof entry?.resolvedAt === 'string' && Number.isFinite(new Date(entry.resolvedAt).getTime())
+      ? entry.resolvedAt
+      : null;
+    if (!resolvedAt) {
+      continue;
+    }
+
+    normalizedEntries[normalizedUsername] = {
+      normalizedUsername,
+      userId,
+      username: canonicalUsername ?? normalizedUsername,
+      resolvedAt
+    };
+  }
+
+  return normalizedEntries;
+}
+
 function normalizeRobloxMonitorPresenceBySubscriber(entries) {
   if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
     return {};
@@ -674,7 +717,7 @@ function normalizeRobloxMonitorState(state) {
   }
 
   return {
-    schemaVersion: 6,
+    schemaVersion: 7,
     monitoringSession: {
       sessionCookie,
       updatedAt: monitoringSessionUpdatedAt
@@ -705,6 +748,7 @@ function normalizeRobloxMonitorState(state) {
     subscriberOfflineReminderAt: normalizeRobloxMonitorSubscriberReminderTimestamps(parsed.subscriberOfflineReminderAt),
     subscriberUserIds: normalizedSubscriberUserIds,
     subscriberRobloxAccounts: normalizedSubscriberRobloxAccounts,
+    usernameResolutionCache: normalizeRobloxMonitorUsernameResolutionCache(parsed.usernameResolutionCache),
     subscriberStats: normalizedSubscriberStats,
     subscriberFriendshipStatus: normalizeRobloxMonitorFriendshipStatuses(parsed.subscriberFriendshipStatus),
     lastFriendRequestSweepAt,

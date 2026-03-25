@@ -567,3 +567,105 @@ test('monitor tick fetches friends list once per tick even with multiple subscri
     await fs.rm(guildDir, { recursive: true, force: true });
   }
 });
+
+test('monitor username resolution cache avoids second usernames resolve call within TTL', async () => {
+  const guildId = `test-guild-username-cache-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const guildDir = path.join(process.cwd(), 'data', 'guilds', guildId);
+  const subscriberUserId = '333333333333333333';
+  const originalFetch = global.fetch;
+  let usernamesResolveCalls = 0;
+
+  global.fetch = async (url, options = {}) => {
+    const resolvedUrl = String(url);
+    const method = (options?.method ?? 'GET').toUpperCase();
+    const parsedBody = typeof options?.body === 'string' ? JSON.parse(options.body) : null;
+
+    if (resolvedUrl.includes('/v1/users/authenticated') && method === 'GET') {
+      return Response.json({ id: 999, name: 'MonitorAccount' });
+    }
+    if (resolvedUrl.includes('/v1/my/friends/requests') && method === 'GET') {
+      return Response.json({ data: [], nextPageCursor: null });
+    }
+    if (resolvedUrl.includes('/v1/users/999/friends') && method === 'GET') {
+      return Response.json({ data: [{ id: 123 }], nextPageCursor: null });
+    }
+    if (resolvedUrl.includes('/v1/usernames/users') && method === 'POST') {
+      usernamesResolveCalls += 1;
+      return Response.json({
+        data: [
+          {
+            requestedUsername: 'AlphaMember',
+            name: 'AlphaMember',
+            displayName: 'Alpha Member',
+            id: 123
+          }
+        ]
+      });
+    }
+    if (resolvedUrl.includes('/v1/presence/users') && method === 'POST') {
+      return Response.json({
+        userPresences: [
+          {
+            userId: Number(parsedBody?.userIds?.[0]),
+            userPresenceType: 2,
+            rootPlaceId: 74260430392611,
+            placeId: 74260430392611,
+            lastLocation: 'In game'
+          }
+        ]
+      });
+    }
+
+    throw new Error(`Unexpected fetch call in test: ${resolvedUrl}`);
+  };
+
+  try {
+    await updateRobloxMonitorState(guildId, (state) => {
+      state.monitoringSession = { sessionCookie: 'test-cookie' };
+      state.monitorSource = { source_type: 'target_override' };
+      state.subscriberUserIds = [subscriberUserId];
+      state.subscriberRobloxAccounts = {
+        [subscriberUserId]: {
+          robloxUsername: 'AlphaMember',
+          robloxUserId: null,
+          source: 'opt_in',
+          optedInAt: '2026-03-24T00:00:00.000Z'
+        }
+      };
+      state.usernameResolutionCache = {};
+      state.subscriberOfflineReminderAt = {};
+      state.subscriberPresence = {};
+      state.subscriberFriendshipStatus = {};
+      state.subscriberStats = {};
+    });
+
+    const fakeGuild = {
+      id: guildId,
+      name: 'Username resolution cache guild',
+      channels: {
+        cache: new Map(),
+        fetch: async () => null
+      },
+      members: {
+        fetch: async () => null
+      }
+    };
+    const fakeClient = {
+      guilds: {
+        cache: new Map([[guildId, fakeGuild]]),
+        fetch: async (requestedGuildId) => (requestedGuildId === guildId ? fakeGuild : null)
+      },
+      users: {
+        fetch: async () => ({ send: async () => {} })
+      }
+    };
+
+    await robloxMonitorInternals.runRobloxMonitorTick(fakeClient, guildId);
+    await robloxMonitorInternals.runRobloxMonitorTick(fakeClient, guildId);
+
+    assert.equal(usernamesResolveCalls, 1);
+  } finally {
+    global.fetch = originalFetch;
+    await fs.rm(guildDir, { recursive: true, force: true });
+  }
+});
