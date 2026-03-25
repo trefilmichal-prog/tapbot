@@ -6163,6 +6163,67 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
           return;
         }
+
+        if (subcommand === 'set_stats_room') {
+          const channel = interaction.options.getChannel('channel', true);
+          await updateRobloxMonitorState(interaction.guildId, (state) => {
+            if (!state.statsReport || typeof state.statsReport !== 'object' || Array.isArray(state.statsReport)) {
+              state.statsReport = {};
+            }
+            state.statsReport.channelId = channel.id;
+            state.statsReport.postIntervalMinutes = Math.max(1, Number(state.statsReport.postIntervalMinutes) || 30);
+            state.statsReport.enabled = true;
+            state.statsReport.updatedAt = new Date().toISOString();
+          });
+          await interaction.reply({
+            components: buildTextComponents(`Roblox monitor stats reports will be posted to <#${channel.id}>.`),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (subcommand === 'set_stats_interval') {
+          const requestedMinutes = interaction.options.getInteger('minutes', false);
+          const postIntervalMinutes = Math.max(1, requestedMinutes ?? 30);
+          await updateRobloxMonitorState(interaction.guildId, (state) => {
+            if (!state.statsReport || typeof state.statsReport !== 'object' || Array.isArray(state.statsReport)) {
+              state.statsReport = {};
+            }
+            state.statsReport.postIntervalMinutes = postIntervalMinutes;
+            state.statsReport.channelId = typeof state.statsReport.channelId === 'string' ? state.statsReport.channelId : null;
+            state.statsReport.enabled = Boolean(state.statsReport.channelId);
+            state.statsReport.updatedAt = new Date().toISOString();
+          });
+          await interaction.reply({
+            components: buildTextComponents(`Roblox monitor stats interval was set to **${postIntervalMinutes}** minute(s).`),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        if (subcommand === 'stats_status') {
+          const state = getRobloxMonitorState(interaction.guildId);
+          const statsReport = state?.statsReport && typeof state.statsReport === 'object' && !Array.isArray(state.statsReport)
+            ? state.statsReport
+            : null;
+          const channelId = typeof statsReport?.channelId === 'string' && statsReport.channelId ? statsReport.channelId : null;
+          const postIntervalMinutes = Math.max(1, Number(statsReport?.postIntervalMinutes) || 30);
+          const enabled = Boolean(statsReport?.enabled) && Boolean(channelId);
+          const updatedAt = typeof statsReport?.updatedAt === 'string' && statsReport.updatedAt
+            ? statsReport.updatedAt
+            : null;
+          const statusLines = [
+            `Enabled: **${enabled ? 'yes' : 'no'}**`,
+            `Channel: ${channelId ? `<#${channelId}>` : 'not configured'}`,
+            `Post interval: **${postIntervalMinutes}** minute(s)`,
+            `Last updated: ${updatedAt ? updatedAt : 'never'}`
+          ];
+          await interaction.reply({
+            components: buildTextComponents(statusLines.join('\n')),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
       }
 
       if ((interaction.commandName === 'roblox_alerts' || subcommandGroup === 'alerts') && (subcommand === 'opt_in' || subcommand === 'opt_out')) {
