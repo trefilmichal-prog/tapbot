@@ -19,6 +19,37 @@ const PRESENCE_URL = 'https://presence.roblox.com/v1/presence/users';
 
 const schedulerStateByGuild = new Map();
 
+export const ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE = Object.freeze({
+  CLAN_AUTO: 'clan_auto',
+  OPT_IN: 'opt_in',
+  LEGACY_MANUAL_OPT_IN_NICK: 'manual_opt_in_nick',
+  LEGACY_TICKET_ACCOUNT: 'ticket_account',
+  LEGACY_GUILD_NICKNAME: 'guild_nickname'
+});
+
+const LEGACY_OPT_IN_SOURCES = new Set([
+  ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.LEGACY_MANUAL_OPT_IN_NICK,
+  ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.LEGACY_TICKET_ACCOUNT,
+  ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.LEGACY_GUILD_NICKNAME
+]);
+
+function isOptInPreferredSubscriberSource(source) {
+  if (source === ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.OPT_IN) {
+    return true;
+  }
+  return LEGACY_OPT_IN_SOURCES.has(source);
+}
+
+function resolveSubscriberAccountSourceForTick({ existingSource, sourceClanName }) {
+  if (!sourceClanName) {
+    return existingSource ?? ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.LEGACY_TICKET_ACCOUNT;
+  }
+  if (isOptInPreferredSubscriberSource(existingSource)) {
+    return existingSource;
+  }
+  return ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.CLAN_AUTO;
+}
+
 function normalizeUsername(username) {
   return typeof username === 'string' ? username.trim().toLowerCase() : '';
 }
@@ -819,7 +850,10 @@ async function runRobloxMonitorTick(client, guildId) {
         subscriberAccountMap[subscriberUserId] = {
           robloxUsername: targetUsername,
           robloxUserId: targetUserId,
-          source: resolutionSource === 'guild_nickname' ? 'guild_nickname' : 'ticket_account',
+          source: resolveSubscriberAccountSourceForTick({
+            existingSource: subscriberAccount?.source,
+            sourceClanName
+          }),
           optedInAt: subscriberAccount?.optedInAt ?? checkedAt
         };
       } catch (error) {
