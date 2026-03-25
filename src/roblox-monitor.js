@@ -447,6 +447,25 @@ class RobloxSessionClient {
   constructor(sessionCookie) {
     this.cookieHeader = createRobloxCookieHeader(sessionCookie);
     this.csrfToken = null;
+    this.rateLimitedUntil = 0;
+  }
+
+  static parseRetryAfterMs(retryAfterRaw) {
+    if (typeof retryAfterRaw !== 'string' || !retryAfterRaw.trim()) {
+      return null;
+    }
+
+    const numericValue = Number.parseFloat(retryAfterRaw);
+    if (Number.isFinite(numericValue) && numericValue >= 0) {
+      return Math.max(0, Math.floor(numericValue * 1000));
+    }
+
+    const parsedDate = Date.parse(retryAfterRaw);
+    if (Number.isNaN(parsedDate)) {
+      return null;
+    }
+
+    return Math.max(0, parsedDate - Date.now());
   }
 
   async request(
@@ -463,6 +482,10 @@ class RobloxSessionClient {
   ) {
     if (!this.cookieHeader) {
       throw new Error('Roblox session cookie is not configured.');
+    }
+
+    if (this.rateLimitedUntil > Date.now()) {
+      await new Promise((resolve) => setTimeout(resolve, this.rateLimitedUntil - Date.now()));
     }
 
     const resolvedHeaders = {
@@ -498,15 +521,16 @@ class RobloxSessionClient {
       }
 
       const retryAfterRaw = response.headers.get('retry-after');
-      const retryAfterSeconds = Number.parseFloat(retryAfterRaw);
-      const hasRetryAfter = Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0;
+      const retryAfterMs = RobloxSessionClient.parseRetryAfterMs(retryAfterRaw);
+      const hasRetryAfter = Number.isFinite(retryAfterMs) && retryAfterMs >= 0;
       const baseDelayMs = 500;
       const maxDelayMs = 10_000;
       const exponentialDelayMs = Math.min(baseDelayMs * (2 ** attempt), maxDelayMs);
       const jitteredDelayMs = Math.floor((exponentialDelayMs / 2) + (Math.random() * (exponentialDelayMs / 2)));
       const retryDelayMs = hasRetryAfter
-        ? Math.max(0, Math.floor(retryAfterSeconds * 1000))
+        ? retryAfterMs
         : jitteredDelayMs;
+      this.rateLimitedUntil = Math.max(this.rateLimitedUntil, Date.now() + retryDelayMs);
 
       console.warn('Roblox API rate-limit encountered; retrying request', {
         guildId: retryContext?.guildId ?? null,
