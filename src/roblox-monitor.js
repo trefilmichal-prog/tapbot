@@ -50,6 +50,16 @@ function resolveSubscriberAccountSourceForTick({ existingSource, sourceClanName 
   return ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.CLAN_AUTO;
 }
 
+function shouldRetainSubscriberRecord(userId, account, mode, approvedSet) {
+  if (mode !== 'clan') {
+    return false;
+  }
+  if (approvedSet.has(userId)) {
+    return true;
+  }
+  return account?.source === ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.OPT_IN;
+}
+
 function normalizeUsername(username) {
   return typeof username === 'string' ? username.trim().toLowerCase() : '';
 }
@@ -575,6 +585,8 @@ async function runRobloxMonitorTick(client, guildId) {
   const sourceClanName = typeof monitorSource.clan_name === 'string' && monitorSource.clan_name.trim()
     ? monitorSource.clan_name.trim()
     : null;
+  const monitorMode = sourceClanName ? 'clan' : 'non_clan';
+  const approvedSubscriberUserIdSet = new Set(approvedUsers.discordUserIds);
   const sourceChannelId = typeof monitorSource.channel_id === 'string' && monitorSource.channel_id.trim()
     ? monitorSource.channel_id.trim()
     : null;
@@ -609,27 +621,62 @@ async function runRobloxMonitorTick(client, guildId) {
         nextState.subscriberStats = {};
       }
       for (const userId of Object.keys(nextState.subscriberRobloxAccounts)) {
-        if (!effectiveMonitoredUserIdSet.has(userId)) {
+        const subscriberAccount = nextState.subscriberRobloxAccounts[userId] ?? null;
+        const shouldRetainRecord = shouldRetainSubscriberRecord(
+          userId,
+          subscriberAccount,
+          monitorMode,
+          approvedSubscriberUserIdSet
+        );
+        if (!effectiveMonitoredUserIdSet.has(userId) && !shouldRetainRecord) {
           delete nextState.subscriberRobloxAccounts[userId];
         }
       }
       for (const userId of Object.keys(nextState.subscriberFriendshipStatus)) {
-        if (!effectiveMonitoredUserIdSet.has(userId)) {
+        const subscriberAccount = nextState.subscriberRobloxAccounts[userId] ?? null;
+        const shouldRetainRecord = shouldRetainSubscriberRecord(
+          userId,
+          subscriberAccount,
+          monitorMode,
+          approvedSubscriberUserIdSet
+        );
+        if (!effectiveMonitoredUserIdSet.has(userId) && !shouldRetainRecord) {
           delete nextState.subscriberFriendshipStatus[userId];
         }
       }
       for (const userId of Object.keys(nextState.subscriberPresence)) {
-        if (!effectiveMonitoredUserIdSet.has(userId)) {
+        const subscriberAccount = nextState.subscriberRobloxAccounts[userId] ?? null;
+        const shouldRetainRecord = shouldRetainSubscriberRecord(
+          userId,
+          subscriberAccount,
+          monitorMode,
+          approvedSubscriberUserIdSet
+        );
+        if (!effectiveMonitoredUserIdSet.has(userId) && !shouldRetainRecord) {
           delete nextState.subscriberPresence[userId];
         }
       }
       for (const userId of Object.keys(nextState.subscriberOfflineReminderAt)) {
-        if (!effectiveMonitoredUserIdSet.has(userId)) {
+        const subscriberAccount = nextState.subscriberRobloxAccounts[userId] ?? null;
+        const shouldRetainRecord = shouldRetainSubscriberRecord(
+          userId,
+          subscriberAccount,
+          monitorMode,
+          approvedSubscriberUserIdSet
+        );
+        if (!effectiveMonitoredUserIdSet.has(userId) && !shouldRetainRecord) {
           delete nextState.subscriberOfflineReminderAt[userId];
         }
       }
       for (const userId of Object.keys(nextState.subscriberStats)) {
-        if (!effectiveMonitoredUserIdSet.has(userId)) {
+        const subscriberAccount = nextState.subscriberRobloxAccounts[userId] ?? null;
+        const shouldRetainRecord = shouldRetainSubscriberRecord(
+          userId,
+          subscriberAccount,
+          monitorMode,
+          approvedSubscriberUserIdSet
+        );
+        if (!effectiveMonitoredUserIdSet.has(userId) && !shouldRetainRecord) {
           delete nextState.subscriberStats[userId];
         } else {
           nextState.subscriberStats[userId] = normalizeSubscriberAggregateStats(nextState.subscriberStats[userId]);
@@ -711,8 +758,16 @@ async function runRobloxMonitorTick(client, guildId) {
     }
 
     const checkedAt = new Date().toISOString();
-    const friendshipStatusBySubscriber = {};
-    const presenceBySubscriber = {};
+    const friendshipStatusBySubscriber = state?.subscriberFriendshipStatus
+      && typeof state.subscriberFriendshipStatus === 'object'
+      && !Array.isArray(state.subscriberFriendshipStatus)
+      ? { ...state.subscriberFriendshipStatus }
+      : {};
+    const presenceBySubscriber = state?.subscriberPresence
+      && typeof state.subscriberPresence === 'object'
+      && !Array.isArray(state.subscriberPresence)
+      ? { ...state.subscriberPresence }
+      : {};
     const reminderTimestampBySubscriber = state?.subscriberOfflineReminderAt && typeof state.subscriberOfflineReminderAt === 'object' && !Array.isArray(state.subscriberOfflineReminderAt)
       ? { ...state.subscriberOfflineReminderAt }
       : {};
@@ -726,8 +781,16 @@ async function runRobloxMonitorTick(client, guildId) {
       ? state.subscriberStats
       : {};
     const subscriberStatsBySubscriber = {};
+    for (const userId of Object.keys(previousSubscriberStats)) {
+      subscriberStatsBySubscriber[userId] = normalizeSubscriberAggregateStats(previousSubscriberStats[userId]);
+    }
+    for (const userId of Object.keys(subscriberAccountMap)) {
+      if (!subscriberStatsBySubscriber[userId]) {
+        subscriberStatsBySubscriber[userId] = normalizeSubscriberAggregateStats(null);
+      }
+    }
     for (const subscriberUserId of effectiveMonitoredUserIds) {
-      subscriberStatsBySubscriber[subscriberUserId] = normalizeSubscriberAggregateStats(previousSubscriberStats[subscriberUserId]);
+      subscriberStatsBySubscriber[subscriberUserId] = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[subscriberUserId]);
     }
     const resolvedUsernameCache = new Map();
 
@@ -878,6 +941,41 @@ async function runRobloxMonitorTick(client, guildId) {
         } catch (nestedError) {
           console.warn(`Failed to capture Roblox monitor subscriber error state for ${subscriberUserId}:`, nestedError);
         }
+      }
+    }
+
+    const shouldKeepUserRecord = (userId) => shouldRetainSubscriberRecord(
+      userId,
+      subscriberAccountMap[userId] ?? null,
+      monitorMode,
+      approvedSubscriberUserIdSet
+    );
+
+    for (const userId of Object.keys(subscriberAccountMap)) {
+      if (!effectiveMonitoredUserIdSet.has(userId) && !shouldKeepUserRecord(userId)) {
+        delete subscriberAccountMap[userId];
+      }
+    }
+    for (const userId of Object.keys(friendshipStatusBySubscriber)) {
+      if (!effectiveMonitoredUserIdSet.has(userId) && !shouldKeepUserRecord(userId)) {
+        delete friendshipStatusBySubscriber[userId];
+      }
+    }
+    for (const userId of Object.keys(presenceBySubscriber)) {
+      if (!effectiveMonitoredUserIdSet.has(userId) && !shouldKeepUserRecord(userId)) {
+        delete presenceBySubscriber[userId];
+      }
+    }
+    for (const userId of Object.keys(reminderTimestampBySubscriber)) {
+      if (!effectiveMonitoredUserIdSet.has(userId) && !shouldKeepUserRecord(userId)) {
+        delete reminderTimestampBySubscriber[userId];
+      }
+    }
+    for (const userId of Object.keys(subscriberStatsBySubscriber)) {
+      if (!effectiveMonitoredUserIdSet.has(userId) && !shouldKeepUserRecord(userId)) {
+        delete subscriberStatsBySubscriber[userId];
+      } else {
+        subscriberStatsBySubscriber[userId] = normalizeSubscriberAggregateStats(subscriberStatsBySubscriber[userId]);
       }
     }
 
