@@ -746,6 +746,39 @@ export const defaultCommands = [
                 required: true
               }
             ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'set_stats_room',
+            description: 'Set the text channel used for Roblox monitor stats reports',
+            options: [
+              {
+                type: ApplicationCommandOptionType.Channel,
+                name: 'channel',
+                description: 'Text channel where Roblox monitor stats reports are posted',
+                required: true,
+                channel_types: [ChannelType.GuildText]
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'set_stats_interval',
+            description: 'Set Roblox monitor stats report interval in minutes (default: 30)',
+            options: [
+              {
+                type: ApplicationCommandOptionType.Integer,
+                name: 'minutes',
+                description: 'Stats reporting interval in minutes (defaults to 30)',
+                required: false,
+                min_value: 1
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
+            name: 'stats_status',
+            description: 'Show Roblox monitor stats reporting configuration'
           }
         ]
       },

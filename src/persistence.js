@@ -102,7 +102,13 @@ function getDefaultRobloxMonitorState() {
     subscriberUserIds: [],
     subscriberRobloxAccounts: {},
     subscriberFriendshipStatus: {},
-    lastFriendRequestSweepAt: null
+    lastFriendRequestSweepAt: null,
+    statsReport: {
+      channelId: null,
+      postIntervalMinutes: 30,
+      enabled: false,
+      updatedAt: null
+    }
   };
 }
 
@@ -581,6 +587,18 @@ function normalizeRobloxMonitorState(state) {
   const monitorSourceGameId = Number.isInteger(parsedMonitorSource.game_id) && parsedMonitorSource.game_id > 0
     ? parsedMonitorSource.game_id
     : requiredRootPlaceId;
+  const parsedStatsReport = parsed.statsReport && typeof parsed.statsReport === 'object' && !Array.isArray(parsed.statsReport)
+    ? parsed.statsReport
+    : {};
+  const statsReportChannelId = typeof parsedStatsReport.channelId === 'string' && parsedStatsReport.channelId.trim()
+    ? parsedStatsReport.channelId.trim()
+    : null;
+  const statsReportPostIntervalMinutes = Math.max(1, Number(parsedStatsReport.postIntervalMinutes) || 30);
+  const statsReportEnabled = Boolean(statsReportChannelId) && Boolean(parsedStatsReport.enabled);
+  const statsReportUpdatedAt = typeof parsedStatsReport.updatedAt === 'string'
+    && Number.isFinite(new Date(parsedStatsReport.updatedAt).getTime())
+    ? parsedStatsReport.updatedAt
+    : null;
 
   const normalizedSubscriberUserIds = normalizeRobloxMonitorSubscriberUserIds(parsed.subscriberUserIds);
   const normalizedSubscriberRobloxAccounts = normalizeRobloxMonitorSubscriberAccounts(parsed.subscriberRobloxAccounts);
@@ -642,7 +660,13 @@ function normalizeRobloxMonitorState(state) {
     subscriberUserIds: normalizedSubscriberUserIds,
     subscriberRobloxAccounts: normalizedSubscriberRobloxAccounts,
     subscriberFriendshipStatus: normalizeRobloxMonitorFriendshipStatuses(parsed.subscriberFriendshipStatus),
-    lastFriendRequestSweepAt
+    lastFriendRequestSweepAt,
+    statsReport: {
+      channelId: statsReportChannelId,
+      postIntervalMinutes: statsReportPostIntervalMinutes,
+      enabled: statsReportEnabled,
+      updatedAt: statsReportUpdatedAt
+    }
   };
 }
 
