@@ -62,6 +62,9 @@ function shouldRetainSubscriberRecord(userId, account, mode, approvedSet) {
   if (approvedSet.has(userId)) {
     return true;
   }
+  if (account?.source === ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.CLAN_AUTO) {
+    return approvedSet.has(userId);
+  }
   return account?.source === ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.OPT_IN;
 }
 
@@ -836,7 +839,7 @@ async function runRobloxMonitorTick(client, guildId) {
           isFriend: false,
           lastCheckedAt: checkedAt,
           lastAutoAcceptedAt: null,
-          note: 'Periodic check skipped: subscriber has no stored Roblox account (manual opt-in or clan_auto from approved ticket nickname required).'
+          note: 'Periodic check skipped: subscriber has no stored Roblox account (manual opt-in or clan_auto from ticket nickname required).'
         };
         presenceBySubscriber[subscriberUserId] = buildPresenceSnapshot({
           previousPresence: previousPresenceBySubscriber[subscriberUserId] ?? null,
