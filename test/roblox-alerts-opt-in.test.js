@@ -15,6 +15,7 @@ import {
   updateRobloxMonitorState
 } from '../src/persistence.js';
 import {
+  robloxMonitorInternals,
   startRobloxMonitorScheduler,
   stopRobloxMonitorScheduler
 } from '../src/roblox-monitor.js';
@@ -103,6 +104,69 @@ test('opt_in target resolution uses fallback chain when nick is whitespace', () 
   });
   assert.equal(fallbackResolution.resolvedRobloxUsername, 'GuildNick');
   assert.equal(fallbackResolution.source, 'guild_nickname');
+});
+
+test('RobloxSessionClient request retries 429 responses and eventually succeeds', async () => {
+  const originalFetch = global.fetch;
+  const originalWarn = console.warn;
+  const calls = [];
+  const warnings = [];
+
+  global.fetch = async (url) => {
+    calls.push(String(url));
+    if (calls.length < 3) {
+      return new Response(JSON.stringify({ errors: [{ message: 'Rate limited' }] }), {
+        status: 429,
+        headers: {
+          'content-type': 'application/json',
+          'retry-after': '0'
+        }
+      });
+    }
+    return Response.json({ ok: true });
+  };
+  console.warn = (...args) => warnings.push(args);
+
+  try {
+    const client = new robloxMonitorInternals.RobloxSessionClient('cookie');
+    const response = await client.request('https://users.roblox.com/v1/users/authenticated');
+    assert.deepEqual(response, { ok: true });
+    assert.equal(calls.length, 3);
+    assert.equal(warnings.length, 2);
+  } finally {
+    global.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+});
+
+test('RobloxSessionClient request throws rate-limit exhaustion after max retries', async () => {
+  const originalFetch = global.fetch;
+  let fetchCalls = 0;
+
+  global.fetch = async () => {
+    fetchCalls += 1;
+    return new Response(JSON.stringify({ errors: [{ message: 'Rate limited' }] }), {
+      status: 429,
+      headers: {
+        'content-type': 'application/json',
+        'retry-after': '0'
+      }
+    });
+  };
+
+  try {
+    const client = new robloxMonitorInternals.RobloxSessionClient('cookie');
+    await assert.rejects(
+      client.request('https://users.roblox.com/v1/users/authenticated', { maxRetries: 2 }),
+      (error) => {
+        assert.match(String(error?.message), /rate-limit exhaustion/i);
+        return true;
+      }
+    );
+    assert.equal(fetchCalls, 3);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test('subscriber roblox account source and target persist across module reload (restart simulation)', async () => {

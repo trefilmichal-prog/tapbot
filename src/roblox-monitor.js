@@ -353,7 +353,18 @@ class RobloxSessionClient {
     this.csrfToken = null;
   }
 
-  async request(url, { method = 'GET', body = null, headers = {}, retryOnCsrf = true } = {}) {
+  async request(
+    url,
+    {
+      method = 'GET',
+      body = null,
+      headers = {},
+      retryOnCsrf = true,
+      attempt = 0,
+      maxRetries = 5,
+      retryContext = {}
+    } = {}
+  ) {
     if (!this.cookieHeader) {
       throw new Error('Roblox session cookie is not configured.');
     }
@@ -385,8 +396,56 @@ class RobloxSessionClient {
       this.csrfToken = csrfToken;
     }
 
+    if (response.status === 429) {
+      if (attempt >= maxRetries) {
+        throw new Error(`Roblox API rate-limit exhaustion after ${attempt + 1} attempts (${method} ${url}).`);
+      }
+
+      const retryAfterRaw = response.headers.get('retry-after');
+      const retryAfterSeconds = Number.parseFloat(retryAfterRaw);
+      const hasRetryAfter = Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0;
+      const baseDelayMs = 500;
+      const maxDelayMs = 10_000;
+      const exponentialDelayMs = Math.min(baseDelayMs * (2 ** attempt), maxDelayMs);
+      const jitteredDelayMs = Math.floor((exponentialDelayMs / 2) + (Math.random() * (exponentialDelayMs / 2)));
+      const retryDelayMs = hasRetryAfter
+        ? Math.max(0, Math.floor(retryAfterSeconds * 1000))
+        : jitteredDelayMs;
+
+      console.warn('Roblox API rate-limit encountered; retrying request', {
+        guildId: retryContext?.guildId ?? null,
+        userId: retryContext?.userId ?? null,
+        url,
+        method,
+        status: response.status,
+        attempt,
+        maxRetries,
+        retryAfterHeader: retryAfterRaw,
+        retryDelayMs
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      return this.request(url, {
+        method,
+        body,
+        headers,
+        retryOnCsrf,
+        attempt: attempt + 1,
+        maxRetries,
+        retryContext
+      });
+    }
+
     if (response.status === 403 && retryOnCsrf && csrfToken && method !== 'GET' && method !== 'HEAD') {
-      return this.request(url, { method, body, headers, retryOnCsrf: false });
+      return this.request(url, {
+        method,
+        body,
+        headers,
+        retryOnCsrf: false,
+        attempt,
+        maxRetries,
+        retryContext
+      });
     }
 
     const contentType = response.headers.get('content-type') || '';
