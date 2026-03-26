@@ -413,6 +413,118 @@ test('without monitorSource.clan_name the monitor keeps explicit opt-in subscrib
   await fs.rm(guildDir, { recursive: true, force: true });
 });
 
+test('set_clan does not mutate persisted explicit opt-in subscriber list', async () => {
+  const guildId = `test-guild-clan-explicit-preserve-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const guildDir = path.join(process.cwd(), 'data', 'guilds', guildId);
+  const explicitSubscriberIds = ['111111111111111111', '222222222222222222'];
+  const selectedClanName = 'Raiders';
+
+  await updateRobloxMonitorState(guildId, (state) => {
+    state.monitorSource = {
+      ...state.monitorSource,
+      clan_name: null
+    };
+    state.explicitSubscriberUserIds = [...explicitSubscriberIds];
+    state.subscriberUserIds = [...explicitSubscriberIds];
+  });
+
+  await updateClanState(guildId, (state) => {
+    state.clan_ticket_decisions = {
+      acceptedClanMemberA: {
+        status: 'accept',
+        applicantId: '333333333333333333',
+        clanName: selectedClanName,
+        answers: { robloxNick: 'ClanAlpha' }
+      },
+      acceptedClanMemberB: {
+        status: 'accept',
+        applicantId: '444444444444444444',
+        clanName: selectedClanName,
+        answers: { robloxNick: 'ClanBravo' }
+      }
+    };
+  });
+
+  await updateRobloxMonitorState(guildId, (state) => {
+    state.monitorSource = {
+      ...state.monitorSource,
+      clan_name: selectedClanName
+    };
+  });
+
+  const fakeClient = {
+    guilds: {
+      cache: new Map([[guildId, { id: guildId, name: 'Clan explicit preserve guild' }]]),
+      fetch: async () => null
+    }
+  };
+
+  try {
+    await robloxMonitorInternals.runRobloxMonitorTick(fakeClient, guildId);
+
+    const updatedState = getRobloxMonitorState(guildId);
+    assert.deepEqual(updatedState.lastEffectiveMonitoredUserIds, ['333333333333333333', '444444444444444444']);
+    assert.deepEqual(updatedState.explicitSubscriberUserIds, explicitSubscriberIds);
+  } finally {
+    await fs.rm(guildDir, { recursive: true, force: true });
+  }
+});
+
+test('removing clan filter restores effective monitoring from explicit opt-ins without loss', async () => {
+  const guildId = `test-guild-clan-explicit-restore-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const guildDir = path.join(process.cwd(), 'data', 'guilds', guildId);
+  const explicitSubscriberIds = ['555555555555555555', '666666666666666666'];
+  const selectedClanName = 'Raiders';
+
+  await updateRobloxMonitorState(guildId, (state) => {
+    state.monitorSource = {
+      ...state.monitorSource,
+      clan_name: selectedClanName
+    };
+    state.explicitSubscriberUserIds = [...explicitSubscriberIds];
+    state.subscriberUserIds = [...explicitSubscriberIds];
+  });
+
+  await updateClanState(guildId, (state) => {
+    state.clan_ticket_decisions = {
+      acceptedClanMemberA: {
+        status: 'accept',
+        applicantId: '777777777777777777',
+        clanName: selectedClanName,
+        answers: { robloxNick: 'ClanCharlie' }
+      }
+    };
+  });
+
+  const fakeClient = {
+    guilds: {
+      cache: new Map([[guildId, { id: guildId, name: 'Clan explicit restore guild' }]]),
+      fetch: async () => null
+    }
+  };
+
+  try {
+    await robloxMonitorInternals.runRobloxMonitorTick(fakeClient, guildId);
+    let updatedState = getRobloxMonitorState(guildId);
+    assert.deepEqual(updatedState.lastEffectiveMonitoredUserIds, ['777777777777777777']);
+
+    await updateRobloxMonitorState(guildId, (state) => {
+      state.monitorSource = {
+        ...state.monitorSource,
+        clan_name: null
+      };
+    });
+
+    await robloxMonitorInternals.runRobloxMonitorTick(fakeClient, guildId);
+
+    updatedState = getRobloxMonitorState(guildId);
+    assert.deepEqual(updatedState.explicitSubscriberUserIds, explicitSubscriberIds);
+    assert.deepEqual(updatedState.lastEffectiveMonitoredUserIds, explicitSubscriberIds);
+  } finally {
+    await fs.rm(guildDir, { recursive: true, force: true });
+  }
+});
+
 test('clan auto subscriber without explicit opt-in does not receive DM fallback reminders', async () => {
   const guildId = `test-guild-clan-auto-no-dm-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
   const guildDir = path.join(process.cwd(), 'data', 'guilds', guildId);
@@ -658,6 +770,122 @@ test('monitor tick fetches friends list once per tick even with multiple subscri
     assert.equal(friendsCalls, 1);
   } finally {
     stopRobloxMonitorScheduler(guildId);
+    global.fetch = originalFetch;
+    await fs.rm(guildDir, { recursive: true, force: true });
+  }
+});
+
+test('monitor tick deduplicates presence API calls for duplicated accepted identity sources of one subscriber', async () => {
+  const guildId = `test-guild-presence-dedupe-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const guildDir = path.join(process.cwd(), 'data', 'guilds', guildId);
+  const subscriberUserId = '888888888888888888';
+  const selectedClanName = 'Raiders';
+  const originalFetch = global.fetch;
+  let presenceCalls = 0;
+
+  global.fetch = async (url, options = {}) => {
+    const resolvedUrl = String(url);
+    const method = (options?.method ?? 'GET').toUpperCase();
+    const parsedBody = typeof options?.body === 'string' ? JSON.parse(options.body) : null;
+
+    if (resolvedUrl.includes('/v1/users/authenticated') && method === 'GET') {
+      return Response.json({ id: 999, name: 'MonitorAccount' });
+    }
+    if (resolvedUrl.includes('/v1/my/friends/requests') && method === 'GET') {
+      return Response.json({ data: [], nextPageCursor: null });
+    }
+    if (resolvedUrl.includes('/v1/users/999/friends') && method === 'GET') {
+      return Response.json({ data: [{ id: 123 }], nextPageCursor: null });
+    }
+    if (resolvedUrl.includes('/v1/usernames/users') && method === 'POST') {
+      return Response.json({
+        data: [
+          {
+            requestedUsername: 'AlphaMember',
+            name: 'AlphaMember',
+            displayName: 'Alpha Member',
+            id: 123
+          }
+        ]
+      });
+    }
+    if (resolvedUrl.includes('/v1/presence/users') && method === 'POST') {
+      presenceCalls += 1;
+      return Response.json({
+        userPresences: [
+          {
+            userId: Number(parsedBody?.userIds?.[0]),
+            userPresenceType: 2,
+            rootPlaceId: 74260430392611,
+            placeId: 74260430392611,
+            lastLocation: 'In game'
+          }
+        ]
+      });
+    }
+
+    throw new Error(`Unexpected fetch call in test: ${resolvedUrl}`);
+  };
+
+  try {
+    await updateRobloxMonitorState(guildId, (state) => {
+      state.monitoringSession = { sessionCookie: 'test-cookie' };
+      state.monitorSource = {
+        source_type: 'target_override',
+        clan_name: selectedClanName,
+        channel_id: null
+      };
+      state.explicitSubscriberUserIds = [];
+      state.subscriberUserIds = [];
+      state.subscriberRobloxAccounts = {};
+      state.subscriberOfflineReminderAt = {};
+      state.subscriberPresence = {};
+      state.subscriberFriendshipStatus = {};
+      state.subscriberStats = {};
+    });
+
+    await updateClanState(guildId, (state) => {
+      state.clan_ticket_decisions = {
+        acceptedIdentityFromTicketA: {
+          status: 'accept',
+          applicantId: subscriberUserId,
+          clanName: selectedClanName,
+          answers: { robloxNick: 'AlphaMember' }
+        },
+        acceptedIdentityFromTicketB: {
+          status: 'accept',
+          applicantId: subscriberUserId,
+          clanName: selectedClanName,
+          answers: { robloxNick: 'AlphaMember' }
+        }
+      };
+    });
+
+    const fakeGuild = {
+      id: guildId,
+      name: 'Presence dedupe guild',
+      channels: {
+        cache: new Map(),
+        fetch: async () => null
+      },
+      members: {
+        fetch: async () => null
+      }
+    };
+    const fakeClient = {
+      guilds: {
+        cache: new Map([[guildId, fakeGuild]]),
+        fetch: async (requestedGuildId) => (requestedGuildId === guildId ? fakeGuild : null)
+      },
+      users: {
+        fetch: async () => ({ send: async () => {} })
+      }
+    };
+
+    await robloxMonitorInternals.runRobloxMonitorTick(fakeClient, guildId);
+
+    assert.ok(presenceCalls <= 1);
+  } finally {
     global.fetch = originalFetch;
     await fs.rm(guildDir, { recursive: true, force: true });
   }
