@@ -777,6 +777,19 @@ export const defaultCommands = [
           },
           {
             type: ApplicationCommandOptionType.Subcommand,
+            name: 'reset_hours',
+            description: 'Admin reset of subscriber stats/hour reminders for this guild monitor',
+            options: [
+              {
+                type: ApplicationCommandOptionType.Boolean,
+                name: 'confirm',
+                description: 'Must be true to confirm resetting subscriber stats/hour reminders',
+                required: true
+              }
+            ]
+          },
+          {
+            type: ApplicationCommandOptionType.Subcommand,
             name: 'set_stats_room',
             description: 'Set the text channel used for Roblox monitor stats reports',
             options: [
