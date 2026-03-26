@@ -687,6 +687,60 @@ export const defaultCommands = [
     ]
   },
   {
+    name: 'reaction_watch',
+    description: 'Track reactions on clan texts in a selected room',
+    options: [
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'set_room',
+        description: 'Enable reaction checks in a text channel',
+        options: [
+          {
+            type: ApplicationCommandOptionType.Channel,
+            name: 'channel',
+            description: 'Text channel where every new message starts a reaction timer',
+            required: true,
+            channel_types: [ChannelType.GuildText]
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'set_clan',
+        description: 'Select one clan from accepted tickets for reaction tracking',
+        options: [
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'clan_name',
+            description: 'Clan selected from accepted tickets. Choose All accepted clans to clear filter',
+            required: true,
+            autocomplete: true
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'disable',
+        description: 'Disable reaction checks for this guild'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'roster',
+        description: 'Show which clan members are currently tracked'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'status',
+        description: 'Show active tracked messages and remaining time'
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
+        name: 'check_now',
+        description: 'Run the reaction check immediately'
+      }
+    ]
+  },
+  {
     name: 'roblox_monitor',
     description: 'Manage Roblox monitor alerts',
     options: [

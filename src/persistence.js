@@ -23,6 +23,8 @@ const cachedPrivateMessageState = new Map();
 const privateMessageStateWriteQueues = new Map();
 const cachedRobloxMonitorState = new Map();
 const robloxMonitorStateWriteQueues = new Map();
+const cachedReactionMonitorState = new Map();
+const reactionMonitorStateWriteQueues = new Map();
 let legacyMigrationDone = false;
 
 function getDefaultClanState() {
@@ -118,6 +120,17 @@ function getDefaultRobloxMonitorState() {
   };
 }
 
+function getDefaultReactionMonitorState() {
+  return {
+    schemaVersion: 1,
+    enabled: false,
+    channelId: null,
+    selectedClanName: null,
+    timeoutHours: 10,
+    activeMessages: {}
+  };
+}
+
 function getLegacyRobloxMonitorStatePath() {
   return path.join(dataDir, 'roblox-monitor.json');
 }
@@ -199,6 +212,10 @@ function getGuildRobloxMonitorStatePath(guildId) {
   return path.join(getGuildDir(guildId), 'roblox-monitor.json');
 }
 
+function getGuildReactionMonitorStatePath(guildId) {
+  return path.join(getGuildDir(guildId), 'reaction-monitor.json');
+}
+
 function enqueueClanStateWrite(guildId, task) {
   const key = String(guildId);
   const queue = clanStateWriteQueues.get(key) ?? Promise.resolve();
@@ -236,6 +253,14 @@ function enqueueRobloxMonitorStateWrite(guildId, task) {
   const queue = robloxMonitorStateWriteQueues.get(key) ?? Promise.resolve();
   const nextQueue = queue.then(task, task);
   robloxMonitorStateWriteQueues.set(key, nextQueue);
+  return nextQueue;
+}
+
+function enqueueReactionMonitorStateWrite(guildId, task) {
+  const key = String(guildId);
+  const queue = reactionMonitorStateWriteQueues.get(key) ?? Promise.resolve();
+  const nextQueue = queue.then(task, task);
+  reactionMonitorStateWriteQueues.set(key, nextQueue);
   return nextQueue;
 }
 
@@ -1465,6 +1490,42 @@ function loadPrivateMessageState(guildId) {
   return entry;
 }
 
+function loadReactionMonitorState(guildId) {
+  const key = String(guildId);
+  if (cachedReactionMonitorState.has(key)) return cachedReactionMonitorState.get(key);
+
+  const statePath = getGuildReactionMonitorStatePath(key);
+  if (!fs.existsSync(statePath)) {
+    const fallback = getDefaultReactionMonitorState();
+    cachedReactionMonitorState.set(key, fallback);
+    return fallback;
+  }
+
+  const raw = fs.readFileSync(statePath, 'utf8');
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn(`Invalid reaction-monitor.json for guild ${key}, resetting:`, e);
+    const fallback = getDefaultReactionMonitorState();
+    cachedReactionMonitorState.set(key, fallback);
+    return fallback;
+  }
+
+  const fallback = getDefaultReactionMonitorState();
+  const entry = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? {
+        ...fallback,
+        ...parsed,
+        activeMessages: parsed.activeMessages && typeof parsed.activeMessages === 'object' && !Array.isArray(parsed.activeMessages)
+          ? parsed.activeMessages
+          : {}
+      }
+    : fallback;
+  cachedReactionMonitorState.set(key, entry);
+  return entry;
+}
+
 function persistNotificationForwardConfig(guildId, config) {
   const key = normalizeGuildIdForScopedData(guildId);
   const configPath = getGuildNotificationForwardConfigPath(key);
@@ -1478,6 +1539,14 @@ function persistPrivateMessageState(guildId) {
   return enqueuePrivateMessageStateWrite(key, async () => {
     const state = cachedPrivateMessageState.get(key) ?? getDefaultPrivateMessageState();
     await atomicWriteJson(getGuildPrivateMessageStatePath(key), state);
+  });
+}
+
+function persistReactionMonitorState(guildId) {
+  const key = String(guildId);
+  return enqueueReactionMonitorStateWrite(key, async () => {
+    const state = cachedReactionMonitorState.get(key) ?? getDefaultReactionMonitorState();
+    await atomicWriteJson(getGuildReactionMonitorStatePath(key), state);
   });
 }
 
@@ -1571,6 +1640,43 @@ export function updatePrivateMessageState(guildId, mutator) {
     state.messages = {};
   }
   return persistPrivateMessageState(guildId).then(() => state);
+}
+
+export function getReactionMonitorState(guildId) {
+  const state = loadReactionMonitorState(guildId);
+  return {
+    schemaVersion: Number(state.schemaVersion) || 1,
+    enabled: Boolean(state.enabled),
+    channelId: typeof state.channelId === 'string' ? state.channelId : null,
+    selectedClanName: typeof state.selectedClanName === 'string' && state.selectedClanName.trim()
+      ? state.selectedClanName.trim()
+      : null,
+    timeoutHours: Number.isFinite(Number(state.timeoutHours)) ? Number(state.timeoutHours) : 10,
+    activeMessages: state.activeMessages && typeof state.activeMessages === 'object' && !Array.isArray(state.activeMessages)
+      ? state.activeMessages
+      : {}
+  };
+}
+
+export function updateReactionMonitorState(guildId, mutator) {
+  const key = String(guildId);
+  const state = loadReactionMonitorState(key);
+  if (typeof mutator === 'function') {
+    mutator(state);
+  }
+  if (!state.activeMessages || typeof state.activeMessages !== 'object' || Array.isArray(state.activeMessages)) {
+    state.activeMessages = {};
+  }
+  if (!Number.isFinite(Number(state.timeoutHours)) || Number(state.timeoutHours) <= 0) {
+    state.timeoutHours = 10;
+  }
+  if (typeof state.selectedClanName !== 'string' || !state.selectedClanName.trim()) {
+    state.selectedClanName = null;
+  } else {
+    state.selectedClanName = state.selectedClanName.trim();
+  }
+  cachedReactionMonitorState.set(key, state);
+  return persistReactionMonitorState(key).then(() => state);
 }
 
 export function setNotificationForwardConfig(guildId, config) {
@@ -1680,4 +1786,19 @@ export function setPermissionRoleId(guildId, roleId) {
   return updateClanState(guildId, (state) => {
     state.permission_role_id = roleId || null;
   }).then((state) => state.permission_role_id ?? null);
+}
+
+export function listPersistedGuildIds() {
+  try {
+    if (!fs.existsSync(guildsDir)) {
+      return [];
+    }
+    return fs.readdirSync(guildsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((name) => /^\d{5,30}$/.test(name));
+  } catch (error) {
+    console.warn('Failed to list persisted guild ids:', error);
+    return [];
+  }
 }

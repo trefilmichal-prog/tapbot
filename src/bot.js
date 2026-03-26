@@ -37,9 +37,11 @@ import {
   getPingRoleState,
   getPingRolePanelConfig,
   getPrivateMessageState,
+  getReactionMonitorState,
   getRpsState,
   getPermissionRoleId,
   getWelcomeConfig,
+  listPersistedGuildIds,
   getNotificationForwardConfig,
   getRobloxMonitorState,
   setLogConfig,
@@ -49,6 +51,7 @@ import {
   setWelcomeConfig,
   updateClanState,
   updatePrivateMessageState,
+  updateReactionMonitorState,
   updatePingRoleState,
   updateRobloxMonitorState,
   updateRpsState
@@ -121,6 +124,9 @@ const PRIVATE_MESSAGE_READ_PREFIX = 'pm:read:';
 const RPS_CHOICE_PREFIX = 'rps:choose:';
 const ROBLOX_MONITOR_SESSION_MODAL_PREFIX = 'roblox_monitor_session_modal:';
 const RPS_MOVES = ['rock', 'paper', 'scissors'];
+const REACTION_WATCH_TIMEOUT_HOURS = 10;
+const REACTION_WATCH_CHECK_INTERVAL_MS = 60 * 1000;
+let reactionWatchIntervalHandle = null;
 const RPS_MOVE_META = {
   rock: { label: 'Rock', emoji: '🪨' },
   paper: { label: 'Paper', emoji: '📄' },
@@ -226,6 +232,7 @@ client.on(Events.ClientReady, (readyClient) => {
       await logWinRtBridgeStatus();
       await refreshClanPanelsOnStartup(readyClient);
       await refreshPingRolePanelsOnStartup(readyClient);
+      await startReactionWatchLoop(readyClient);
       await startNotificationForwardPolling(readyClient);
       await warmupRobloxMonitorStateOnStartup(readyClient);
       await restoreRobloxMonitorSchedulersOnStartup(readyClient);
@@ -259,18 +266,25 @@ client.on(Events.ChannelDelete, async (channel) => {
     return;
   }
 
-  const state = getClanState(channel.guildId);
-  if (!state?.clan_ticket_decisions?.[channel.id]) {
-    return;
+  const clanState = getClanState(channel.guildId);
+  if (clanState?.clan_ticket_decisions?.[channel.id]) {
+    await updateClanState(channel.guildId, (nextState) => {
+      ensureGuildClanState(nextState);
+      if (nextState.clan_ticket_decisions && Object.prototype.hasOwnProperty.call(nextState.clan_ticket_decisions, channel.id)) {
+        delete nextState.clan_ticket_decisions[channel.id];
+      }
+    });
+    console.log(`Removed stale clan ticket state for deleted channel ${channel.id} in guild ${channel.guildId}.`);
   }
 
-  await updateClanState(channel.guildId, (nextState) => {
-    ensureGuildClanState(nextState);
-    if (nextState.clan_ticket_decisions && Object.prototype.hasOwnProperty.call(nextState.clan_ticket_decisions, channel.id)) {
-      delete nextState.clan_ticket_decisions[channel.id];
+  await updateReactionMonitorState(channel.guildId, (state) => {
+    ensureReactionWatchState(state);
+    if (state.channelId === channel.id) {
+      state.channelId = null;
+      state.enabled = false;
+      state.activeMessages = {};
     }
   });
-  console.log(`Removed stale clan ticket state for deleted channel ${channel.id} in guild ${channel.guildId}.`);
 });
 
 async function pruneMissingClanTicketsOnStartup(readyClient) {
@@ -941,6 +955,184 @@ function collectAcceptedClanPlayers(guildId) {
   }
 
   return players;
+}
+
+function getAcceptedClanNamesFromAcceptedTickets(guildId) {
+  const state = getClanState(guildId);
+  const names = new Set();
+  for (const entry of Object.values(state?.clan_ticket_decisions ?? {})) {
+    if (!entry || entry.status !== CLAN_TICKET_DECISION_ACCEPT) {
+      continue;
+    }
+    const clanName = typeof entry.clanName === 'string' ? entry.clanName.trim() : '';
+    if (clanName) {
+      names.add(clanName);
+    }
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+}
+
+function getReactionWatchTrackedUserIds(guildId, { selectedClanName = null } = {}) {
+  const state = getClanState(guildId);
+  const normalizedSelectedClan = typeof selectedClanName === 'string' && selectedClanName.trim()
+    ? selectedClanName.trim().toLowerCase()
+    : null;
+  const userIds = new Set();
+
+  for (const entry of Object.values(state?.clan_ticket_decisions ?? {})) {
+    if (!entry || entry.status !== CLAN_TICKET_DECISION_ACCEPT) {
+      continue;
+    }
+    const entryClanName = typeof entry.clanName === 'string' ? entry.clanName.trim() : '';
+    if (normalizedSelectedClan && entryClanName.toLowerCase() !== normalizedSelectedClan) {
+      continue;
+    }
+    const applicantId = normalizeDiscordSnowflake(entry.applicantId)
+      ?? deriveApplicantIdFromTicketEntry(entry);
+    if (applicantId) {
+      userIds.add(applicantId);
+    }
+  }
+
+  return Array.from(userIds);
+}
+
+function ensureReactionWatchState(state) {
+  if (!state || typeof state !== 'object') {
+    return;
+  }
+  state.enabled = Boolean(state.enabled);
+  state.channelId = normalizeDiscordSnowflake(state.channelId);
+  state.selectedClanName = typeof state.selectedClanName === 'string' && state.selectedClanName.trim()
+    ? state.selectedClanName.trim()
+    : null;
+  if (!Number.isFinite(Number(state.timeoutHours)) || Number(state.timeoutHours) <= 0) {
+    state.timeoutHours = REACTION_WATCH_TIMEOUT_HOURS;
+  }
+  if (!state.activeMessages || typeof state.activeMessages !== 'object' || Array.isArray(state.activeMessages)) {
+    state.activeMessages = {};
+  }
+}
+
+async function runReactionWatchChecksForGuild(guild, { force = false } = {}) {
+  if (!guild?.id) {
+    return;
+  }
+
+  const now = Date.now();
+  const state = getReactionMonitorState(guild.id);
+  ensureReactionWatchState(state);
+  if (!state.enabled || !state.channelId) {
+    return;
+  }
+
+  const channel = guild.channels.cache.get(state.channelId) ?? await guild.channels.fetch(state.channelId).catch(() => null);
+  if (!channel || channel.type !== ChannelType.GuildText) {
+    return;
+  }
+
+  const entries = Object.entries(state.activeMessages ?? {});
+  if (!entries.length) {
+    return;
+  }
+
+  for (const [messageId, entry] of entries) {
+    const dueAtMs = new Date(entry?.dueAt ?? 0).getTime();
+    if (!force && (!Number.isFinite(dueAtMs) || dueAtMs > now)) {
+      continue;
+    }
+    const trackedUserIds = Array.isArray(entry?.trackedUserIds)
+      ? entry.trackedUserIds.map((item) => normalizeDiscordSnowflake(item)).filter(Boolean)
+      : [];
+    if (!trackedUserIds.length) {
+      await updateReactionMonitorState(guild.id, (nextState) => {
+        ensureReactionWatchState(nextState);
+        delete nextState.activeMessages?.[messageId];
+      });
+      continue;
+    }
+
+    const message = await channel.messages.fetch(messageId).catch(() => null);
+    if (!message) {
+      await updateReactionMonitorState(guild.id, (nextState) => {
+        ensureReactionWatchState(nextState);
+        delete nextState.activeMessages?.[messageId];
+      });
+      continue;
+    }
+
+    const reactedUserIds = new Set();
+    for (const reaction of message.reactions.cache.values()) {
+      let users;
+      try {
+        users = await reaction.users.fetch();
+      } catch (error) {
+        console.warn(`Failed to fetch users for reaction check message ${messageId}:`, error);
+        continue;
+      }
+      for (const user of users.values()) {
+        if (!user?.bot && trackedUserIds.includes(user.id)) {
+          reactedUserIds.add(user.id);
+        }
+      }
+    }
+
+    const missingUserIds = trackedUserIds.filter((userId) => !reactedUserIds.has(userId));
+    if (missingUserIds.length) {
+      const alertLines = [
+        '⚠️ **Reaction check failed**',
+        `Tracked message: https://discord.com/channels/${guild.id}/${channel.id}/${messageId}`,
+        `Missing reaction from: ${missingUserIds.map((userId) => `<@${userId}>`).join(', ')}`,
+        'Each listed player must open a ticket and explain why they did not react within 10 hours.'
+      ];
+      await channel.send({
+        components: buildTextComponents(alertLines.join('\n')),
+        flags: buildInteractionFlags({ componentsV2: true }),
+        allowedMentions: {
+          users: missingUserIds,
+          roles: [],
+          parse: [],
+          repliedUser: false
+        }
+      }).catch((error) => {
+        console.warn(`Failed to send reaction check alert for message ${messageId}:`, error);
+      });
+    }
+
+    await updateReactionMonitorState(guild.id, (nextState) => {
+      ensureReactionWatchState(nextState);
+      if (nextState.activeMessages?.[messageId]) {
+        delete nextState.activeMessages[messageId];
+      }
+    });
+  }
+}
+
+async function startReactionWatchLoop(readyClient) {
+  if (reactionWatchIntervalHandle) {
+    clearInterval(reactionWatchIntervalHandle);
+  }
+
+  const guildIds = new Set([
+    ...Array.from(readyClient.guilds.cache.keys()),
+    ...listPersistedGuildIds()
+  ]);
+
+  for (const guildId of guildIds) {
+    const guild = readyClient.guilds.cache.get(guildId) ?? await readyClient.guilds.fetch(guildId).catch(() => null);
+    if (!guild) continue;
+    await runReactionWatchChecksForGuild(guild).catch((error) => {
+      console.warn(`Reaction watch startup check failed for guild ${guild.id}:`, error);
+    });
+  }
+
+  reactionWatchIntervalHandle = setInterval(() => {
+    for (const guild of readyClient.guilds.cache.values()) {
+      runReactionWatchChecksForGuild(guild).catch((error) => {
+        console.warn(`Reaction watch periodic check failed for guild ${guild.id}:`, error);
+      });
+    }
+  }, REACTION_WATCH_CHECK_INTERVAL_MS);
 }
 
 function getAcceptedTicketRobloxIdentity(guildId, userId) {
@@ -3627,45 +3819,75 @@ client.on(Events.MessageCreate, async (message) => {
   if (message.author?.bot) return;
   if (message.channel?.type !== ChannelType.GuildText) return;
 
-  const state = getPingRoleState(message.guild.id);
-  ensurePingRoleState(state);
-  const roleId = state.channel_routes?.[message.channel.id];
-  if (!roleId) return;
-
-  const contentParts = [`<@&${roleId}>`];
-  if (message.content) {
-    contentParts.push(message.content);
-  }
-  const files = message.attachments?.size
-    ? message.attachments.map((attachment) => ({
-        attachment: attachment.url,
-        name: attachment.name ?? undefined
-      }))
-    : [];
-
-  try {
-    await message.delete();
-  } catch (error) {
-    console.warn('Failed to delete routed message:', error);
-  }
-
-  try {
-    await message.channel.send({
-      content: contentParts.join(' '),
-      files,
-      allowedMentions: {
-        roles: [roleId],
-        users: [],
-        repliedUser: false
-      }
+  const reactionState = getReactionMonitorState(message.guild.id);
+  ensureReactionWatchState(reactionState);
+  if (reactionState.enabled && reactionState.channelId === message.channel.id) {
+    const trackedUserIds = getReactionWatchTrackedUserIds(message.guild.id, {
+      selectedClanName: reactionState.selectedClanName
     });
-  } catch (error) {
-    console.warn('Failed to relay routed message:', error);
+    const dueAt = new Date(
+      Date.now() + (Number(reactionState.timeoutHours) || REACTION_WATCH_TIMEOUT_HOURS) * 60 * 60 * 1000
+    ).toISOString();
+    await updateReactionMonitorState(message.guild.id, (nextState) => {
+      ensureReactionWatchState(nextState);
+      nextState.activeMessages[message.id] = {
+        messageId: message.id,
+        channelId: message.channel.id,
+        authorId: message.author.id,
+        createdAt: new Date(message.createdTimestamp || Date.now()).toISOString(),
+        dueAt,
+        trackedUserIds,
+        missingUserIds: [],
+        status: 'pending'
+      };
+    });
+  }
+
+  const pingRoleState = getPingRoleState(message.guild.id);
+  ensurePingRoleState(pingRoleState);
+  const roleId = pingRoleState.channel_routes?.[message.channel.id];
+  if (roleId) {
+    const contentParts = [`<@&${roleId}>`];
+    if (message.content) {
+      contentParts.push(message.content);
+    }
+    const files = message.attachments?.size
+      ? message.attachments.map((attachment) => ({
+          attachment: attachment.url,
+          name: attachment.name ?? undefined
+        }))
+      : [];
+
+    try {
+      await message.delete();
+    } catch (error) {
+      console.warn('Failed to delete routed message:', error);
+    }
+
+    try {
+      await message.channel.send({
+        content: contentParts.join(' '),
+        files,
+        allowedMentions: {
+          roles: [roleId],
+          users: [],
+          repliedUser: false
+        }
+      });
+    } catch (error) {
+      console.warn('Failed to relay routed message:', error);
+    }
   }
 });
 
 client.on(Events.MessageDelete, async (message) => {
   if (!message.guildId) return;
+  await updateReactionMonitorState(message.guildId, (state) => {
+    ensureReactionWatchState(state);
+    if (state.activeMessages?.[message.id]) {
+      delete state.activeMessages[message.id];
+    }
+  });
   const config = getLogConfig(message.guildId);
   const logChannelId = config?.channelId ?? null;
   if (!logChannelId) return;
@@ -4746,6 +4968,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const suggestions = [
           {
             name: 'All clans',
+            value: '__ALL__'
+          },
+          ...filteredClanNames.map((name) => ({
+            name,
+            value: name
+          }))
+        ].slice(0, 25);
+
+        await interaction.respond(suggestions);
+      }
+
+      if (
+        interaction.commandName === 'reaction_watch'
+        && subcommand === 'set_clan'
+        && focusedOption?.name === 'clan_name'
+      ) {
+        const focusedValue = typeof focusedOption.value === 'string' ? focusedOption.value.trim().toLowerCase() : '';
+        const acceptedClanNames = getAcceptedClanNamesFromAcceptedTickets(interaction.guildId);
+        const filteredClanNames = focusedValue
+          ? acceptedClanNames.filter((name) => name.toLowerCase().includes(focusedValue))
+          : acceptedClanNames;
+
+        const suggestions = [
+          {
+            name: 'All accepted clans',
             value: '__ALL__'
           },
           ...filteredClanNames.map((name) => ({
@@ -6147,6 +6394,159 @@ client.on(Events.InteractionCreate, async (interaction) => {
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           });
         }
+      }
+    }
+
+    if (interaction.commandName === 'reaction_watch') {
+      if (!interaction.inGuild() || !(interaction.member instanceof GuildMember)) {
+        await interaction.reply({
+          components: buildTextComponents('This command can only be used in a server.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      if (!hasAdminPermission(interaction.member)) {
+        await interaction.reply({
+          components: buildTextComponents('You do not have permission to use this command.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      const subcommand = interaction.options.getSubcommand(true);
+      if (subcommand === 'set_room') {
+        const channel = interaction.options.getChannel('channel', true);
+        if (!channel || channel.type !== ChannelType.GuildText) {
+          await interaction.reply({
+            components: buildTextComponents('Please select a text channel.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        await updateReactionMonitorState(interaction.guildId, (state) => {
+          ensureReactionWatchState(state);
+          state.enabled = true;
+          state.channelId = channel.id;
+          state.timeoutHours = REACTION_WATCH_TIMEOUT_HOURS;
+          state.activeMessages = {};
+        });
+
+        await interaction.reply({
+          components: buildTextComponents(
+            `Reaction watch is enabled in <#${channel.id}>. Every new message will be checked after 10 hours.`
+          ),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      if (subcommand === 'set_clan') {
+        const requestedClanNameRaw = interaction.options.getString('clan_name', true);
+        const acceptedClanNames = getAcceptedClanNamesFromAcceptedTickets(interaction.guildId);
+        const requestedClanName = requestedClanNameRaw.trim();
+
+        if (requestedClanName !== '__ALL__' && !acceptedClanNames.includes(requestedClanName)) {
+          await interaction.reply({
+            components: buildTextComponents('Selected clan is not available in accepted tickets.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        await updateReactionMonitorState(interaction.guildId, (state) => {
+          ensureReactionWatchState(state);
+          state.selectedClanName = requestedClanName === '__ALL__' ? null : requestedClanName;
+          state.activeMessages = {};
+        });
+
+        await interaction.reply({
+          components: buildTextComponents(
+            requestedClanName === '__ALL__'
+              ? 'Reaction watch clan filter was cleared (all accepted clans are included).'
+              : `Reaction watch clan filter is now set to **${requestedClanName}**.`
+          ),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      if (subcommand === 'disable') {
+        await updateReactionMonitorState(interaction.guildId, (state) => {
+          ensureReactionWatchState(state);
+          state.enabled = false;
+          state.channelId = null;
+          state.activeMessages = {};
+        });
+
+        await interaction.reply({
+          components: buildTextComponents('Reaction watch was disabled and active timers were cleared.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      if (subcommand === 'roster') {
+        const reactionState = getReactionMonitorState(interaction.guildId);
+        ensureReactionWatchState(reactionState);
+        const userIds = getReactionWatchTrackedUserIds(interaction.guildId, {
+          selectedClanName: reactionState.selectedClanName
+        });
+        const lines = userIds.length
+          ? userIds.map((userId, index) => `${index + 1}. <@${userId}>`)
+          : ['No accepted clan members with linked Discord IDs were found.'];
+        const header = reactionState.selectedClanName
+          ? `👥 **Reaction watch roster (${reactionState.selectedClanName})**`
+          : '👥 **Reaction watch roster (all accepted clans)**';
+
+        await interaction.reply({
+          components: buildTextComponents([header, ...lines].join('\n')),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      if (subcommand === 'status') {
+        const state = getReactionMonitorState(interaction.guildId);
+        ensureReactionWatchState(state);
+
+        const lines = [
+          `Enabled: ${state.enabled ? 'yes' : 'no'}`,
+          `Channel: ${state.channelId ? `<#${state.channelId}>` : 'not configured'}`,
+          `Clan filter: ${state.selectedClanName ? state.selectedClanName : 'all accepted clans'}`,
+          `Timeout: ${REACTION_WATCH_TIMEOUT_HOURS} hours`
+        ];
+
+        const pendingEntries = Object.values(state.activeMessages ?? {})
+          .sort((a, b) => new Date(a?.dueAt ?? 0).getTime() - new Date(b?.dueAt ?? 0).getTime())
+          .slice(0, 20);
+
+        if (pendingEntries.length) {
+          lines.push('', '**Pending messages:**');
+          for (const entry of pendingEntries) {
+            lines.push(
+              `• \`${entry.messageId}\` due ${entry.dueAt ?? 'unknown'} (tracked: ${Array.isArray(entry.trackedUserIds) ? entry.trackedUserIds.length : 0})`
+            );
+          }
+        } else {
+          lines.push('', 'No pending tracked messages.');
+        }
+
+        await interaction.reply({
+          components: buildTextComponents(lines.join('\n')),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
+      if (subcommand === 'check_now') {
+        await runReactionWatchChecksForGuild(interaction.guild, { force: true });
+        await interaction.reply({
+          components: buildTextComponents('Reaction check was executed immediately for this guild.'),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
       }
     }
 
