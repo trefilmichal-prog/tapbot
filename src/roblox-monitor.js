@@ -889,8 +889,8 @@ async function runRobloxMonitorTick(client, guildId) {
     ? monitorSource.target_override.trim()
     : null;
   const requiredRootPlaceId = getRequiredRootPlaceId(state);
-  const explicitSubscriberUserIds = Array.isArray(state?.subscriberUserIds)
-    ? state.subscriberUserIds.filter((userId) => typeof userId === 'string' && userId.trim())
+  const explicitSubscriberUserIds = Array.isArray(state?.explicitSubscriberUserIds)
+    ? state.explicitSubscriberUserIds.filter((userId) => typeof userId === 'string' && userId.trim())
     : [];
   const effectiveMonitoredUserIds = sourceClanName
     ? [...new Set(approvedUsers.discordUserIds)].sort()
@@ -909,9 +909,9 @@ async function runRobloxMonitorTick(client, guildId) {
   const apiEligibleSubscriberUserIds = effectiveMonitoredUserIds.filter((subscriberUserId) => hasStoredRobloxUsername(subscriberUserId));
   const apiEligibleSubscriberUserIdSet = new Set(apiEligibleSubscriberUserIds);
 
-  if (JSON.stringify(state.subscriberUserIds) !== JSON.stringify(effectiveMonitoredUserIds)) {
+  if (JSON.stringify(state.lastEffectiveMonitoredUserIds ?? []) !== JSON.stringify(effectiveMonitoredUserIds)) {
     state = await updateRobloxMonitorState(guildId, (nextState) => {
-      nextState.subscriberUserIds = effectiveMonitoredUserIds;
+      nextState.lastEffectiveMonitoredUserIds = effectiveMonitoredUserIds;
       if (!nextState.subscriberRobloxAccounts || typeof nextState.subscriberRobloxAccounts !== 'object' || Array.isArray(nextState.subscriberRobloxAccounts)) {
         nextState.subscriberRobloxAccounts = {};
       }
@@ -1041,7 +1041,7 @@ async function runRobloxMonitorTick(client, guildId) {
     await updateRobloxMonitorState(guildId, (nextState) => {
       const checkedAt = new Date().toISOString();
       nextState.requiredRootPlaceId = getRequiredRootPlaceId(nextState);
-      nextState.subscriberUserIds = effectiveMonitoredUserIds;
+      nextState.lastEffectiveMonitoredUserIds = effectiveMonitoredUserIds;
       if (!nextState.subscriberFriendshipStatus || typeof nextState.subscriberFriendshipStatus !== 'object' || Array.isArray(nextState.subscriberFriendshipStatus)) {
         nextState.subscriberFriendshipStatus = {};
       }
@@ -1448,7 +1448,7 @@ async function runRobloxMonitorTick(client, guildId) {
       nextState.monitorSource.source_user_id = sourceUserId;
       nextState.monitorSource.clan_name = sourceClanName;
       nextState.monitorSource.updated_at = new Date().toISOString();
-      nextState.subscriberUserIds = effectiveMonitoredUserIds;
+      nextState.lastEffectiveMonitoredUserIds = effectiveMonitoredUserIds;
       nextState.subscriberRobloxAccounts = subscriberAccountMap;
       nextState.usernameResolutionCache = pruneUsernameResolutionCache(usernameResolutionCache);
       nextState.subscriberFriendshipStatus = friendshipStatusBySubscriber;
