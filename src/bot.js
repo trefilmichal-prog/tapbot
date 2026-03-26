@@ -431,7 +431,40 @@ function parseRobloxMonitorSessionModalCustomId(customId) {
   return { guildId, userId };
 }
 
-function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null } = {}) {
+function splitLinesToChunks(lines, maxChars = 1400) {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return [];
+  }
+
+  const normalizedMaxChars = Number.isInteger(maxChars) && maxChars > 0 ? maxChars : 1400;
+  const chunks = [];
+  let currentChunk = [];
+  let currentLength = 0;
+
+  for (const rawLine of lines) {
+    const line = String(rawLine ?? '');
+    const separatorLength = currentChunk.length > 0 ? 1 : 0;
+    const projectedLength = currentLength + separatorLength + line.length;
+
+    if (currentChunk.length > 0 && projectedLength > normalizedMaxChars) {
+      chunks.push(currentChunk);
+      currentChunk = [line];
+      currentLength = line.length;
+      continue;
+    }
+
+    currentChunk.push(line);
+    currentLength = projectedLength;
+  }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
+function buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId = null } = {}) {
   const monitoringSessionCookie = state?.monitoringSession?.sessionCookie ?? state?.sessionCookie ?? null;
   const hasSession = Boolean(monitoringSessionCookie);
   const requiredRootPlaceId = Number.isInteger(state?.targetGame?.requiredRootPlaceId)
@@ -538,23 +571,56 @@ function buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId = null 
     `Last error: ${lastError ?? 'None'}`
   ].filter(Boolean);
 
-  return [
+  const friendChunks = splitLinesToChunks(friendSubscriberStatusLines, 1400);
+  const nonFriendChunks = splitLinesToChunks(nonFriendSubscriberStatusLines, 1400);
+  const friendSectionTextDisplays = friendChunks.length > 0
+    ? friendChunks.map((chunkLines, index) => buildV2TextDisplay([
+      index === 0 ? '**Friend subscribers**' : '**Friend subscribers (continued)**',
+      chunkLines.join('\n')
+    ].join('\n')))
+    : [buildV2TextDisplay('**Friend subscribers**\nNo friend-ready subscribers are currently opted in.')];
+  const nonFriendSectionTextDisplays = nonFriendChunks.length > 0
+    ? nonFriendChunks.map((chunkLines, index) => buildV2TextDisplay([
+      index === 0 ? '**Non-friend / unresolved subscribers**' : '**Non-friend / unresolved subscribers (continued)**',
+      chunkLines.join('\n')
+    ].join('\n')))
+    : [buildV2TextDisplay('**Non-friend / unresolved subscribers**\nNo non-friend or unresolved subscribers are currently opted in.')];
+
+  const pages = [];
+  const firstPageComponents = [
     buildV2Container([
       buildV2TextDisplay('🛠️ **Roblox monitor status**'),
       buildV2Separator(),
       buildV2TextDisplay(['**Configuration**', ...configurationLines].join('\n')),
       buildV2Separator(),
-      buildV2TextDisplay([
-        '**Friend subscribers**',
-        friendSubscriberStatusLines.length > 0 ? friendSubscriberStatusLines.join('\n') : 'No friend-ready subscribers are currently opted in.'
-      ].join('\n')),
+      friendSectionTextDisplays[0],
       buildV2Separator(),
-      buildV2TextDisplay([
-        '**Non-friend / unresolved subscribers**',
-        nonFriendSubscriberStatusLines.length > 0 ? nonFriendSubscriberStatusLines.join('\n') : 'No non-friend or unresolved subscribers are currently opted in.'
-      ].join('\n'))
+      nonFriendSectionTextDisplays[0]
     ])
   ];
+  pages.push(firstPageComponents);
+
+  for (let i = 1; i < friendSectionTextDisplays.length; i += 1) {
+    pages.push([
+      buildV2Container([
+        buildV2TextDisplay('🛠️ **Roblox monitor status (continued)**'),
+        buildV2Separator(),
+        friendSectionTextDisplays[i]
+      ])
+    ]);
+  }
+
+  for (let i = 1; i < nonFriendSectionTextDisplays.length; i += 1) {
+    pages.push([
+      buildV2Container([
+        buildV2TextDisplay('🛠️ **Roblox monitor status (continued)**'),
+        buildV2Separator(),
+        nonFriendSectionTextDisplays[i]
+      ])
+    ]);
+  }
+
+  return pages;
 }
 
 async function restartRobloxMonitorSchedulerForGuild(readyClient, guildId) {
@@ -6143,19 +6209,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (subcommand === 'status') {
           const state = getRobloxMonitorState(interaction.guildId);
+          const statusPages = buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId: interaction.user.id });
           await interaction.reply(buildV2MessagePayload({
-            components: buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId: interaction.user.id }),
+            components: statusPages[0],
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           }));
+          for (let index = 1; index < statusPages.length; index += 1) {
+            await interaction.followUp(buildV2MessagePayload({
+              components: statusPages[index],
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+            }));
+          }
           return;
         }
 
         if (subcommand === 'show') {
           const state = getRobloxMonitorState(interaction.guildId);
+          const statusPages = buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId: interaction.user.id });
           await interaction.reply(buildV2MessagePayload({
-            components: buildRobloxMonitorStatusComponents(state, { viewerDiscordUserId: interaction.user.id }),
+            components: statusPages[0],
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
           }));
+          for (let index = 1; index < statusPages.length; index += 1) {
+            await interaction.followUp(buildV2MessagePayload({
+              components: statusPages[index],
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+            }));
+          }
           return;
         }
 
