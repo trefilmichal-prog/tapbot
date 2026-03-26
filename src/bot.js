@@ -496,7 +496,12 @@ function buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId = nul
   const lastError = typeof state?.lastKnownPresence?.lastError === 'string' && state.lastKnownPresence.lastError.trim()
     ? state.lastKnownPresence.lastError.trim()
     : null;
-  const subscriberUserIds = Array.isArray(state?.subscriberUserIds) ? state.subscriberUserIds : [];
+  const explicitSubscriberUserIds = Array.isArray(state?.explicitSubscriberUserIds)
+    ? state.explicitSubscriberUserIds
+    : [];
+  const effectiveMonitoredUserIds = Array.isArray(state?.lastEffectiveMonitoredUserIds)
+    ? state.lastEffectiveMonitoredUserIds
+    : explicitSubscriberUserIds;
   const subscriberAccountMap = state?.subscriberRobloxAccounts && typeof state.subscriberRobloxAccounts === 'object' && !Array.isArray(state.subscriberRobloxAccounts)
     ? state.subscriberRobloxAccounts
     : {};
@@ -509,7 +514,7 @@ function buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId = nul
   const subscriberStatsMap = state?.subscriberStats && typeof state.subscriberStats === 'object' && !Array.isArray(state.subscriberStats)
     ? state.subscriberStats
     : {};
-  const friendshipReadyCount = subscriberUserIds.reduce((count, userId) => (
+  const friendshipReadyCount = effectiveMonitoredUserIds.reduce((count, userId) => (
     friendshipStatusMap[userId]?.isFriend === true ? count + 1 : count
   ), 0);
   const viewerFriendshipStatus = viewerDiscordUserId && friendshipStatusMap[viewerDiscordUserId]
@@ -524,7 +529,7 @@ function buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId = nul
         : 'Unknown';
   const friendSubscriberStatusLines = [];
   const nonFriendSubscriberStatusLines = [];
-  for (const userId of subscriberUserIds) {
+  for (const userId of effectiveMonitoredUserIds) {
     const account = subscriberAccountMap[userId];
     const accountUsername = typeof account?.robloxUsername === 'string' && account.robloxUsername.trim()
       ? account.robloxUsername.trim()
@@ -549,7 +554,7 @@ function buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId = nul
       nonFriendSubscriberStatusLines.push(statusLine);
     }
   }
-  const nonFriendOrUnresolvedCount = subscriberUserIds.length - friendshipReadyCount;
+  const nonFriendOrUnresolvedCount = effectiveMonitoredUserIds.length - friendshipReadyCount;
 
   const configurationLines = [
     `Session configured: **${hasSession ? 'Yes' : 'No'}**`,
@@ -564,8 +569,10 @@ function buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId = nul
     `Configured source game_id: **${monitorSource.game_id ?? requiredRootPlaceId}**`,
     `Configured source user_id: **${monitorSource.source_user_id ?? 'N/A'}**`,
     `Target override: **${targetOverride ?? 'null'}**`,
-    `Friendship-ready subscribers: **${friendshipReadyCount}/${subscriberUserIds.length}**`,
-    `Non-friend / unresolved subscribers: **${nonFriendOrUnresolvedCount}/${subscriberUserIds.length}**`,
+    `Explicit opt-ins: **${explicitSubscriberUserIds.length}**`,
+    `Effective monitored users: **${effectiveMonitoredUserIds.length}**`,
+    `Friendship-ready subscribers: **${friendshipReadyCount}/${effectiveMonitoredUserIds.length}**`,
+    `Non-friend / unresolved subscribers: **${nonFriendOrUnresolvedCount}/${effectiveMonitoredUserIds.length}**`,
     viewerDiscordUserId ? `Your friendship-ready state: **${viewerReadyLabel}**` : null,
     `Last known monitor state persisted: **${hasLastKnownPresence ? `Yes (${lastPresence.checkedAt})` : 'No'}**`,
     `Last error: ${lastError ?? 'None'}`
@@ -688,7 +695,9 @@ async function warmupRobloxMonitorStateOnStartup(readyClient) {
 async function restoreRobloxMonitorSchedulersOnStartup(readyClient) {
   for (const [guildId] of readyClient.guilds.cache) {
     const state = getRobloxMonitorState(guildId);
-    const subscribedUsers = Array.isArray(state?.subscriberUserIds) ? state.subscriberUserIds : [];
+    const subscribedUsers = Array.isArray(state?.explicitSubscriberUserIds)
+      ? state.explicitSubscriberUserIds
+      : [];
     const subscriberRobloxAccounts = state?.subscriberRobloxAccounts && typeof state.subscriberRobloxAccounts === 'object' && !Array.isArray(state.subscriberRobloxAccounts)
       ? state.subscriberRobloxAccounts
       : {};
@@ -6583,7 +6592,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const updatedState = await updateRobloxMonitorState(interaction.guildId, (state) => {
-          const subscriberIds = new Set(Array.isArray(state.subscriberUserIds) ? state.subscriberUserIds : []);
+          const subscriberIds = new Set(Array.isArray(state.explicitSubscriberUserIds) ? state.explicitSubscriberUserIds : []);
           if (!state.subscriberRobloxAccounts || typeof state.subscriberRobloxAccounts !== 'object' || Array.isArray(state.subscriberRobloxAccounts)) {
             state.subscriberRobloxAccounts = {};
           }
@@ -6615,10 +6624,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
               delete state.subscriberFriendshipStatus[interaction.user.id];
             }
           }
-          state.subscriberUserIds = [...subscriberIds].sort();
+          state.explicitSubscriberUserIds = [...subscriberIds].sort();
         });
 
-        const isSubscribed = updatedState.subscriberUserIds.includes(interaction.user.id);
+        const isSubscribed = updatedState.explicitSubscriberUserIds.includes(interaction.user.id);
         const subscriberTargetUsername = updatedState?.subscriberRobloxAccounts?.[interaction.user.id]?.robloxUsername
           ?? currentMonitorState?.subscriberRobloxAccounts?.[interaction.user.id]?.robloxUsername
           ?? null;

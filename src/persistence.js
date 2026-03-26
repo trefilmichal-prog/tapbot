@@ -100,7 +100,9 @@ function getDefaultRobloxMonitorState() {
     subscriberPresence: {},
     lastOfflineReminderAt: null,
     subscriberOfflineReminderAt: {},
+    explicitSubscriberUserIds: [],
     subscriberUserIds: [],
+    lastEffectiveMonitoredUserIds: [],
     subscriberRobloxAccounts: {},
     usernameResolutionCache: {},
     subscriberStats: {},
@@ -352,6 +354,13 @@ function normalizeRobloxMonitorSubscriberUserIds(entries) {
       .filter((entry) => isValidDiscordSnowflake(entry))
       .map((entry) => entry.trim())
   )].sort();
+}
+
+function normalizeExplicitRobloxMonitorSubscriberUserIds(entries, fallbackEntries) {
+  if (Array.isArray(entries)) {
+    return normalizeRobloxMonitorSubscriberUserIds(entries);
+  }
+  return normalizeRobloxMonitorSubscriberUserIds(fallbackEntries);
 }
 
 function normalizeRobloxMonitorSubscriberAccounts(entries) {
@@ -687,6 +696,13 @@ function normalizeRobloxMonitorState(state) {
     ? parsedStatsReport.lastPostedAt
     : null;
 
+  const normalizedExplicitSubscriberUserIds = normalizeExplicitRobloxMonitorSubscriberUserIds(
+    parsed.explicitSubscriberUserIds,
+    parsed.subscriberUserIds
+  );
+  const normalizedLastEffectiveMonitoredUserIds = normalizeRobloxMonitorSubscriberUserIds(
+    parsed.lastEffectiveMonitoredUserIds
+  );
   const normalizedSubscriberUserIds = normalizeRobloxMonitorSubscriberUserIds(parsed.subscriberUserIds);
   const normalizedSubscriberRobloxAccounts = normalizeRobloxMonitorSubscriberAccounts(parsed.subscriberRobloxAccounts);
   const normalizedSubscriberStats = normalizeRobloxMonitorSubscriberStats(parsed.subscriberStats);
@@ -700,9 +716,9 @@ function normalizeRobloxMonitorState(state) {
     : null;
   const shouldMigrateGuildLevelTargetToSubscribers = parsedSchemaVersion < 5
     && migratedGlobalTargetUsername
-    && normalizedSubscriberUserIds.length > 0;
+    && normalizedExplicitSubscriberUserIds.length > 0;
   if (shouldMigrateGuildLevelTargetToSubscribers) {
-    for (const subscriberUserId of normalizedSubscriberUserIds) {
+    for (const subscriberUserId of normalizedExplicitSubscriberUserIds) {
       const existingAccount = normalizedSubscriberRobloxAccounts[subscriberUserId];
       if (existingAccount?.robloxUsername) {
         continue;
@@ -717,7 +733,7 @@ function normalizeRobloxMonitorState(state) {
   }
 
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     monitoringSession: {
       sessionCookie,
       updatedAt: monitoringSessionUpdatedAt
@@ -746,7 +762,9 @@ function normalizeRobloxMonitorState(state) {
     subscriberPresence: normalizeRobloxMonitorPresenceBySubscriber(parsed.subscriberPresence),
     lastOfflineReminderAt,
     subscriberOfflineReminderAt: normalizeRobloxMonitorSubscriberReminderTimestamps(parsed.subscriberOfflineReminderAt),
+    explicitSubscriberUserIds: normalizedExplicitSubscriberUserIds,
     subscriberUserIds: normalizedSubscriberUserIds,
+    lastEffectiveMonitoredUserIds: normalizedLastEffectiveMonitoredUserIds,
     subscriberRobloxAccounts: normalizedSubscriberRobloxAccounts,
     usernameResolutionCache: normalizeRobloxMonitorUsernameResolutionCache(parsed.usernameResolutionCache),
     subscriberStats: normalizedSubscriberStats,
