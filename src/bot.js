@@ -6208,33 +6208,65 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         if (subcommand === 'status') {
-          const state = getRobloxMonitorState(interaction.guildId);
-          const statusPages = buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId: interaction.user.id });
-          await interaction.reply(buildV2MessagePayload({
-            components: statusPages[0],
-            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          }));
-          for (let index = 1; index < statusPages.length; index += 1) {
-            await interaction.followUp(buildV2MessagePayload({
-              components: statusPages[index],
+          try {
+            const state = getRobloxMonitorState(interaction.guildId);
+            const statusPages = buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId: interaction.user.id });
+            await interaction.reply(buildV2MessagePayload({
+              components: statusPages[0],
               flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             }));
+            for (let index = 1; index < statusPages.length; index += 1) {
+              await interaction.followUp(buildV2MessagePayload({
+                components: statusPages[index],
+                flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+              }));
+            }
+          } catch (error) {
+            console.error(
+              `[roblox_monitor status] guildId=${interaction.guildId ?? 'unknown'} userId=${interaction.user?.id ?? 'unknown'} subcommand=${subcommand}`,
+              error
+            );
+            const overflowPayload = buildV2MessagePayload({
+              components: buildTextComponents('Status output is too large, use list command/page filter.'),
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+            });
+            if (interaction.replied || interaction.deferred) {
+              await interaction.followUp(overflowPayload);
+            } else {
+              await interaction.reply(overflowPayload);
+            }
           }
           return;
         }
 
         if (subcommand === 'show') {
-          const state = getRobloxMonitorState(interaction.guildId);
-          const statusPages = buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId: interaction.user.id });
-          await interaction.reply(buildV2MessagePayload({
-            components: statusPages[0],
-            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
-          }));
-          for (let index = 1; index < statusPages.length; index += 1) {
-            await interaction.followUp(buildV2MessagePayload({
-              components: statusPages[index],
+          try {
+            const state = getRobloxMonitorState(interaction.guildId);
+            const statusPages = buildRobloxMonitorStatusMessagePages(state, { viewerDiscordUserId: interaction.user.id });
+            await interaction.reply(buildV2MessagePayload({
+              components: statusPages[0],
               flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
             }));
+            for (let index = 1; index < statusPages.length; index += 1) {
+              await interaction.followUp(buildV2MessagePayload({
+                components: statusPages[index],
+                flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+              }));
+            }
+          } catch (error) {
+            console.error(
+              `[roblox_monitor show] guildId=${interaction.guildId ?? 'unknown'} userId=${interaction.user?.id ?? 'unknown'} subcommand=${subcommand}`,
+              error
+            );
+            const overflowPayload = buildV2MessagePayload({
+              components: buildTextComponents('Status output is too large, use list command/page filter.'),
+              flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+            });
+            if (interaction.replied || interaction.deferred) {
+              await interaction.followUp(overflowPayload);
+            } else {
+              await interaction.reply(overflowPayload);
+            }
           }
           return;
         }
