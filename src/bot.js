@@ -1369,7 +1369,40 @@ async function refreshNotificationRobloxNamesForGuild(guildId) {
   const manualNicknames = Array.isArray(state?.manual_notification_nicknames)
     ? state.manual_notification_nicknames
     : [];
-  if (!manualNicknames.length) {
+  const acceptedPlayers = collectAcceptedClanPlayersFromState(state, CLAN_TICKET_DECISION_ACCEPT);
+  const candidateByKey = new Map();
+
+  const pushCandidate = (rawNickname, source) => {
+    const cacheKey = normalizeClanNicknameForMatch(rawNickname);
+    if (!cacheKey) {
+      return;
+    }
+    const existing = candidateByKey.get(cacheKey);
+    if (!existing) {
+      candidateByKey.set(cacheKey, {
+        key: cacheKey,
+        rawNickname,
+        isManual: source === 'manual'
+      });
+      return;
+    }
+
+    if (!existing.isManual && source === 'manual') {
+      existing.rawNickname = rawNickname;
+      existing.isManual = true;
+    }
+  };
+
+  for (const entry of manualNicknames) {
+    const rawNickname = typeof entry === 'string' ? entry : entry?.nickname;
+    pushCandidate(rawNickname, 'manual');
+  }
+
+  for (const player of acceptedPlayers.values()) {
+    pushCandidate(player?.displayNickname, 'accepted');
+  }
+
+  if (!candidateByKey.size) {
     return;
   }
 
@@ -1382,12 +1415,9 @@ async function refreshNotificationRobloxNamesForGuild(guildId) {
   };
   const renameMap = new Map();
 
-  for (const entry of manualNicknames) {
-    const rawNickname = typeof entry === 'string' ? entry : entry?.nickname;
-    const cacheKey = normalizeClanNicknameForMatch(rawNickname);
-    if (!cacheKey) {
-      continue;
-    }
+  for (const candidate of candidateByKey.values()) {
+    const cacheKey = candidate.key;
+    const rawNickname = candidate.rawNickname;
     const cached = normalizeNotificationRobloxCacheEntry(updatedCache[cacheKey]);
     const isFresh = cached && (nowMs - new Date(cached.resolvedAt).getTime()) <= ROBLOX_NOTIFICATION_NAME_CACHE_TTL_MS;
     if (isFresh) {
@@ -1417,7 +1447,7 @@ async function refreshNotificationRobloxNamesForGuild(guildId) {
       if (usernameKey) {
         updatedCache[usernameKey] = cacheEntry;
       }
-      if (displayNameKey && displayNameKey !== cacheKey) {
+      if (candidate.isManual && displayNameKey && displayNameKey !== cacheKey) {
         renameMap.set(cacheKey, resolved.displayName);
       }
       hasUpdates = true;
@@ -1574,12 +1604,20 @@ function collectNotificationFilterPlayers(guildId) {
 }
 
 function collectNotificationFilterNicknamesForDisplay(guildId) {
+  const state = getClanState(guildId);
   return [...buildNotificationFilterRoster(guildId).values()]
     .map((entry) => {
       const player = entry.effectivePlayer;
-      const playerLabel = player?.source === 'manual' && player?.robloxUsername
-        ? `display: ${player.displayNickname}, username: ${player.robloxUsername}`
+      const acceptedPlayer = entry.acceptedPlayer;
+      const acceptedCache = acceptedPlayer
+        ? getCachedNotificationRobloxName(state, acceptedPlayer.displayNickname)
+        : null;
+      const effectiveDisplayName = (!entry.manualPlayer && acceptedCache?.displayName)
+        ? acceptedCache.displayName
         : player.displayNickname;
+      const playerLabel = player?.source === 'manual' && player?.robloxUsername
+        ? `display: ${effectiveDisplayName}, username: ${player.robloxUsername}`
+        : effectiveDisplayName;
       const sourceLabel = entry.manualPlayer
         ? 'manual'
         : 'accepted';
