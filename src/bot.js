@@ -1577,9 +1577,9 @@ function collectNotificationFilterNicknamesForDisplay(guildId) {
   return [...buildNotificationFilterRoster(guildId).values()]
     .map((entry) => {
       const player = entry.effectivePlayer;
-      const usernameLabel = player?.source === 'manual' && player?.robloxUsername
-        ? ` (@${player.robloxUsername})`
-        : '';
+      const playerLabel = player?.source === 'manual' && player?.robloxUsername
+        ? `display: ${player.displayNickname}, username: ${player.robloxUsername}`
+        : player.displayNickname;
       const sourceLabel = entry.manualPlayer
         ? 'manual'
         : 'accepted';
@@ -1593,7 +1593,7 @@ function collectNotificationFilterNicknamesForDisplay(guildId) {
       const collisionLabel = entry.collision
         ? ` (manual override replaces accepted${entry.acceptedPlayer?.mentionTargetId ? ` <@${entry.acceptedPlayer.mentionTargetId}>` : ''})`
         : '';
-      return `${player.displayNickname}${usernameLabel} — ${sourceLabel}${ownerLabel}${collisionLabel}`;
+      return `${playerLabel} — ${sourceLabel}${ownerLabel}${collisionLabel}`;
     })
     .sort((left, right) => left.localeCompare(right, 'cs', { sensitivity: 'base' }));
 }
@@ -1602,15 +1602,15 @@ function describeManualNotificationNickname(entry, index, rosterEntry) {
   const ownerLabel = entry.ownerUserId
     ? `<@${entry.ownerUserId}>`
     : 'unknown owner';
-  const usernameLabel = entry.robloxUsername
-    ? ` (@${entry.robloxUsername})`
-    : '';
+  const nicknameLabel = entry.robloxUsername
+    ? `display: ${entry.displayNickname}, username: ${entry.robloxUsername}`
+    : entry.displayNickname;
   const collisionLabel = rosterEntry?.acceptedPlayer
     ? rosterEntry.acceptedPlayer.mentionTargetId
       ? ` — overrides accepted member <@${rosterEntry.acceptedPlayer.mentionTargetId}>`
       : ` — overrides accepted nickname ${rosterEntry.acceptedPlayer.displayNickname}`
     : '';
-  return `${index + 1}. ${entry.displayNickname}${usernameLabel} — owner ${ownerLabel}${collisionLabel}`;
+  return `${index + 1}. ${nicknameLabel} — owner ${ownerLabel}${collisionLabel}`;
 }
 
 function filterNotificationsByGuildClanNicknames(guildId, notifications) {
