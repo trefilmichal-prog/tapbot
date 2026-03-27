@@ -126,7 +126,14 @@ const ROBLOX_MONITOR_SESSION_MODAL_PREFIX = 'roblox_monitor_session_modal:';
 const RPS_MOVES = ['rock', 'paper', 'scissors'];
 const REACTION_WATCH_TIMEOUT_HOURS = 10;
 const REACTION_WATCH_CHECK_INTERVAL_MS = 60 * 1000;
+const ROBLOX_NOTIFICATION_NAME_CACHE_TTL_MS = 60 * 60 * 1000;
+const ROBLOX_NOTIFICATION_NAME_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
+const ROBLOX_NOTIFICATION_API_MIN_INTERVAL_MS = 350;
+const ROBLOX_USER_LOOKUP_BY_USERNAME_URL = 'https://users.roblox.com/v1/usernames/users';
 let reactionWatchIntervalHandle = null;
+let notificationRobloxNameRefreshIntervalHandle = null;
+let robloxNotificationApiQueue = Promise.resolve();
+let robloxNotificationApiLastRequestAt = 0;
 const RPS_MOVE_META = {
   rock: { label: 'Rock', emoji: '🪨' },
   paper: { label: 'Paper', emoji: '📄' },
@@ -233,6 +240,7 @@ client.on(Events.ClientReady, (readyClient) => {
       await refreshClanPanelsOnStartup(readyClient);
       await refreshPingRolePanelsOnStartup(readyClient);
       await startReactionWatchLoop(readyClient);
+      startNotificationRobloxNameRefreshLoop(readyClient);
       await startNotificationForwardPolling(readyClient);
       await warmupRobloxMonitorStateOnStartup(readyClient);
       await restoreRobloxMonitorSchedulersOnStartup(readyClient);
@@ -1168,6 +1176,307 @@ function normalizeGuildNicknameAsRobloxCandidate(rawNickname) {
   return candidate;
 }
 
+function normalizeRobloxUsernameCandidate(rawValue) {
+  if (typeof rawValue !== 'string') {
+    return null;
+  }
+  const trimmed = rawValue.trim();
+  if (!/^[A-Za-z0-9_]{3,20}$/u.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function normalizeNotificationRobloxCacheEntry(rawEntry) {
+  if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
+    return null;
+  }
+  const username = normalizeRobloxUsernameCandidate(rawEntry.username);
+  const displayName = typeof rawEntry.displayName === 'string' && rawEntry.displayName.trim()
+    ? rawEntry.displayName.trim()
+    : null;
+  const userId = Number(rawEntry.userId);
+  const resolvedAtMs = new Date(rawEntry.resolvedAt).getTime();
+  if (!username || !displayName || !Number.isInteger(userId) || userId <= 0 || !Number.isFinite(resolvedAtMs)) {
+    return null;
+  }
+  return {
+    userId,
+    username,
+    displayName,
+    resolvedAt: new Date(resolvedAtMs).toISOString()
+  };
+}
+
+function getCachedNotificationRobloxName(state, nickname, nowMs = Date.now()) {
+  const normalizedNickname = normalizeClanNicknameForMatch(nickname);
+  if (!normalizedNickname) {
+    return null;
+  }
+  const cache = state?.notification_roblox_name_cache;
+  if (!cache || typeof cache !== 'object' || Array.isArray(cache)) {
+    return null;
+  }
+  const normalizedEntry = normalizeNotificationRobloxCacheEntry(cache[normalizedNickname]);
+  if (!normalizedEntry) {
+    return null;
+  }
+  const resolvedAtMs = new Date(normalizedEntry.resolvedAt).getTime();
+  if (!Number.isFinite(resolvedAtMs) || (nowMs - resolvedAtMs) > ROBLOX_NOTIFICATION_NAME_CACHE_TTL_MS) {
+    return null;
+  }
+  return normalizedEntry;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function queueRobloxNotificationApiRequest(url, init) {
+  const runRequest = async () => {
+    const waitMs = Math.max(0, ROBLOX_NOTIFICATION_API_MIN_INTERVAL_MS - (Date.now() - robloxNotificationApiLastRequestAt));
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+
+    const response = await fetch(url, init);
+    robloxNotificationApiLastRequestAt = Date.now();
+    if (response.status === 429) {
+      const retryAfterRaw = Number(response.headers.get('retry-after'));
+      const retryAfterMs = Number.isFinite(retryAfterRaw) && retryAfterRaw > 0
+        ? Math.ceil(retryAfterRaw * 1000)
+        : 1000;
+      await sleep(retryAfterMs);
+      const retried = await fetch(url, init);
+      robloxNotificationApiLastRequestAt = Date.now();
+      return retried;
+    }
+    return response;
+  };
+
+  const runPromise = robloxNotificationApiQueue.then(runRequest, runRequest);
+  robloxNotificationApiQueue = runPromise.catch(() => {});
+  return runPromise;
+}
+
+async function resolveRobloxNameByUsername(username) {
+  const payload = {
+    usernames: [username],
+    excludeBannedUsers: false
+  };
+  const response = await queueRobloxNotificationApiRequest(ROBLOX_USER_LOOKUP_BY_USERNAME_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'tapbot-notification-resolver'
+    },
+    body: JSON.stringify(payload)
+  });
+  const responseBody = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = responseBody?.errors?.map((entry) => entry?.message).filter(Boolean).join('; ')
+      || response.statusText
+      || 'Unknown Roblox API error';
+    throw new Error(`Roblox lookup failed for username ${username}: ${message}`);
+  }
+
+  const matched = responseBody?.data?.find((entry) => normalizeClanNicknameForMatch(entry?.requestedUsername) === normalizeClanNicknameForMatch(username))
+    ?? responseBody?.data?.find((entry) => normalizeClanNicknameForMatch(entry?.name) === normalizeClanNicknameForMatch(username));
+  const normalizedUsername = normalizeRobloxUsernameCandidate(matched?.name ?? username);
+  if (!matched?.id || !normalizedUsername) {
+    throw new Error(`Roblox username "${username}" was not found.`);
+  }
+  return {
+    userId: Number(matched.id),
+    username: normalizedUsername,
+    displayName: typeof matched.displayName === 'string' && matched.displayName.trim()
+      ? matched.displayName.trim()
+      : normalizedUsername
+  };
+}
+
+async function fetchRobloxNameByUserId(userId) {
+  const numericUserId = Number(userId);
+  if (!Number.isInteger(numericUserId) || numericUserId <= 0) {
+    throw new Error(`Invalid Roblox user id "${userId}".`);
+  }
+  const response = await queueRobloxNotificationApiRequest(`https://users.roblox.com/v1/users/${numericUserId}`, {
+    method: 'GET',
+    headers: {
+      'User-Agent': 'tapbot-notification-resolver'
+    }
+  });
+  const responseBody = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = responseBody?.errors?.map((entry) => entry?.message).filter(Boolean).join('; ')
+      || response.statusText
+      || 'Unknown Roblox API error';
+    throw new Error(`Roblox lookup failed for user id ${numericUserId}: ${message}`);
+  }
+  const normalizedUsername = normalizeRobloxUsernameCandidate(responseBody?.name);
+  if (!normalizedUsername) {
+    throw new Error(`Roblox user ${numericUserId} did not return a valid username.`);
+  }
+  return {
+    userId: numericUserId,
+    username: normalizedUsername,
+    displayName: typeof responseBody?.displayName === 'string' && responseBody.displayName.trim()
+      ? responseBody.displayName.trim()
+      : normalizedUsername
+  };
+}
+
+async function resolveAndPersistNotificationRobloxName(guildId, nickname, { forceRefresh = false } = {}) {
+  const normalizedNickname = normalizeClanNicknameForMatch(nickname);
+  const usernameCandidate = normalizeRobloxUsernameCandidate(nickname);
+  if (!normalizedNickname || !usernameCandidate) {
+    throw new Error('Invalid Roblox username format. Use 3-20 characters: letters, numbers, and underscores only.');
+  }
+
+  const state = getClanState(guildId);
+  const cached = forceRefresh ? null : getCachedNotificationRobloxName(state, usernameCandidate);
+  if (cached) {
+    return cached;
+  }
+
+  const resolved = await resolveRobloxNameByUsername(usernameCandidate);
+  const resolvedAt = new Date().toISOString();
+  await updateClanState(guildId, (nextState) => {
+    ensureGuildClanState(nextState);
+    const cacheEntry = {
+      userId: resolved.userId,
+      username: resolved.username,
+      displayName: resolved.displayName,
+      resolvedAt
+    };
+    const usernameKey = normalizeClanNicknameForMatch(usernameCandidate);
+    const displayNameKey = normalizeClanNicknameForMatch(resolved.displayName);
+    if (usernameKey) {
+      nextState.notification_roblox_name_cache[usernameKey] = cacheEntry;
+    }
+    if (displayNameKey) {
+      nextState.notification_roblox_name_cache[displayNameKey] = cacheEntry;
+    }
+  });
+  return {
+    ...resolved,
+    resolvedAt
+  };
+}
+
+async function refreshNotificationRobloxNamesForGuild(guildId) {
+  const state = getClanState(guildId);
+  const manualNicknames = Array.isArray(state?.manual_notification_nicknames)
+    ? state.manual_notification_nicknames
+    : [];
+  if (!manualNicknames.length) {
+    return;
+  }
+
+  const nowMs = Date.now();
+  let hasUpdates = false;
+  const updatedCache = {
+    ...(state?.notification_roblox_name_cache && typeof state.notification_roblox_name_cache === 'object'
+      ? state.notification_roblox_name_cache
+      : {})
+  };
+  const renameMap = new Map();
+
+  for (const entry of manualNicknames) {
+    const rawNickname = typeof entry === 'string' ? entry : entry?.nickname;
+    const cacheKey = normalizeClanNicknameForMatch(rawNickname);
+    if (!cacheKey) {
+      continue;
+    }
+    const cached = normalizeNotificationRobloxCacheEntry(updatedCache[cacheKey]);
+    const isFresh = cached && (nowMs - new Date(cached.resolvedAt).getTime()) <= ROBLOX_NOTIFICATION_NAME_CACHE_TTL_MS;
+    if (isFresh) {
+      continue;
+    }
+
+    try {
+      const usernameCandidate = normalizeRobloxUsernameCandidate(rawNickname);
+      const resolved = cached?.userId
+        ? await fetchRobloxNameByUserId(cached.userId)
+        : (usernameCandidate ? await resolveRobloxNameByUsername(usernameCandidate) : null);
+      if (!resolved) {
+        continue;
+      }
+      const cacheEntry = {
+        userId: resolved.userId,
+        username: resolved.username,
+        displayName: resolved.displayName,
+        resolvedAt: new Date().toISOString()
+      };
+      const displayNameKey = normalizeClanNicknameForMatch(resolved.displayName);
+      const usernameKey = normalizeClanNicknameForMatch(resolved.username);
+      updatedCache[cacheKey] = cacheEntry;
+      if (displayNameKey) {
+        updatedCache[displayNameKey] = cacheEntry;
+      }
+      if (usernameKey) {
+        updatedCache[usernameKey] = cacheEntry;
+      }
+      if (displayNameKey && displayNameKey !== cacheKey) {
+        renameMap.set(cacheKey, resolved.displayName);
+      }
+      hasUpdates = true;
+    } catch (error) {
+      console.warn(`Notification Roblox name refresh failed for guild ${guildId} nickname ${rawNickname}:`, error);
+    }
+  }
+
+  if (!hasUpdates) {
+    return;
+  }
+
+  await updateClanState(guildId, (nextState) => {
+    ensureGuildClanState(nextState);
+    nextState.notification_roblox_name_cache = updatedCache;
+    if (!renameMap.size) {
+      return;
+    }
+    nextState.manual_notification_nicknames = nextState.manual_notification_nicknames.map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return entry;
+      }
+      const nickname = normalizeRobloxUsernameCandidate(entry.nickname);
+      const key = normalizeClanNicknameForMatch(nickname);
+      if (!key || !renameMap.has(key)) {
+        return entry;
+      }
+      return {
+        ...entry,
+        nickname: renameMap.get(key)
+      };
+    });
+  });
+}
+
+function startNotificationRobloxNameRefreshLoop(readyClient) {
+  if (notificationRobloxNameRefreshIntervalHandle) {
+    clearInterval(notificationRobloxNameRefreshIntervalHandle);
+  }
+
+  const runRefresh = async () => {
+    for (const guild of readyClient.guilds.cache.values()) {
+      await refreshNotificationRobloxNamesForGuild(guild.id).catch((error) => {
+        console.warn(`Hourly notification Roblox name refresh failed for guild ${guild.id}:`, error);
+      });
+    }
+  };
+
+  runRefresh().catch((error) => {
+    console.warn('Initial notification Roblox name refresh failed:', error);
+  });
+
+  notificationRobloxNameRefreshIntervalHandle = setInterval(() => {
+    runRefresh().catch((error) => {
+      console.warn('Periodic notification Roblox name refresh failed:', error);
+    });
+  }, ROBLOX_NOTIFICATION_NAME_REFRESH_INTERVAL_MS);
+}
+
 function getGuildMemberRobloxNicknameFallback(member) {
   if (!(member instanceof GuildMember)) {
     return null;
@@ -1200,9 +1509,16 @@ function getManualNotificationNicknames(guildId) {
     const ownerUserId = typeof rawEntry === 'object' && rawEntry !== null
       ? normalizeDiscordSnowflake(rawEntry.ownerUserId)
       : null;
+    const robloxNameCache = getCachedNotificationRobloxName(state, displayNickname);
+    const effectiveNickname = robloxNameCache?.displayName ?? displayNickname;
+    const effectiveNormalizedNickname = normalizeClanNicknameForMatch(effectiveNickname);
+    if (!effectiveNormalizedNickname || uniqueNicknames.has(effectiveNormalizedNickname)) {
+      continue;
+    }
 
-    uniqueNicknames.set(normalizedNickname, {
-      displayNickname,
+    uniqueNicknames.set(effectiveNormalizedNickname, {
+      displayNickname: effectiveNickname,
+      robloxUsername: robloxNameCache?.username ?? null,
       applicantId: ownerUserId,
       mentionTargetId: ownerUserId,
       ownerUserId,
@@ -1261,6 +1577,9 @@ function collectNotificationFilterNicknamesForDisplay(guildId) {
   return [...buildNotificationFilterRoster(guildId).values()]
     .map((entry) => {
       const player = entry.effectivePlayer;
+      const usernameLabel = player?.source === 'manual' && player?.robloxUsername
+        ? ` (@${player.robloxUsername})`
+        : '';
       const sourceLabel = entry.manualPlayer
         ? 'manual'
         : 'accepted';
@@ -1274,7 +1593,7 @@ function collectNotificationFilterNicknamesForDisplay(guildId) {
       const collisionLabel = entry.collision
         ? ` (manual override replaces accepted${entry.acceptedPlayer?.mentionTargetId ? ` <@${entry.acceptedPlayer.mentionTargetId}>` : ''})`
         : '';
-      return `${player.displayNickname} — ${sourceLabel}${ownerLabel}${collisionLabel}`;
+      return `${player.displayNickname}${usernameLabel} — ${sourceLabel}${ownerLabel}${collisionLabel}`;
     })
     .sort((left, right) => left.localeCompare(right, 'cs', { sensitivity: 'base' }));
 }
@@ -1283,12 +1602,15 @@ function describeManualNotificationNickname(entry, index, rosterEntry) {
   const ownerLabel = entry.ownerUserId
     ? `<@${entry.ownerUserId}>`
     : 'unknown owner';
+  const usernameLabel = entry.robloxUsername
+    ? ` (@${entry.robloxUsername})`
+    : '';
   const collisionLabel = rosterEntry?.acceptedPlayer
     ? rosterEntry.acceptedPlayer.mentionTargetId
       ? ` — overrides accepted member <@${rosterEntry.acceptedPlayer.mentionTargetId}>`
       : ` — overrides accepted nickname ${rosterEntry.acceptedPlayer.displayNickname}`
     : '';
-  return `${index + 1}. ${entry.displayNickname} — owner ${ownerLabel}${collisionLabel}`;
+  return `${index + 1}. ${entry.displayNickname}${usernameLabel} — owner ${ownerLabel}${collisionLabel}`;
 }
 
 function filterNotificationsByGuildClanNicknames(guildId, notifications) {
@@ -3668,6 +3990,20 @@ function ensureGuildClanState(state) {
       };
     })
     .filter(Boolean);
+  if (!state.notification_roblox_name_cache || typeof state.notification_roblox_name_cache !== 'object' || Array.isArray(state.notification_roblox_name_cache)) {
+    state.notification_roblox_name_cache = {};
+  } else {
+    const normalizedCache = {};
+    for (const [rawNickname, rawEntry] of Object.entries(state.notification_roblox_name_cache)) {
+      const normalizedNickname = normalizeClanNicknameForMatch(rawNickname);
+      const normalizedEntry = normalizeNotificationRobloxCacheEntry(rawEntry);
+      if (!normalizedNickname || !normalizedEntry) {
+        continue;
+      }
+      normalizedCache[normalizedNickname] = normalizedEntry;
+    }
+    state.notification_roblox_name_cache = normalizedCache;
+  }
   if (!state.officer_stats) {
     state.officer_stats = {};
   }
@@ -6057,6 +6393,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (interaction.guild) {
           await pruneMissingClanTicketsForGuild(interaction.guild, { logPrefix: 'notification secret command' });
         }
+        await refreshNotificationRobloxNamesForGuild(interaction.guildId);
         const clanNicknames = collectNotificationFilterNicknamesForDisplay(interaction.guildId);
         if (!clanNicknames.length) {
           await interaction.reply({
@@ -6077,12 +6414,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (subcommand === 'nick_add') {
         const rawNickname = interaction.options.getString('nick', true);
         const displayNickname = rawNickname.trim();
-        const normalizedNickname = normalizeClanNicknameForMatch(displayNickname);
         const ownerUserId = normalizeDiscordSnowflake(interaction.user?.id)
           ?? normalizeDiscordSnowflake(interaction.member?.id);
+        let robloxResolvedName;
+        try {
+          robloxResolvedName = await resolveAndPersistNotificationRobloxName(interaction.guildId, displayNickname);
+        } catch (error) {
+          await interaction.reply({
+            components: buildTextComponents(error?.message || 'Failed to resolve Roblox username.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+        const normalizedNickname = normalizeClanNicknameForMatch(robloxResolvedName.displayName);
         const acceptedPlayer = collectAcceptedClanPlayers(interaction.guildId).get(normalizedNickname) ?? null;
 
-        if (!displayNickname || !normalizedNickname) {
+        if (!displayNickname || !normalizedNickname || !ownerUserId) {
           await interaction.reply({
             components: buildTextComponents('Nickname cannot be empty.'),
             flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
@@ -6127,7 +6474,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return;
           }
           state.manual_notification_nicknames = [...manualNicknames, {
-            nickname: displayNickname,
+            nickname: robloxResolvedName.displayName,
             ownerUserId,
             createdAt: new Date().toISOString()
           }];
@@ -6141,7 +6488,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         } else if (resultType === 'claimed_ownerless_manual') {
           replyMessage = `Nickname **${storedNickname}** already existed as a manual record without owner; it is now assigned to <@${ownerUserId}>.`;
         } else {
-          replyMessage = `Nickname **${displayNickname}** was added to the manual notification filter list${ownerUserId ? ` for <@${ownerUserId}>` : ''}.`;
+          replyMessage = `Display name **${robloxResolvedName.displayName}** (@${robloxResolvedName.username}) was added to the manual notification filter list${ownerUserId ? ` for <@${ownerUserId}>` : ''}.`;
         }
 
         if (acceptedPlayer) {
@@ -6203,11 +6550,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (subcommand === 'nick_list') {
+        await refreshNotificationRobloxNamesForGuild(interaction.guildId);
         const roster = buildNotificationFilterRoster(interaction.guildId);
         const manualNicknames = [...getManualNotificationNicknames(interaction.guildId).entries()]
           .map(([normalizedNickname, player]) => ({
             normalizedNickname,
             displayNickname: player.displayNickname,
+            robloxUsername: player.robloxUsername,
             ownerUserId: player.ownerUserId
           }))
           .sort((left, right) => left.displayNickname.localeCompare(right.displayNickname, 'cs', { sensitivity: 'base' }));
