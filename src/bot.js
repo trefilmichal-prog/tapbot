@@ -18,7 +18,9 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import {
+  buildNotificationFilterRosterEntries,
   collectAcceptedClanPlayersFromState,
+  collectAcceptedClanPlayersWithRobloxAliasesFromState,
   extractNicknameBeforeHatched,
   filterNotificationsByClanNicknames,
   getAcceptedTicketRobloxIdentityFromState,
@@ -937,7 +939,11 @@ function buildNotificationReadResponse(notifications) {
 
 function collectAcceptedClanPlayers(guildId) {
   const state = getClanState(guildId);
-  const players = collectAcceptedClanPlayersFromState(state, CLAN_TICKET_DECISION_ACCEPT);
+  const players = collectAcceptedClanPlayersWithRobloxAliasesFromState(
+    state,
+    (nickname) => getCachedNotificationRobloxName(state, nickname),
+    CLAN_TICKET_DECISION_ACCEPT
+  );
   const entryByNickname = new Map();
 
   for (const entry of Object.values(state?.clan_ticket_decisions ?? {})) {
@@ -952,7 +958,8 @@ function collectAcceptedClanPlayers(guildId) {
   }
 
   for (const [nickname, player] of players) {
-    const entry = entryByNickname.get(nickname);
+    const entry = entryByNickname.get(nickname)
+      ?? entryByNickname.get(normalizeClanNicknameForMatch(player?.displayNickname));
     const applicantId = normalizeDiscordSnowflake(entry?.applicantId)
       ?? deriveApplicantIdFromTicketEntry(entry);
     players.set(nickname, {
@@ -1562,34 +1569,7 @@ function getManualNotificationNicknames(guildId) {
 function buildNotificationFilterRoster(guildId) {
   const acceptedPlayers = collectAcceptedClanPlayers(guildId);
   const manualNicknames = getManualNotificationNicknames(guildId);
-  const roster = new Map();
-  const normalizedNicknames = new Set([
-    ...acceptedPlayers.keys(),
-    ...manualNicknames.keys()
-  ]);
-
-  for (const nickname of normalizedNicknames) {
-    const acceptedPlayer = acceptedPlayers.get(nickname) ?? null;
-    const manualPlayer = manualNicknames.get(nickname) ?? null;
-    // Collision rule: a manual nickname override always wins over an accepted clan member
-    // so /notifications nick_add consistently pings the manual record owner.
-    const effectivePlayer = manualPlayer ?? acceptedPlayer;
-
-    if (!effectivePlayer) {
-      continue;
-    }
-
-    roster.set(nickname, {
-      normalizedNickname: nickname,
-      acceptedPlayer,
-      manualPlayer,
-      effectivePlayer,
-      collision: Boolean(acceptedPlayer && manualPlayer),
-      collisionRule: acceptedPlayer && manualPlayer ? 'manual_overrides_accepted' : null
-    });
-  }
-
-  return roster;
+  return buildNotificationFilterRosterEntries(acceptedPlayers, manualNicknames);
 }
 
 function collectNotificationFilterPlayers(guildId) {
