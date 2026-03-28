@@ -84,13 +84,7 @@ function shouldRetainSubscriberRecord(userId, account, mode, approvedSet) {
   if (mode !== 'clan') {
     return false;
   }
-  if (approvedSet.has(userId)) {
-    return true;
-  }
-  if (account?.source === ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.CLAN_AUTO) {
-    return approvedSet.has(userId);
-  }
-  return account?.source === ROBLOX_SUBSCRIBER_ACCOUNT_SOURCE.OPT_IN;
+  return approvedSet.has(userId);
 }
 
 function normalizeUsername(username) {
@@ -881,7 +875,6 @@ async function runRobloxMonitorTick(client, guildId) {
     ? monitorSource.clan_name.trim()
     : null;
   const monitorMode = sourceClanName ? 'clan' : 'non_clan';
-  const approvedSubscriberUserIdSet = new Set(approvedUsers.discordUserIds);
   const sourceChannelId = typeof monitorSource.channel_id === 'string' && monitorSource.channel_id.trim()
     ? monitorSource.channel_id.trim()
     : null;
@@ -892,9 +885,15 @@ async function runRobloxMonitorTick(client, guildId) {
   const explicitSubscriberUserIds = Array.isArray(state?.explicitSubscriberUserIds)
     ? state.explicitSubscriberUserIds.filter((userId) => typeof userId === 'string' && userId.trim())
     : [];
+  const approvedSubscriberUserIdSet = new Set(approvedUsers.discordUserIds);
+  const filteredExplicitSubscriberUserIds = explicitSubscriberUserIds.filter((userId) => approvedSubscriberUserIdSet.has(userId));
+  const explicitSubscriberUserIdsChanged = JSON.stringify(explicitSubscriberUserIds) !== JSON.stringify(filteredExplicitSubscriberUserIds);
+  const removedExplicitSubscriberUserIdSet = new Set(
+    explicitSubscriberUserIds.filter((userId) => !approvedSubscriberUserIdSet.has(userId))
+  );
   const effectiveMonitoredUserIds = sourceClanName
     ? [...new Set(approvedUsers.discordUserIds)].sort()
-    : explicitSubscriberUserIds;
+    : filteredExplicitSubscriberUserIds;
   const effectiveMonitoredUserIdSet = new Set(effectiveMonitoredUserIds);
   const currentSubscriberAccountMap = state?.subscriberRobloxAccounts
     && typeof state.subscriberRobloxAccounts === 'object'
@@ -909,8 +908,12 @@ async function runRobloxMonitorTick(client, guildId) {
   const apiEligibleSubscriberUserIds = effectiveMonitoredUserIds.filter((subscriberUserId) => hasStoredRobloxUsername(subscriberUserId));
   const apiEligibleSubscriberUserIdSet = new Set(apiEligibleSubscriberUserIds);
 
-  if (JSON.stringify(state.lastEffectiveMonitoredUserIds ?? []) !== JSON.stringify(effectiveMonitoredUserIds)) {
+  if (
+    explicitSubscriberUserIdsChanged
+    || JSON.stringify(state.lastEffectiveMonitoredUserIds ?? []) !== JSON.stringify(effectiveMonitoredUserIds)
+  ) {
     state = await updateRobloxMonitorState(guildId, (nextState) => {
+      nextState.explicitSubscriberUserIds = filteredExplicitSubscriberUserIds;
       nextState.lastEffectiveMonitoredUserIds = effectiveMonitoredUserIds;
       if (!nextState.subscriberRobloxAccounts || typeof nextState.subscriberRobloxAccounts !== 'object' || Array.isArray(nextState.subscriberRobloxAccounts)) {
         nextState.subscriberRobloxAccounts = {};
@@ -926,6 +929,13 @@ async function runRobloxMonitorTick(client, guildId) {
       }
       if (!nextState.subscriberStats || typeof nextState.subscriberStats !== 'object' || Array.isArray(nextState.subscriberStats)) {
         nextState.subscriberStats = {};
+      }
+      for (const removedUserId of removedExplicitSubscriberUserIdSet) {
+        delete nextState.subscriberRobloxAccounts[removedUserId];
+        delete nextState.subscriberFriendshipStatus[removedUserId];
+        delete nextState.subscriberPresence[removedUserId];
+        delete nextState.subscriberOfflineReminderAt[removedUserId];
+        delete nextState.subscriberStats[removedUserId];
       }
       for (const userId of Object.keys(nextState.subscriberRobloxAccounts)) {
         const subscriberAccount = nextState.subscriberRobloxAccounts[userId] ?? null;
