@@ -66,6 +66,10 @@ export function getAcceptedTicketRobloxAccessError(identity, fallbackNickname = 
   const subcommand = options?.subcommand === 'opt_out' ? 'opt_out' : 'opt_in';
   const hasValidRequestedNick = options?.hasValidRequestedNick === true;
 
+  if (subcommand === 'opt_out') {
+    return null;
+  }
+
   if (!identity) {
     return 'Only members with an accepted ticket in this server can use Roblox monitor alerts.';
   }
