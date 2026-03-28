@@ -118,6 +118,73 @@ test('opt_in target resolution uses fallback chain when nick is whitespace', () 
   assert.equal(fallbackResolution.source, 'guild_nickname');
 });
 
+test('opt_out does not require accepted ticket identity', () => {
+  assert.equal(
+    getAcceptedTicketRobloxAccessError(null, null, { subcommand: 'opt_out' }),
+    null
+  );
+  assert.equal(
+    getAcceptedTicketRobloxAccessError(undefined, 'GuildNick', { subcommand: 'opt_out' }),
+    null
+  );
+  assert.equal(
+    getAcceptedTicketRobloxAccessError(null, null, { subcommand: 'opt_in' }),
+    'Only members with an accepted ticket in this server can use Roblox monitor alerts.'
+  );
+});
+
+test('opt_out removes legacy opt-in subscriber even when accepted ticket no longer exists', async () => {
+  const guildId = `test-guild-opt-out-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+  const userId = '777777777777777777';
+  const guildDir = path.join(process.cwd(), 'data', 'guilds', guildId);
+
+  await updateRobloxMonitorState(guildId, (state) => {
+    state.explicitSubscriberUserIds = [userId];
+    state.subscriberRobloxAccounts = {
+      [userId]: {
+        robloxUsername: 'LegacyUser',
+        robloxUserId: 123,
+        source: 'manual_opt_in_nick',
+        optedInAt: '2026-03-20T00:00:00.000Z'
+      }
+    };
+    state.subscriberFriendshipStatus = {
+      [userId]: {
+        robloxUserId: 123,
+        isFriend: true,
+        lastCheckedAt: '2026-03-20T00:00:00.000Z',
+        lastAutoAcceptedAt: null,
+        note: 'Friendship verified during opt-in check.'
+      }
+    };
+  });
+
+  const accessError = getAcceptedTicketRobloxAccessError(null, null, { subcommand: 'opt_out' });
+  assert.equal(accessError, null);
+
+  await updateRobloxMonitorState(guildId, (state) => {
+    const subscriberIds = new Set(Array.isArray(state.explicitSubscriberUserIds) ? state.explicitSubscriberUserIds : []);
+    if (!state.subscriberRobloxAccounts || typeof state.subscriberRobloxAccounts !== 'object' || Array.isArray(state.subscriberRobloxAccounts)) {
+      state.subscriberRobloxAccounts = {};
+    }
+    if (!state.subscriberFriendshipStatus || typeof state.subscriberFriendshipStatus !== 'object' || Array.isArray(state.subscriberFriendshipStatus)) {
+      state.subscriberFriendshipStatus = {};
+    }
+
+    subscriberIds.delete(userId);
+    delete state.subscriberRobloxAccounts[userId];
+    delete state.subscriberFriendshipStatus[userId];
+    state.explicitSubscriberUserIds = [...subscriberIds].sort();
+  });
+
+  const stateAfterOptOut = getRobloxMonitorState(guildId);
+  assert.equal(stateAfterOptOut.explicitSubscriberUserIds.includes(userId), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(stateAfterOptOut.subscriberRobloxAccounts, userId), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(stateAfterOptOut.subscriberFriendshipStatus, userId), false);
+
+  await fs.rm(guildDir, { recursive: true, force: true });
+});
+
 test('RobloxSessionClient request retries 429 responses and eventually succeeds', async () => {
   const originalFetch = global.fetch;
   const originalWarn = console.warn;
