@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildNotificationFilterRosterEntries,
   collectAcceptedClanPlayersFromState,
+  collectAcceptedClanPlayersWithRobloxAliasesFromState,
   collectAcceptedTicketRobloxIdentitiesFromState,
   extractNicknameBeforeHatched,
   filterNotificationsByClanNicknames,
@@ -230,4 +232,100 @@ test('accepted ticket identity lookup returns ticket without Roblox nickname whe
       entry: state.clan_ticket_decisions.acceptedWithoutNick
     }
   );
+});
+
+test('accepted ticket stored as username matches notification displayName via cache alias', () => {
+  const state = {
+    clan_ticket_decisions: {
+      accepted: {
+        status: 'accept',
+        applicantId: '123456789012345678',
+        answers: {
+          robloxNick: 'CoolUser123'
+        }
+      }
+    }
+  };
+  const cacheEntry = {
+    username: 'CoolUser123',
+    displayName: 'Cool Display'
+  };
+  const acceptedClanPlayers = collectAcceptedClanPlayersWithRobloxAliasesFromState(
+    state,
+    () => cacheEntry
+  );
+
+  const notifications = [
+    {
+      title: 'Secret Hatcher',
+      body: '🔥 Congrats! Cool Display hatched a Huge Dog'
+    }
+  ];
+
+  const filtered = filterNotificationsByClanNicknames(notifications, acceptedClanPlayers);
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].matchedNickname, 'cool display');
+  assert.equal(filtered[0].player.displayNickname, 'CoolUser123');
+  assert.equal(filtered[0].player.applicantId, '123456789012345678');
+});
+
+test('accepted ticket matches refreshed displayName cache alias after name change', () => {
+  const state = {
+    clan_ticket_decisions: {
+      accepted: {
+        status: 'accept',
+        applicantId: '123456789012345678',
+        answers: {
+          robloxNick: 'CoolUser123'
+        }
+      }
+    }
+  };
+  const acceptedClanPlayers = collectAcceptedClanPlayersWithRobloxAliasesFromState(
+    state,
+    () => ({
+      username: 'CoolUser123',
+      displayName: 'New Cool Display'
+    })
+  );
+
+  const notifications = [
+    {
+      title: 'Secret Hatcher',
+      body: '🔥 Congrats! New Cool Display hatched a Huge Dog'
+    }
+  ];
+
+  const filtered = filterNotificationsByClanNicknames(notifications, acceptedClanPlayers);
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].matchedNickname, 'new cool display');
+  assert.equal(filtered[0].player.displayNickname, 'CoolUser123');
+});
+
+test('manual collision still prefers manual_overrides_accepted rule', () => {
+  const sharedAcceptedPlayer = {
+    displayNickname: 'CoolUser123',
+    applicantId: '123456789012345678',
+    mentionTargetId: '123456789012345678',
+    source: 'accepted'
+  };
+  const acceptedPlayers = new Map([
+    ['cooluser123', sharedAcceptedPlayer],
+    ['cool display', sharedAcceptedPlayer]
+  ]);
+  const manualPlayer = {
+    displayNickname: 'Cool Display',
+    applicantId: '222222222222222222',
+    mentionTargetId: '222222222222222222',
+    ownerUserId: '222222222222222222',
+    source: 'manual'
+  };
+  const manualNicknames = new Map([
+    ['cool display', manualPlayer]
+  ]);
+
+  const roster = buildNotificationFilterRosterEntries(acceptedPlayers, manualNicknames);
+  assert.equal(roster.get('cool display')?.collisionRule, 'manual_overrides_accepted');
+  assert.deepEqual(roster.get('cool display')?.effectivePlayer, manualPlayer);
+  assert.deepEqual(roster.get('cool display')?.acceptedPlayer, sharedAcceptedPlayer);
 });

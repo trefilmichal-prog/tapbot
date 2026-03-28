@@ -170,6 +170,68 @@ export function collectAcceptedClanPlayersFromState(state, acceptedStatus = 'acc
   return players;
 }
 
+export function collectAcceptedClanPlayersWithRobloxAliasesFromState(
+  state,
+  getCachedRobloxNameEntry,
+  acceptedStatus = 'accept'
+) {
+  const players = collectAcceptedClanPlayersFromState(state, acceptedStatus);
+  if (typeof getCachedRobloxNameEntry !== 'function' || !players.size) {
+    return players;
+  }
+
+  for (const [normalizedNickname, player] of Array.from(players.entries())) {
+    const cacheEntry = getCachedRobloxNameEntry(player.displayNickname, normalizedNickname);
+    if (!cacheEntry || typeof cacheEntry !== 'object' || Array.isArray(cacheEntry)) {
+      continue;
+    }
+
+    const aliasCandidates = [cacheEntry.displayName, cacheEntry.username];
+    for (const rawAlias of aliasCandidates) {
+      const aliasKey = normalizeClanNicknameForMatch(rawAlias);
+      if (!aliasKey || players.has(aliasKey)) {
+        continue;
+      }
+      players.set(aliasKey, player);
+    }
+  }
+
+  return players;
+}
+
+export function buildNotificationFilterRosterEntries(acceptedPlayers, manualNicknames) {
+  const acceptedMap = acceptedPlayers instanceof Map ? acceptedPlayers : new Map();
+  const manualMap = manualNicknames instanceof Map ? manualNicknames : new Map();
+  const roster = new Map();
+  const normalizedNicknames = new Set([
+    ...acceptedMap.keys(),
+    ...manualMap.keys()
+  ]);
+
+  for (const nickname of normalizedNicknames) {
+    const acceptedPlayer = acceptedMap.get(nickname) ?? null;
+    const manualPlayer = manualMap.get(nickname) ?? null;
+    // Collision rule: a manual nickname override always wins over an accepted clan member
+    // so /notifications nick_add consistently pings the manual record owner.
+    const effectivePlayer = manualPlayer ?? acceptedPlayer;
+
+    if (!effectivePlayer) {
+      continue;
+    }
+
+    roster.set(nickname, {
+      normalizedNickname: nickname,
+      acceptedPlayer,
+      manualPlayer,
+      effectivePlayer,
+      collision: Boolean(acceptedPlayer && manualPlayer),
+      collisionRule: acceptedPlayer && manualPlayer ? 'manual_overrides_accepted' : null
+    });
+  }
+
+  return roster;
+}
+
 function buildNotificationParsingCandidates(notification) {
   const title = typeof notification?.title === 'string' ? notification.title : null;
   const body = typeof notification?.body === 'string' ? notification.body : null;
