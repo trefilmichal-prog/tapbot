@@ -554,6 +554,27 @@ export const defaultCommands = [
     options: [
       {
         type: ApplicationCommandOptionType.Subcommand,
+        name: 'nickname_set',
+        description: 'Set a member nickname and sync clan ticket nickname data',
+        options: [
+          {
+            type: ApplicationCommandOptionType.User,
+            name: 'user',
+            description: 'Member to update',
+            required: true
+          },
+          {
+            type: ApplicationCommandOptionType.String,
+            name: 'nick',
+            description: 'New nickname',
+            required: true,
+            min_length: 3,
+            max_length: 32
+          }
+        ]
+      },
+      {
+        type: ApplicationCommandOptionType.Subcommand,
         name: 'stats',
         description: 'Show officer ticket statistics',
         options: [
