@@ -5872,6 +5872,106 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const subcommand = interaction.options.getSubcommand(true);
+      if (subcommand === 'nickname_set') {
+        const targetUser = interaction.options.getUser('user', true);
+        const requestedNickRaw = interaction.options.getString('nick', true);
+        const newNick = requestedNickRaw.trim();
+        if (newNick.length < 3 || newNick.length > 32) {
+          await interaction.reply({
+            components: buildTextComponents('Nickname must be between 3 and 32 characters.'),
+            flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+          });
+          return;
+        }
+
+        let nicknameUpdated = false;
+        let nicknameWarning = null;
+
+        try {
+          const targetMember = await interaction.guild.members.fetch(targetUser.id);
+          await targetMember.setNickname(newNick, 'Manual nickname sync command');
+          nicknameUpdated = true;
+        } catch (error) {
+          nicknameWarning = 'Guild nickname update failed (missing permissions or role hierarchy issue).';
+          console.warn(`Failed manual nickname sync for ${targetUser.id} in guild ${interaction.guildId}:`, error);
+        }
+
+        const updatedTickets = [];
+        await updateClanState(interaction.guildId, (draft) => {
+          ensureGuildClanState(draft);
+          for (const [channelId, entry] of Object.entries(draft.clan_ticket_decisions ?? {})) {
+            if (!entry || entry.applicantId !== targetUser.id) {
+              continue;
+            }
+            if (!entry.answers || typeof entry.answers !== 'object') {
+              entry.answers = {};
+            }
+            entry.answers.robloxNick = newNick;
+            entry.robloxNick = newNick;
+            entry.updatedAt = new Date().toISOString();
+            updatedTickets.push({
+              channelId,
+              clanName: typeof entry.clanName === 'string' ? entry.clanName : ''
+            });
+          }
+        });
+
+        let renamedChannels = 0;
+        let failedChannelRenames = 0;
+
+        for (const ticket of updatedTickets) {
+          const { channelId, clanName } = ticket;
+          let channel = null;
+          try {
+            channel = await interaction.guild.channels.fetch(channelId);
+          } catch (error) {
+            if (Number(error?.code) !== 10003) {
+              console.warn(`Failed to fetch clan ticket channel ${channelId} in guild ${interaction.guildId}:`, error);
+            }
+          }
+
+          if (!channel || typeof channel.setName !== 'function') {
+            failedChannelRenames += 1;
+            console.warn(`Clan ticket channel ${channelId} not found for nickname sync in guild ${interaction.guildId}.`);
+            continue;
+          }
+
+          const currentName = channel.name ?? '';
+          const statusEmoji = getTicketStatusEmojiFromName(currentName) ?? TICKET_STATUS_EMOJI.awaiting;
+          const clanBase = sanitizeTicketChannelBase(`${clanName}-${newNick}`);
+          const currentBase = sanitizeTicketChannelBase(stripTicketStatusPrefix(currentName));
+          const fallbackBase = sanitizeTicketChannelBase(newNick);
+          const nextBase = clanBase || currentBase || fallbackBase || String(targetUser.id);
+          const nextName = formatTicketChannelName(statusEmoji, nextBase);
+
+          if (!nextName || currentName === nextName) {
+            continue;
+          }
+
+          try {
+            await channel.setName(nextName);
+            renamedChannels += 1;
+          } catch (error) {
+            failedChannelRenames += 1;
+            console.warn(`Failed to rename clan ticket channel ${channelId} in guild ${interaction.guildId}:`, error);
+          }
+        }
+
+        const nicknameStatus = nicknameUpdated
+          ? `✅ Guild nickname updated to **${newNick}**.`
+          : `⚠️ ${nicknameWarning ?? 'Guild nickname update failed.'}`;
+        const summaryLines = [
+          nicknameStatus,
+          `Updated ticket records: **${updatedTickets.length}**.`,
+          `Ticket channel renames: **${renamedChannels}** succeeded, **${failedChannelRenames}** failed.`
+        ];
+        await interaction.reply({
+          components: buildTextComponents(summaryLines.join('\n')),
+          flags: buildInteractionFlags({ componentsV2: true, ephemeral: true })
+        });
+        return;
+      }
+
       if (subcommand === 'stats') {
         const officer = interaction.options.getUser('nick', true);
         const state = getClanState(interaction.guildId);
